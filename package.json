@@ -1,0 +1,17 @@
+{
+  "name": "smart-bin-management-system",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace @smartbin/api\" \"npm run dev --workspace @smartbin/web\"",
+    "dev:api": "npm run dev --workspace @smartbin/api",
+    "dev:web": "npm run dev --workspace @smartbin/web",
+    "build": "npm run build --workspace @smartbin/api && npm run build --workspace @smartbin/web",
+    "lint": "npm run lint --workspace @smartbin/api && npm run lint --workspace @smartbin/web",
+    "db:generate": "npm run db:generate --workspace @smartbin/api",
+    "db:migrate": "npm run db:migrate --workspace @smartbin/api",
+    "db:seed": "npm run db:seed --workspace @smartbin/api"
+  },
+  "devDependencies": { "concurrently": "^9.2.1" }
+}

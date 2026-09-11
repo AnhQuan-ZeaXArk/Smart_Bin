@@ -1,0 +1,180 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleName {
+  ADMIN
+  SUPERVISOR
+  WORKER
+}
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+}
+enum NfcCardStatus {
+  ACTIVE
+  REVOKED
+  LOST
+  EXPIRED
+}
+enum BinStatus {
+  ONLINE
+  OFFLINE
+  MAINTENANCE
+}
+enum AccessResult {
+  ALLOWED
+  DENIED
+}
+enum AccessReason {
+  VALID_CARD
+  UNKNOWN_CARD
+  REVOKED_CARD
+  LOST_CARD
+  EXPIRED_CARD
+  INACTIVE_EMPLOYEE
+}
+enum CollectionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+enum AlertType {
+  NEARLY_FULL
+  CRITICAL
+  DEVICE_OFFLINE
+  SENSOR_ABNORMAL
+  NFC_ACCESS_DENIED
+}
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+model Role {
+  id String @id @default(cuid())
+  name RoleName @unique
+  description String?
+  users User[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model User {
+  id String @id @default(cuid())
+  username String @unique
+  passwordHash String
+  roleId String
+  employeeId String? @unique
+  isActive Boolean @default(true)
+  role Role @relation(fields: [roleId], references: [id])
+  employee Employee? @relation(fields: [employeeId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model Employee {
+  id String @id @default(cuid())
+  employeeCode String @unique
+  fullName String
+  phone String?
+  email String?
+  status EmployeeStatus @default(ACTIVE)
+  user User?
+  nfcCards NfcCard[]
+  accessLogs AccessLog[]
+  collectionRecords CollectionRecord[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model NfcCard {
+  id String @id @default(cuid())
+  uid String @unique
+  employeeId String
+  status NfcCardStatus @default(ACTIVE)
+  issuedAt DateTime @default(now())
+  revokedAt DateTime?
+  employee Employee @relation(fields: [employeeId], references: [id])
+  accessLogs AccessLog[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model Bin {
+  id String @id @default(cuid())
+  binCode String @unique
+  name String
+  location String
+  latitude Float?
+  longitude Float?
+  capacity Int
+  currentFillLevel Int @default(0)
+  status BinStatus @default(OFFLINE)
+  isActive Boolean @default(true)
+  lastSeen DateTime?
+  sensorReadings SensorReading[]
+  accessLogs AccessLog[]
+  collectionRecords CollectionRecord[]
+  alerts Alert[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([isActive, status])
+}
+model SensorReading {
+  id String @id @default(cuid())
+  binId String
+  distance Float
+  fillLevel Int
+  timestamp DateTime @default(now())
+  bin Bin @relation(fields: [binId], references: [id])
+  createdAt DateTime @default(now())
+  @@index([binId, timestamp])
+}
+model AccessLog {
+  id String @id @default(cuid())
+  employeeId String?
+  nfcCardId String?
+  binId String?
+  nfcUid String
+  action String
+  result AccessResult
+  reason AccessReason @default(UNKNOWN_CARD)
+  timestamp DateTime @default(now())
+  employee Employee? @relation(fields: [employeeId], references: [id])
+  nfcCard NfcCard? @relation(fields: [nfcCardId], references: [id])
+  bin Bin? @relation(fields: [binId], references: [id])
+  @@index([employeeId, timestamp])
+  @@index([nfcCardId, timestamp])
+  @@index([binId, timestamp])
+}
+model CollectionRecord {
+  id String @id @default(cuid())
+  binId String
+  employeeId String
+  startTime DateTime
+  endTime DateTime?
+  fillLevelBefore Int
+  fillLevelAfter Int?
+  status CollectionStatus @default(PENDING)
+  notes String?
+  bin Bin @relation(fields: [binId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model Alert {
+  id String @id @default(cuid())
+  binId String?
+  type AlertType
+  severity AlertSeverity
+  message String
+  isResolved Boolean @default(false)
+  createdAt DateTime @default(now())
+  resolvedAt DateTime?
+  bin Bin? @relation(fields: [binId], references: [id])
+  @@index([isResolved, createdAt])
+}
