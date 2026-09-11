@@ -1,4 +1,4 @@
-﻿-- CreateSchema
+-- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
 -- CreateEnum
@@ -223,4 +223,3 @@ ALTER TABLE "CollectionRecord" ADD CONSTRAINT "CollectionRecord_employeeId_fkey"
 
 -- AddForeignKey
 ALTER TABLE "Alert" ADD CONSTRAINT "Alert_binId_fkey" FOREIGN KEY ("binId") REFERENCES "Bin"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
