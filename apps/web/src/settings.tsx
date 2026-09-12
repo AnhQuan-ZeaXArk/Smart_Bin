@@ -528,7 +528,7 @@ export function SettingsPage() {
 
             <div className="settings-field">
               <span className="settings-field__label">Socket.IO</span>
-              <div className="settings-readonly"><span className="status-dot" />Đang hoạt động</div>
+              <div className="settings-readonly"><span className="status-dot" />Đang hoạt động bình thường</div>
             </div>
 
             <div className="settings-field settings-field--full">

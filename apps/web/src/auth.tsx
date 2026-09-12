@@ -43,7 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function login(username: string, password: string) {
     const response = await fetch(`${apiUrl}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
     const payload = await response.json() as LoginResponse;
-    if (!response.ok || !payload.token || !payload.user) throw new Error(payload.message ?? 'Không thể đăng nhập.');
+    if (!response.ok || !payload.token || !payload.user) throw new Error(payload.message ?? 'Không thể đăng nhập vào hệ thống.');
     setToken(payload.token);
     setUser(payload.user);
     setSessionReady(true);

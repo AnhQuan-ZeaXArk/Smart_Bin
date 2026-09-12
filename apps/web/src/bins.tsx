@@ -77,7 +77,7 @@ export function BinListPage() {
         <div>
           <div className="eyebrow">QUẢN LÝ HỆ THỐNG SMARTBIN</div>
           <h1>Thùng rác</h1>
-          <p>Hệ thống SmartBin duy nhất gồm ba ngăn chứa rác với dữ liệu cảm biến theo thời gian thực.</p>
+          <p>Hệ thống SmartBin gồm ba ngăn lưu trữ với dữ liệu cảm biến theo thời gian thực.</p>
         </div>
         {user && user.role !== 'WORKER' && <button type="button" className="button-primary">Cập nhật hệ thống</button>}
       </div>
