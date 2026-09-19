@@ -401,14 +401,34 @@ export function SettingsPage() {
     setChangePasswordLoading(true);
 
     try {
-      // Backend API check:
-      // Endpoint tự đổi mật khẩu kèm kiểm tra mật khẩu hiện tại chưa tồn tại trên backend.
-      // (Backend hiện chỉ có PATCH /api/users/:id/password dành cho quyền ADMIN và không xác thực currentPassword).
-      await new Promise((resolve) => setTimeout(resolve, 400));
-      setChangePasswordError('Hệ thống hiện tại chưa cấu hình API đổi mật khẩu cá nhân (Backend endpoint xác thực mật khẩu hiện tại chưa tồn tại). Vui lòng liên hệ quản trị viên.');
+      const response = await fetch(`${apiUrl}/api/auth/me/password`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          confirmPassword
+        })
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload.message ?? 'Đổi mật khẩu thất bại.');
+      }
+
+      setChangePasswordSuccess(payload.message ?? 'Đổi mật khẩu thành công.');
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
+      setTimeout(() => {
+        setChangePasswordModalOpen(false);
+        setChangePasswordSuccess('');
+      }, 1500);
+    } catch (error) {
+      setChangePasswordError(error instanceof Error ? error.message : 'Đổi mật khẩu thất bại.');
     } finally {
       setChangePasswordLoading(false);
     }
