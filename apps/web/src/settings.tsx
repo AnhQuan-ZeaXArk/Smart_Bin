@@ -131,6 +131,8 @@ export function SettingsPage() {
   const [showAdminConfirmPass, setShowAdminConfirmPass] = useState(false);
   const [adminResetError, setAdminResetError] = useState('');
   const [adminResetLoading, setAdminResetLoading] = useState(false);
+  const [showAccountPass, setShowAccountPass] = useState(false);
+  const [showAccountConfirmPass, setShowAccountConfirmPass] = useState(false);
 
   useEffect(() => {
     const handleConnectionChange = () => setIsOnline(window.navigator.onLine);
@@ -245,6 +247,8 @@ export function SettingsPage() {
     setAccountMode('create');
     setEditingUserId(null);
     setAccountForm(defaultAccountForm);
+    setShowAccountPass(false);
+    setShowAccountConfirmPass(false);
     setAccountError('');
     setAccountSuccess('');
     setAccountFormOpen(true);
@@ -293,6 +297,11 @@ export function SettingsPage() {
 
     if (accountMode === 'create' && !accountForm.password.trim()) {
       setAccountError('Mật khẩu không được để trống.');
+      return;
+    }
+
+    if (accountMode === 'create' && accountForm.password.length < 6) {
+      setAccountError('Mật khẩu phải có tối thiểu 6 ký tự.');
       return;
     }
 
@@ -821,12 +830,44 @@ export function SettingsPage() {
                 <>
                   <label>
                     <span>Mật khẩu</span>
-                    <input type="password" value={accountForm.password} onChange={(event) => setAccountForm((current) => ({ ...current, password: event.target.value }))} />
+                    <div className="password-input-wrap">
+                      <input
+                        type={showAccountPass ? 'text' : 'password'}
+                        value={accountForm.password}
+                        onChange={(event) => setAccountForm((current) => ({ ...current, password: event.target.value }))}
+                        placeholder="Tối thiểu 6 ký tự"
+                        autoComplete="new-password"
+                      />
+                      <button
+                        type="button"
+                        className="password-toggle-btn"
+                        onClick={() => setShowAccountPass(!showAccountPass)}
+                        aria-label={showAccountPass ? 'Ẩn mật khẩu' : 'Hiển thị mật khẩu'}
+                      >
+                        {showAccountPass ? <IconEyeOff /> : <IconEye />}
+                      </button>
+                    </div>
                   </label>
 
                   <label>
                     <span>Xác nhận mật khẩu</span>
-                    <input type="password" value={accountForm.confirmPassword} onChange={(event) => setAccountForm((current) => ({ ...current, confirmPassword: event.target.value }))} />
+                    <div className="password-input-wrap">
+                      <input
+                        type={showAccountConfirmPass ? 'text' : 'password'}
+                        value={accountForm.confirmPassword}
+                        onChange={(event) => setAccountForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+                        placeholder="Nhập lại mật khẩu"
+                        autoComplete="new-password"
+                      />
+                      <button
+                        type="button"
+                        className="password-toggle-btn"
+                        onClick={() => setShowAccountConfirmPass(!showAccountConfirmPass)}
+                        aria-label={showAccountConfirmPass ? 'Ẩn mật khẩu' : 'Hiển thị mật khẩu'}
+                      >
+                        {showAccountConfirmPass ? <IconEyeOff /> : <IconEye />}
+                      </button>
+                    </div>
                   </label>
                 </>
               )}
@@ -845,6 +886,10 @@ export function SettingsPage() {
                   <option value="inactive">Đã vô hiệu hóa</option>
                 </select>
               </label>
+
+              {accountError && (
+                <p className="modal-alert modal-alert--error">{accountError}</p>
+              )}
 
               <div className="modal-actions">
                 <button type="button" className="button-secondary" onClick={() => setAccountFormOpen(false)}>Hủy</button>

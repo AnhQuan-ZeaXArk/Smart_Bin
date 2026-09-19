@@ -38,14 +38,15 @@ router.post('/users', requireAuth, requireRole('ADMIN'), async (request, respons
     const parsed = z.object({
       username: z.string().trim().min(1),
       displayName: z.string().trim().min(1),
-      password: z.string().min(1),
-      confirmPassword: z.string().min(1),
+      password: z.string().min(6, 'Mật khẩu phải có tối thiểu 6 ký tự.'),
+      confirmPassword: z.string().min(6, 'Mật khẩu xác nhận phải có tối thiểu 6 ký tự.'),
       role: roleSchema,
       isActive: z.boolean().optional().default(true)
     }).safeParse(request.body);
 
     if (!parsed.success) {
-      return response.status(400).json({ message: 'Thông tin tài khoản không hợp lệ.' });
+      const firstError = parsed.error.issues[0]?.message ?? 'Thông tin tài khoản không hợp lệ.';
+      return response.status(400).json({ message: firstError });
     }
 
     const { username, displayName, password, confirmPassword, role, isActive } = parsed.data;
@@ -53,6 +54,7 @@ router.post('/users', requireAuth, requireRole('ADMIN'), async (request, respons
     if (!username.trim()) return response.status(400).json({ message: 'Tên người dùng không được để trống.' });
     if (!displayName.trim()) return response.status(400).json({ message: 'Tên hiển thị không được để trống.' });
     if (!password.trim()) return response.status(400).json({ message: 'Mật khẩu không được để trống.' });
+    if (password.length < 6) return response.status(400).json({ message: 'Mật khẩu phải có tối thiểu 6 ký tự.' });
     if (password !== confirmPassword) return response.status(400).json({ message: 'Mật khẩu xác nhận không khớp.' });
 
     const existingUser = await prisma.user.findUnique({ where: { username: username.trim() } });
@@ -176,14 +178,18 @@ router.patch('/users/:id/password', requireAuth, requireRole('ADMIN'), async (re
     if (!userId) return response.status(400).json({ message: 'ID tài khoản không hợp lệ.' });
 
     const parsed = z.object({
-      password: z.string().min(1),
-      confirmPassword: z.string().min(1)
+      password: z.string().min(6, 'Mật khẩu phải có tối thiểu 6 ký tự.'),
+      confirmPassword: z.string().min(6, 'Mật khẩu xác nhận phải có tối thiểu 6 ký tự.')
     }).safeParse(request.body);
 
-    if (!parsed.success) return response.status(400).json({ message: 'Mật khẩu không hợp lệ.' });
+    if (!parsed.success) {
+      const firstError = parsed.error.issues[0]?.message ?? 'Mật khẩu không hợp lệ.';
+      return response.status(400).json({ message: firstError });
+    }
 
     const { password, confirmPassword } = parsed.data;
     if (!password.trim()) return response.status(400).json({ message: 'Mật khẩu không được để trống.' });
+    if (password.length < 6) return response.status(400).json({ message: 'Mật khẩu phải có tối thiểu 6 ký tự.' });
     if (password !== confirmPassword) return response.status(400).json({ message: 'Mật khẩu xác nhận không khớp.' });
 
     const user = await prisma.user.findUnique({ where: { id: userId } });

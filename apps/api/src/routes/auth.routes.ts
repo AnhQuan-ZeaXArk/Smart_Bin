@@ -8,7 +8,7 @@ import { prisma } from '../lib/prisma.js';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
-const loginSchema = z.object({ username: z.string().min(1), password: z.string().min(1) });
+const loginSchema = z.object({ username: z.string().trim().min(1), password: z.string().min(1) });
 
 router.post('/login', async (request, response, next) => {
   try {
