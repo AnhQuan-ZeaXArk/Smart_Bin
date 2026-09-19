@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from './auth-context';
 import {
   DEFAULT_THRESHOLDS,
@@ -7,6 +7,7 @@ import {
   validateSmartBinThresholds,
   type SmartBinThresholds
 } from './threshold-config';
+import { IconShield, IconKey, IconEye, IconEyeOff, IconClose } from './icons';
 
 const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 const ROLE_OPTIONS = ['ADMIN', 'SUPERVISOR', 'WORKER'] as const;
@@ -112,6 +113,24 @@ export function SettingsPage() {
   const [accountMode, setAccountMode] = useState<'create' | 'edit'>('create');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [accountForm, setAccountForm] = useState<AccountFormState>(defaultAccountForm);
+  const [changePasswordModalOpen, setChangePasswordModalOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrentPass, setShowCurrentPass] = useState(false);
+  const [showNewPass, setShowNewPass] = useState(false);
+  const [showConfirmPass, setShowConfirmPass] = useState(false);
+  const [changePasswordError, setChangePasswordError] = useState('');
+  const [changePasswordSuccess, setChangePasswordSuccess] = useState('');
+  const [changePasswordLoading, setChangePasswordLoading] = useState(false);
+
+  const [adminResetAccount, setAdminResetAccount] = useState<AccountUser | null>(null);
+  const [adminNewPassword, setAdminNewPassword] = useState('');
+  const [adminConfirmPassword, setAdminConfirmPassword] = useState('');
+  const [showAdminNewPass, setShowAdminNewPass] = useState(false);
+  const [showAdminConfirmPass, setShowAdminConfirmPass] = useState(false);
+  const [adminResetError, setAdminResetError] = useState('');
+  const [adminResetLoading, setAdminResetLoading] = useState(false);
 
   useEffect(() => {
     const handleConnectionChange = () => setIsOnline(window.navigator.onLine);
@@ -329,26 +348,119 @@ export function SettingsPage() {
     }
   }
 
-  async function resetAccountPassword(accountId: string) {
-    const password = window.prompt('Nhập mật khẩu mới cho tài khoản này:');
-    if (!password || !password.trim()) return;
+  function openChangePasswordModal() {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setShowCurrentPass(false);
+    setShowNewPass(false);
+    setShowConfirmPass(false);
+    setChangePasswordError('');
+    setChangePasswordSuccess('');
+    setChangePasswordLoading(false);
+    setChangePasswordModalOpen(true);
+  }
 
-    const confirmPassword = window.prompt('Xác nhận mật khẩu mới:');
-    if (!confirmPassword) return;
+  function closeChangePasswordModal() {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setChangePasswordModalOpen(false);
+  }
 
-    if (password !== confirmPassword) {
-      setAccountError('Mật khẩu xác nhận không khớp.');
+  async function submitChangePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setChangePasswordError('');
+    setChangePasswordSuccess('');
+
+    if (!currentPassword.trim()) {
+      setChangePasswordError('Mật khẩu hiện tại không được để trống.');
       return;
     }
 
+    if (!newPassword.trim()) {
+      setChangePasswordError('Mật khẩu mới không được để trống.');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setChangePasswordError('Mật khẩu mới không hợp lệ (yêu cầu tối thiểu 6 ký tự).');
+      return;
+    }
+
+    if (newPassword === currentPassword) {
+      setChangePasswordError('Mật khẩu mới không được trùng với mật khẩu hiện tại.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setChangePasswordError('Xác nhận mật khẩu mới không khớp.');
+      return;
+    }
+
+    setChangePasswordLoading(true);
+
     try {
-      const response = await fetch(`${apiUrl}/api/users/${accountId}/password`, {
+      // Backend API check:
+      // Endpoint tự đổi mật khẩu kèm kiểm tra mật khẩu hiện tại chưa tồn tại trên backend.
+      // (Backend hiện chỉ có PATCH /api/users/:id/password dành cho quyền ADMIN và không xác thực currentPassword).
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      setChangePasswordError('Hệ thống hiện tại chưa cấu hình API đổi mật khẩu cá nhân (Backend endpoint xác thực mật khẩu hiện tại chưa tồn tại). Vui lòng liên hệ quản trị viên.');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } finally {
+      setChangePasswordLoading(false);
+    }
+  }
+
+  function openAdminResetPassword(account: AccountUser) {
+    setAdminResetAccount(account);
+    setAdminNewPassword('');
+    setAdminConfirmPassword('');
+    setShowAdminNewPass(false);
+    setShowAdminConfirmPass(false);
+    setAdminResetError('');
+    setAdminResetLoading(false);
+  }
+
+  function closeAdminResetPassword() {
+    setAdminResetAccount(null);
+    setAdminNewPassword('');
+    setAdminConfirmPassword('');
+    setAdminResetError('');
+  }
+
+  async function submitAdminResetPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!adminResetAccount) return;
+
+    if (!adminNewPassword.trim()) {
+      setAdminResetError('Mật khẩu mới không được để trống.');
+      return;
+    }
+
+    if (adminNewPassword.length < 6) {
+      setAdminResetError('Mật khẩu mới phải có tối thiểu 6 ký tự.');
+      return;
+    }
+
+    if (adminNewPassword !== adminConfirmPassword) {
+      setAdminResetError('Mật khẩu xác nhận không khớp.');
+      return;
+    }
+
+    setAdminResetLoading(true);
+    setAdminResetError('');
+
+    try {
+      const response = await fetch(`${apiUrl}/api/users/${adminResetAccount.id}/password`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ password, confirmPassword })
+        body: JSON.stringify({ password: adminNewPassword, confirmPassword: adminConfirmPassword })
       });
 
       const payload = await response.json().catch(() => ({})) as { message?: string };
@@ -356,10 +468,12 @@ export function SettingsPage() {
         throw new Error(payload.message ?? 'Không thể cập nhật mật khẩu.');
       }
 
-      setAccountError('');
-      setAccountSuccess('Mật khẩu đã được cập nhật.');
+      setAccountSuccess(`Đã đặt lại mật khẩu cho tài khoản "${adminResetAccount.username}".`);
+      closeAdminResetPassword();
     } catch (error) {
-      setAccountError(error instanceof Error ? error.message : 'Không thể cập nhật mật khẩu.');
+      setAdminResetError(error instanceof Error ? error.message : 'Không thể cập nhật mật khẩu.');
+    } finally {
+      setAdminResetLoading(false);
     }
   }
 
@@ -559,7 +673,10 @@ export function SettingsPage() {
           </div>
 
           <div className="settings-footer settings-footer--space">
-            <button type="button" className="button-secondary" disabled={!canEdit}>Đổi mật khẩu</button>
+            <button type="button" className="button-secondary" onClick={openChangePasswordModal}>
+              <IconKey />
+              Đổi mật khẩu
+            </button>
             <p className="settings-note">Quản lý mật khẩu sẽ được thực hiện theo quy trình bảo mật của hệ thống.</p>
           </div>
         </section>
@@ -638,7 +755,7 @@ export function SettingsPage() {
                       <td>
                         <div className="account-actions">
                           <button type="button" className="table-button" onClick={() => openEditAccount(account)}>Chỉnh sửa</button>
-                          <button type="button" className="table-button" onClick={() => resetAccountPassword(account.id)}>Đổi mật khẩu</button>
+                          <button type="button" className="table-button" onClick={() => openAdminResetPassword(account)}>Đổi mật khẩu</button>
                           <button type="button" className="table-button table-button--danger" onClick={() => toggleAccountStatus(account.id, !account.isActive)}>{account.isActive ? 'Vô hiệu hóa' : 'Kích hoạt'}</button>
                         </div>
                       </td>
@@ -712,6 +829,186 @@ export function SettingsPage() {
               <div className="modal-actions">
                 <button type="button" className="button-secondary" onClick={() => setAccountFormOpen(false)}>Hủy</button>
                 <button type="submit" className="button-primary">{accountMode === 'create' ? 'Thêm tài khoản' : 'Lưu thay đổi'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {changePasswordModalOpen && (
+        <div className="modal-backdrop" onClick={closeChangePasswordModal}>
+          <div className="account-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="change-pw-title">
+            <div className="modal-header">
+              <div className="modal-title-wrap">
+                <div className="modal-header-icon-box">
+                  <IconShield width="22" height="22" />
+                </div>
+                <div className="modal-title-text">
+                  <h3 id="change-pw-title">Đổi mật khẩu</h3>
+                  <p>Cập nhật mật khẩu bảo mật cho tài khoản cá nhân.</p>
+                </div>
+              </div>
+              <button type="button" className="close-button" onClick={closeChangePasswordModal} aria-label="Đóng">
+                <IconClose />
+              </button>
+            </div>
+
+            <form className="account-form" onSubmit={submitChangePassword}>
+              <label>
+                <span>Mật khẩu hiện tại</span>
+                <div className="password-input-wrap">
+                  <input
+                    type={showCurrentPass ? 'text' : 'password'}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Nhập mật khẩu hiện tại"
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowCurrentPass(!showCurrentPass)}
+                    aria-label={showCurrentPass ? 'Ẩn mật khẩu' : 'Hiển thị mật khẩu'}
+                  >
+                    {showCurrentPass ? <IconEyeOff /> : <IconEye />}
+                  </button>
+                </div>
+              </label>
+
+              <label>
+                <span>Mật khẩu mới</span>
+                <div className="password-input-wrap">
+                  <input
+                    type={showNewPass ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Tối thiểu 6 ký tự"
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowNewPass(!showNewPass)}
+                    aria-label={showNewPass ? 'Ẩn mật khẩu' : 'Hiển thị mật khẩu'}
+                  >
+                    {showNewPass ? <IconEyeOff /> : <IconEye />}
+                  </button>
+                </div>
+              </label>
+
+              <label>
+                <span>Xác nhận mật khẩu mới</span>
+                <div className="password-input-wrap">
+                  <input
+                    type={showConfirmPass ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Nhập lại mật khẩu mới"
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowConfirmPass(!showConfirmPass)}
+                    aria-label={showConfirmPass ? 'Ẩn mật khẩu' : 'Hiển thị mật khẩu'}
+                  >
+                    {showConfirmPass ? <IconEyeOff /> : <IconEye />}
+                  </button>
+                </div>
+              </label>
+
+              {changePasswordError && (
+                <p className="modal-alert modal-alert--error">{changePasswordError}</p>
+              )}
+              {changePasswordSuccess && (
+                <p className="modal-alert modal-alert--success">{changePasswordSuccess}</p>
+              )}
+
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={closeChangePasswordModal} disabled={changePasswordLoading}>
+                  Hủy
+                </button>
+                <button type="submit" className="button-primary" disabled={changePasswordLoading}>
+                  {changePasswordLoading ? 'Đang xử lý...' : 'Đổi mật khẩu'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {adminResetAccount && (
+        <div className="modal-backdrop" onClick={closeAdminResetPassword}>
+          <div className="account-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="admin-reset-pw-title">
+            <div className="modal-header">
+              <div className="modal-title-wrap">
+                <div className="modal-header-icon-box">
+                  <IconKey width="20" height="20" />
+                </div>
+                <div className="modal-title-text">
+                  <h3 id="admin-reset-pw-title">Đặt lại mật khẩu</h3>
+                  <p>Tài khoản: <strong>{adminResetAccount.username}</strong> ({adminResetAccount.displayName})</p>
+                </div>
+              </div>
+              <button type="button" className="close-button" onClick={closeAdminResetPassword} aria-label="Đóng">
+                <IconClose />
+              </button>
+            </div>
+
+            <form className="account-form" onSubmit={submitAdminResetPassword}>
+              <label>
+                <span>Mật khẩu mới</span>
+                <div className="password-input-wrap">
+                  <input
+                    type={showAdminNewPass ? 'text' : 'password'}
+                    value={adminNewPassword}
+                    onChange={(e) => setAdminNewPassword(e.target.value)}
+                    placeholder="Nhập mật khẩu mới (tối thiểu 6 ký tự)"
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowAdminNewPass(!showAdminNewPass)}
+                    aria-label={showAdminNewPass ? 'Ẩn mật khẩu' : 'Hiển thị mật khẩu'}
+                  >
+                    {showAdminNewPass ? <IconEyeOff /> : <IconEye />}
+                  </button>
+                </div>
+              </label>
+
+              <label>
+                <span>Xác nhận mật khẩu mới</span>
+                <div className="password-input-wrap">
+                  <input
+                    type={showAdminConfirmPass ? 'text' : 'password'}
+                    value={adminConfirmPassword}
+                    onChange={(e) => setAdminConfirmPassword(e.target.value)}
+                    placeholder="Nhập lại mật khẩu mới"
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowAdminConfirmPass(!showAdminConfirmPass)}
+                    aria-label={showAdminConfirmPass ? 'Ẩn mật khẩu' : 'Hiển thị mật khẩu'}
+                  >
+                    {showAdminConfirmPass ? <IconEyeOff /> : <IconEye />}
+                  </button>
+                </div>
+              </label>
+
+              {adminResetError && (
+                <p className="modal-alert modal-alert--error">{adminResetError}</p>
+              )}
+
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={closeAdminResetPassword} disabled={adminResetLoading}>
+                  Hủy
+                </button>
+                <button type="submit" className="button-primary" disabled={adminResetLoading}>
+                  {adminResetLoading ? 'Đang cập nhật...' : 'Xác nhận đổi'}
+                </button>
               </div>
             </form>
           </div>

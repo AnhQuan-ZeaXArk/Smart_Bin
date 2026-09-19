@@ -1,7 +1,8 @@
-﻿import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAuth, type RoleName } from './auth-context';
 import { translateCardStatus, translateEmployeeStatus } from './i18n-labels';
+import { IconPlus, IconEdit, IconBan, IconCheck, IconUser, IconClose } from './icons';
 
 export type EmployeeStatus = 'ACTIVE' | 'INACTIVE';
 export type CardStatus = 'ACTIVE' | 'REVOKED' | 'LOST' | 'EXPIRED';
@@ -92,6 +93,18 @@ function EmployeeForm({
 
   return (
     <form className="modal-form" onSubmit={submit}>
+      <div className="modal-header">
+        <div>
+          <div className="eyebrow">QUẢN LÝ NHÂN VIÊN</div>
+          <h3 style={{ margin: '6px 0 0', color: '#183c32', fontSize: '22px', fontWeight: 700 }}>
+            {employee ? 'Chỉnh sửa nhân viên' : 'Thêm nhân viên mới'}
+          </h3>
+        </div>
+        <button type="button" className="close-button" onClick={onCancel} aria-label="Đóng">
+          <IconClose />
+        </button>
+      </div>
+
       <label>
         Mã nhân viên
         <input value={code} disabled={Boolean(employee)} onChange={(e) => setCode(e.target.value)} required />
@@ -120,7 +133,9 @@ function EmployeeForm({
         <button type="button" className="button-secondary" onClick={onCancel}>
           Hủy
         </button>
-        <button type="submit">{employee ? 'Lưu thay đổi' : 'Thêm nhân viên'}</button>
+        <button type="submit" className="button-primary">
+          {employee ? 'Lưu thay đổi' : 'Thêm nhân viên'}
+        </button>
       </div>
     </form>
   );
@@ -177,10 +192,26 @@ export function EmployeeListPage() {
   }
 
   async function deactivate(employee: Employee) {
-    if (!window.confirm(`Vô hiệu hóa ${employee.employeeCode}?`)) return;
+    if (!window.confirm(`Vô hiệu hóa nhân viên ${employee.employeeCode} (${employee.fullName})?`)) return;
 
     const result = await api<{ employee: Employee }>(`/api/employees/${employee.id}`, token!, {
       method: 'DELETE',
+    });
+
+    setEmployees((items) => items.map((item) => (item.id === employee.id ? result.employee : item)));
+  }
+
+  async function activate(employee: Employee) {
+    if (!window.confirm(`Kích hoạt lại nhân viên ${employee.employeeCode} (${employee.fullName})?`)) return;
+
+    const result = await api<{ employee: Employee }>(`/api/employees/${employee.id}`, token!, {
+      method: 'PUT',
+      body: JSON.stringify({
+        fullName: employee.fullName,
+        phone: employee.phone,
+        email: employee.email,
+        status: 'ACTIVE',
+      }),
     });
 
     setEmployees((items) => items.map((item) => (item.id === employee.id ? result.employee : item)));
@@ -195,8 +226,9 @@ export function EmployeeListPage() {
           <p>Quản lý thông tin nhân viên và thẻ NFC</p>
         </div>
         {canManage && (
-          <button type="button" onClick={() => setEditing('new')}>
-            + Thêm nhân viên
+          <button type="button" className="button-primary" onClick={() => setEditing('new')}>
+            <IconPlus />
+            <span>Thêm nhân viên</span>
           </button>
         )}
       </div>
@@ -209,8 +241,8 @@ export function EmployeeListPage() {
       </label>
 
       {editing && (
-        <div className="modal-backdrop">
-          <div className="modal-card">
+        <div className="modal-backdrop" onClick={() => setEditing(null)}>
+          <div className="account-modal" onClick={(e) => e.stopPropagation()}>
             <EmployeeForm
               employee={editing === 'new' ? undefined : editing}
               onCancel={() => setEditing(null)}
@@ -242,7 +274,11 @@ export function EmployeeListPage() {
             <tbody>
               {filtered.map((employee) => (
                 <tr key={employee.id}>
-                  <td>{employee.employeeCode}</td>
+                  <td>
+                    <Link className="text-link" to={`/employees/${employee.id}`}>
+                      {employee.employeeCode}
+                    </Link>
+                  </td>
                   <td>{employee.fullName}</td>
                   <td>{employee.phone || '—'}</td>
                   <td>{employee.email || '—'}</td>
@@ -254,12 +290,40 @@ export function EmployeeListPage() {
                   <td>{employee.activeCardStatus ? translateCardStatus(employee.activeCardStatus) : 'Chưa gán'}</td>
                   {canManage && (
                     <td>
-                      <button type="button" onClick={() => setEditing(employee)}>
-                        Sửa
-                      </button>
-                      <button type="button" onClick={() => void deactivate(employee)}>
-                        Vô hiệu hóa
-                      </button>
+                      <div className="table-actions">
+                        <button
+                          type="button"
+                          className="table-button table-button--edit"
+                          onClick={() => setEditing(employee)}
+                          aria-label={`Sửa thông tin ${employee.fullName}`}
+                        >
+                          <IconEdit />
+                          <span>Sửa</span>
+                        </button>
+                        {employee.status === 'ACTIVE' ? (
+                          <button
+                            type="button"
+                            className="table-button table-button--danger"
+                            onClick={() => void deactivate(employee)}
+                            aria-label={`Vô hiệu hóa ${employee.fullName}`}
+                            disabled={!admin}
+                            title={!admin ? 'Chỉ quản trị viên (ADMIN) mới có quyền vô hiệu hóa' : undefined}
+                          >
+                            <IconBan />
+                            <span>Vô hiệu hóa</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="table-button table-button--success"
+                            onClick={() => void activate(employee)}
+                            aria-label={`Kích hoạt lại ${employee.fullName}`}
+                          >
+                            <IconCheck />
+                            <span>Kích hoạt</span>
+                          </button>
+                        )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -369,20 +433,34 @@ export function EmployeeDetailPage() {
 export function NfcCardListPage() {
   const { token, user } = useAuth();
   const [cards, setCards] = useState<NfcCard[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<'ALL' | CardStatus>('ALL');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [newUid, setNewUid] = useState('');
+  const [newEmployeeId, setNewEmployeeId] = useState('');
+  const [addLoading, setAddLoading] = useState(false);
+  const [addError, setAddError] = useState('');
+
+  const [assignTargetCard, setAssignTargetCard] = useState<NfcCard | null>(null);
+  const [assignEmployeeId, setAssignEmployeeId] = useState('');
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [assignError, setAssignError] = useState('');
 
   const canManage = user!.role === 'ADMIN' || user!.role === 'SUPERVISOR';
   const admin = user!.role === 'ADMIN';
 
   const load = useCallback(async () => {
     try {
-      const [cardResult] = await Promise.all([
+      const [cardResult, empResult] = await Promise.all([
         api<{ cards: NfcCard[] }>('/api/nfc-cards', token!),
+        api<{ employees: Employee[] }>('/api/employees', token!).catch(() => ({ employees: [] })),
       ]);
       setCards(cardResult.cards);
+      setEmployees(empResult.employees);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Không thể tải danh sách thẻ NFC');
     } finally {
@@ -414,16 +492,71 @@ export function NfcCardListPage() {
     setCards((items) => items.map((item) => (item.id === card.id ? result.card : item)));
   }
 
-  async function assign(card: NfcCard) {
-    const employeeId = window.prompt(`Nhập mã nhân viên (Employee ID) cho thẻ ${card.uid}`);
-    if (!employeeId) return;
+  async function submitAddCard(event: FormEvent) {
+    event.preventDefault();
+    const uid = newUid.trim();
+    if (!uid) {
+      setAddError('UID thẻ không được để trống.');
+      return;
+    }
+    if (!newEmployeeId) {
+      setAddError('Vui lòng chọn nhân viên để gán thẻ.');
+      return;
+    }
 
-    const result = await api<{ card: NfcCard }>(`/api/nfc-cards/${card.id}/assign`, token!, {
-      method: 'POST',
-      body: JSON.stringify({ employeeId }),
-    });
+    setAddLoading(true);
+    setAddError('');
+    try {
+      const result = await api<{ card: NfcCard }>('/api/nfc-cards', token!, {
+        method: 'POST',
+        body: JSON.stringify({ uid, employeeId: newEmployeeId }),
+      });
+      setCards((items) => [result.card, ...items]);
+      setAddModalOpen(false);
+      setNewUid('');
+      setNewEmployeeId('');
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : 'Không thể tạo thẻ NFC.');
+    } finally {
+      setAddLoading(false);
+    }
+  }
 
-    setCards((items) => items.map((item) => (item.id === card.id ? result.card : item)));
+  async function submitAssign(event: FormEvent) {
+    event.preventDefault();
+    if (!assignTargetCard) return;
+    if (!assignEmployeeId) {
+      setAssignError('Vui lòng chọn nhân viên.');
+      return;
+    }
+
+    setAssignLoading(true);
+    setAssignError('');
+    try {
+      const result = await api<{ card: NfcCard }>(`/api/nfc-cards/${assignTargetCard.id}/assign`, token!, {
+        method: 'POST',
+        body: JSON.stringify({ employeeId: assignEmployeeId }),
+      });
+      setCards((items) => items.map((item) => (item.id === assignTargetCard.id ? result.card : item)));
+      setAssignTargetCard(null);
+      setAssignEmployeeId('');
+    } catch (e) {
+      setAssignError(e instanceof Error ? e.message : 'Không thể gán thẻ cho nhân viên.');
+    } finally {
+      setAssignLoading(false);
+    }
+  }
+
+  async function revoke(card: NfcCard) {
+    if (!window.confirm(`Bạn có chắc chắn muốn thu hồi thẻ NFC ${card.uid}?`)) return;
+    try {
+      const result = await api<{ card: NfcCard }>(`/api/nfc-cards/${card.id}/revoke`, token!, {
+        method: 'POST',
+      });
+      setCards((items) => items.map((item) => (item.id === card.id ? result.card : item)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Không thể thu hồi thẻ NFC.');
+    }
   }
 
   return (
@@ -437,20 +570,16 @@ export function NfcCardListPage() {
         {admin && (
           <button
             type="button"
+            className="button-primary"
             onClick={() => {
-              const uid = window.prompt('Nhập UID thẻ NFC');
-              const employeeId = window.prompt('Nhập mã nhân viên (Employee ID)');
-              if (uid && employeeId) {
-                void api<{ card: NfcCard }>('/api/nfc-cards', token!, {
-                  method: 'POST',
-                  body: JSON.stringify({ uid, employeeId }),
-                })
-                  .then((result) => setCards((items) => [result.card, ...items]))
-                  .catch((e) => setError(e instanceof Error ? e.message : 'Không thể tạo thẻ.'));
-              }
+              setAddModalOpen(true);
+              setNewUid('');
+              setNewEmployeeId(employees[0]?.id ?? '');
+              setAddError('');
             }}
           >
-            + Thêm thẻ
+            <IconPlus />
+            <span>Thêm thẻ NFC</span>
           </button>
         )}
       </div>
@@ -492,7 +621,7 @@ export function NfcCardListPage() {
             <tbody>
               {filtered.map((card) => (
                 <tr key={card.id}>
-                  <td>{card.uid}</td>
+                  <td><strong>{card.uid}</strong></td>
                   <td>{card.employee ? `${card.employee.fullName} (${card.employee.employeeCode})` : 'Chưa gán'}</td>
                   <td>
                     <span className={`badge badge-${statusClass(card.status)}`}>{translateCardStatus(card.status)}</span>
@@ -501,15 +630,44 @@ export function NfcCardListPage() {
                   <td>{date(card.revokedAt)}</td>
                   {canManage && (
                     <td>
-                      <select value={card.status} onChange={(e) => void changeStatus(card, e.target.value as CardStatus)}>
-                        <option value="ACTIVE">Đang hoạt động</option>
-                        <option value="REVOKED">Đã thu hồi</option>
-                        <option value="LOST">Đã mất</option>
-                        <option value="EXPIRED">Đã hết hạn</option>
-                      </select>
-                      <button type="button" onClick={() => void assign(card)}>
-                        Gán nhân viên
-                      </button>
+                      <div className="table-actions">
+                        <select
+                          className="table-select"
+                          value={card.status}
+                          onChange={(e) => void changeStatus(card, e.target.value as CardStatus)}
+                          aria-label={`Thay đổi trạng thái thẻ ${card.uid}`}
+                        >
+                          <option value="ACTIVE">Đang hoạt động</option>
+                          <option value="REVOKED">Đã thu hồi</option>
+                          <option value="LOST">Đã mất</option>
+                          <option value="EXPIRED">Đã hết hạn</option>
+                        </select>
+                        <button
+                          type="button"
+                          className="table-button table-button--outline"
+                          onClick={() => {
+                            setAssignTargetCard(card);
+                            setAssignEmployeeId(card.employee?.id ?? (employees[0]?.id ?? ''));
+                            setAssignError('');
+                          }}
+                          aria-label={`Gán nhân viên cho thẻ ${card.uid}`}
+                        >
+                          <IconUser />
+                          <span>Gán nhân viên</span>
+                        </button>
+                        {card.status === 'ACTIVE' && (
+                          <button
+                            type="button"
+                            className="table-button table-button--danger"
+                            onClick={() => void revoke(card)}
+                            aria-label={`Thu hồi thẻ ${card.uid}`}
+                            title="Thu hồi thẻ NFC"
+                          >
+                            <IconBan />
+                            <span>Thu hồi</span>
+                          </button>
+                        )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -520,6 +678,121 @@ export function NfcCardListPage() {
       )}
 
       {!loading && filtered.length === 0 && <p className="muted">Không có thẻ NFC nào phù hợp với bộ lọc hiện tại.</p>}
+
+      {addModalOpen && (
+        <div className="modal-backdrop" onClick={() => setAddModalOpen(false)}>
+          <div className="account-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="add-nfc-title">
+            <div className="modal-header">
+              <div>
+                <div className="eyebrow">QUẢN LÝ THẺ NFC</div>
+                <h3 id="add-nfc-title" style={{ margin: '6px 0 0', color: '#183c32', fontSize: '22px', fontWeight: 700 }}>
+                  Thêm thẻ NFC mới
+                </h3>
+              </div>
+              <button type="button" className="close-button" onClick={() => setAddModalOpen(false)} aria-label="Đóng">
+                <IconClose />
+              </button>
+            </div>
+
+            <form className="account-form" onSubmit={submitAddCard}>
+              <label>
+                <span>UID thẻ NFC</span>
+                <input
+                  value={newUid}
+                  onChange={(e) => setNewUid(e.target.value)}
+                  placeholder="Ví dụ: 04A1B2C3D4"
+                  required
+                />
+              </label>
+
+              <label>
+                <span>Gán cho nhân viên</span>
+                {employees.length > 0 ? (
+                  <select value={newEmployeeId} onChange={(e) => setNewEmployeeId(e.target.value)} required>
+                    {employees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.fullName} ({emp.employeeCode}) {emp.status === 'INACTIVE' ? '- Không hoạt động' : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={newEmployeeId}
+                    onChange={(e) => setNewEmployeeId(e.target.value)}
+                    placeholder="Nhập mã ID nhân viên"
+                    required
+                  />
+                )}
+              </label>
+
+              {addError && <p className="modal-alert modal-alert--error">{addError}</p>}
+
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={() => setAddModalOpen(false)} disabled={addLoading}>
+                  Hủy
+                </button>
+                <button type="submit" className="button-primary" disabled={addLoading}>
+                  {addLoading ? 'Đang tạo...' : 'Thêm thẻ NFC'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {assignTargetCard && (
+        <div className="modal-backdrop" onClick={() => setAssignTargetCard(null)}>
+          <div className="account-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="assign-nfc-title">
+            <div className="modal-header">
+              <div>
+                <div className="eyebrow">QUẢN LÝ THẺ NFC</div>
+                <h3 id="assign-nfc-title" style={{ margin: '6px 0 0', color: '#183c32', fontSize: '22px', fontWeight: 700 }}>
+                  Gán thẻ cho nhân viên
+                </h3>
+                <p style={{ margin: '4px 0 0', color: '#6d7f78', fontSize: '13px' }}>
+                  UID thẻ: <strong>{assignTargetCard.uid}</strong>
+                </p>
+              </div>
+              <button type="button" className="close-button" onClick={() => setAssignTargetCard(null)} aria-label="Đóng">
+                <IconClose />
+              </button>
+            </div>
+
+            <form className="account-form" onSubmit={submitAssign}>
+              <label>
+                <span>Chọn nhân viên</span>
+                {employees.length > 0 ? (
+                  <select value={assignEmployeeId} onChange={(e) => setAssignEmployeeId(e.target.value)} required>
+                    {employees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.fullName} ({emp.employeeCode}) {emp.status === 'INACTIVE' ? '- Không hoạt động' : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={assignEmployeeId}
+                    onChange={(e) => setAssignEmployeeId(e.target.value)}
+                    placeholder="Nhập mã ID nhân viên"
+                    required
+                  />
+                )}
+              </label>
+
+              {assignError && <p className="modal-alert modal-alert--error">{assignError}</p>}
+
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={() => setAssignTargetCard(null)} disabled={assignLoading}>
+                  Hủy
+                </button>
+                <button type="submit" className="button-primary" disabled={assignLoading}>
+                  {assignLoading ? 'Đang gán...' : 'Xác nhận gán'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
