@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleName {
+  ADMIN
+  SUPERVISOR
+  WORKER
+}
+
+enum BinStatus {
+  ONLINE
+  OFFLINE
+  MAINTENANCE
+}
+
+enum CollectionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum AlertType {
+  NEARLY_FULL
+  CRITICAL
+  DEVICE_OFFLINE
+  SENSOR_ABNORMAL
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum DeviceType {
+  RASPBERRY_PI
+  ULTRASONIC_SENSOR
+  CAMERA
+  MQTT
+}
+
+enum DeviceStatusEnum {
+  ONLINE
+  WARNING
+  OFFLINE
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        RoleName @unique
+  description String?
+  users       User[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  displayName  String?
+  passwordHash String
+  roleId       String
+  isActive     Boolean  @default(true)
+  role         Role     @relation(fields: [roleId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model DeviceStatus {
+  id              String           @id @default(cuid())
+  deviceId        String           @unique
+  deviceName      String
+  deviceType      DeviceType
+  status          DeviceStatusEnum @default(OFFLINE)
+  lastSeen        DateTime         @default(now())
+  lastHeartbeat   DateTime?
+  firmwareVersion String?
+  ipAddress       String?
+  uptime          Int?
+  metadata        String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([deviceType, status])
+  @@index([lastSeen])
+}
+
+model Bin {
+  id                String             @id @default(cuid())
+  binCode           String             @unique
+  name              String
+  location          String
+  latitude          Float?
+  longitude         Float?
+  capacity          Int
+  currentFillLevel  Int                @default(0)
+  status            BinStatus          @default(OFFLINE)
+  isActive          Boolean            @default(true)
+  lastSeen          DateTime?
+  sensorReadings    SensorReading[]
+  collectionRecords CollectionRecord[]
+  alerts            Alert[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@index([isActive, status])
+}
+
+model SensorReading {
+  id        String   @id @default(cuid())
+  binId     String
+  distance  Float
+  fillLevel Int
+  timestamp DateTime @default(now())
+  bin       Bin      @relation(fields: [binId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([binId, timestamp])
+}
+
+model CollectionRecord {
+  id              String           @id @default(cuid())
+  binId           String
+  collectedBy     String?
+  collectedAt     DateTime         @default(now())
+  fillLevelBefore Int
+  fillLevelAfter  Int?
+  status          CollectionStatus @default(PENDING)
+  notes           String?
+  bin             Bin              @relation(fields: [binId], references: [id])
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([binId, collectedAt])
+}
+
+model Alert {
+  id         String        @id @default(cuid())
+  binId      String?
+  type       AlertType
+  severity   AlertSeverity
+  message    String
+  isResolved Boolean       @default(false)
+  createdAt  DateTime      @default(now())
+  resolvedAt DateTime?
+  bin        Bin?          @relation(fields: [binId], references: [id])
+
+  @@index([isResolved, createdAt])
+}
