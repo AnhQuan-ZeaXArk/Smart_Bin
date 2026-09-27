@@ -1,10 +1,10 @@
-﻿import { BrowserRouter, NavLink, Route, Routes, useNavigate } from 'react-router-dom';
+import { BrowserRouter, NavLink, Route, Routes, useNavigate } from 'react-router-dom';
 import { AuthProvider, LoginPage, ProtectedRoute } from './auth';
 import { useAuth } from './auth-context';
 import { appRoutes } from './route-config';
 import { BinDetailPage, BinListPage } from './bins';
-import { EmployeeDetailPage, EmployeeListPage, NfcCardListPage } from './employee-nfc';
-import { AccessLogsPage, AlertsPage, DashboardPage, SensorHistoryPage } from './dashboard';
+import { DeviceListPage } from './devices';
+import { AlertsPage, DashboardPage, SensorHistoryPage } from './dashboard';
 import { SettingsPage } from './settings';
 import './App.css';
 
@@ -71,16 +71,13 @@ function AppShell() {
           <Route path="/dashboard" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><DashboardPage /></ProtectedRoute>} />
           <Route path="/bins" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><BinListPage /></ProtectedRoute>} />
           <Route path="/bins/:id" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><BinDetailPage /></ProtectedRoute>} />
-          <Route path="/employees" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><EmployeeListPage /></ProtectedRoute>} />
-          <Route path="/employees/:id" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><EmployeeDetailPage /></ProtectedRoute>} />
-          <Route path="/nfc-cards" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><NfcCardListPage /></ProtectedRoute>} />
+          <Route path="/devices" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><DeviceListPage /></ProtectedRoute>} />
           <Route path="/sensor-history" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR']}><SensorHistoryPage /></ProtectedRoute>} />
-          <Route path="/access-logs" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR']}><AccessLogsPage /></ProtectedRoute>} />
           <Route path="/alerts" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR']}><AlertsPage /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><SettingsPage /></ProtectedRoute>} />
 
           {appRoutes
-            .filter((route) => !['/dashboard', '/bins', '/employees', '/nfc-cards', '/sensor-history', '/access-logs', '/alerts', '/settings'].includes(route.path))
+            .filter((route) => !['/dashboard', '/bins', '/devices', '/sensor-history', '/alerts', '/settings'].includes(route.path))
             .map((route) => (
               <Route
                 key={route.path}

@@ -13,20 +13,19 @@ function getUserId(value: string | string[] | undefined) {
   return typeof id === 'string' && id.trim().length > 0 ? id : null;
 }
 
-function serializeUser(user: { id: string; username: string; isActive: boolean; role: { name: string }; employee: { id: string; fullName: string } | null }) {
+function serializeUser(user: { id: string; username: string; displayName?: string | null; isActive: boolean; role: { name: string } }) {
   return {
     id: user.id,
     username: user.username,
-    displayName: user.employee?.fullName ?? user.username,
+    displayName: user.displayName ?? user.username,
     role: user.role.name,
-    isActive: user.isActive,
-    employee: user.employee ? { id: user.employee.id, fullName: user.employee.fullName } : null
+    isActive: user.isActive
   };
 }
 
 router.get('/users', requireAuth, requireRole('ADMIN'), async (_request, response, next) => {
   try {
-    const users = await prisma.user.findMany({ include: { role: true, employee: true }, orderBy: { createdAt: 'desc' } });
+    const users = await prisma.user.findMany({ include: { role: true }, orderBy: { createdAt: 'desc' } });
     return response.json({ users: users.map(serializeUser) });
   } catch (error) {
     return next(error);
@@ -63,24 +62,15 @@ router.post('/users', requireAuth, requireRole('ADMIN'), async (request, respons
     const assignedRole = await prisma.role.findUnique({ where: { name: role } });
     if (!assignedRole) return response.status(400).json({ message: 'Vai trò không hợp lệ.' });
 
-    const employeeCode = `NV-${Date.now().toString().slice(-6)}`;
-    const employee = await prisma.employee.create({
-      data: {
-        employeeCode,
-        fullName: displayName.trim(),
-        status: 'ACTIVE'
-      }
-    });
-
     const createdUser = await prisma.user.create({
       data: {
         username: username.trim(),
+        displayName: displayName.trim(),
         passwordHash: await bcrypt.hash(password, 12),
         roleId: assignedRole.id,
-        employeeId: employee.id,
         isActive
       },
-      include: { role: true, employee: true }
+      include: { role: true }
     });
 
     return response.status(201).json({ user: serializeUser(createdUser), message: 'Tạo tài khoản thành công.' });
@@ -103,7 +93,7 @@ router.patch('/users/:id', requireAuth, requireRole('ADMIN'), async (request, re
 
     if (!parsed.success) return response.status(400).json({ message: 'Thông tin cập nhật không hợp lệ.' });
 
-    const existingUser = await prisma.user.findUnique({ where: { id: userId }, include: { role: true, employee: true } });
+    const existingUser = await prisma.user.findUnique({ where: { id: userId }, include: { role: true } });
     if (!existingUser) return response.status(404).json({ message: 'Không tìm thấy tài khoản.' });
 
     const nextUsername = parsed.data.username?.trim();
@@ -121,6 +111,10 @@ router.patch('/users/:id', requireAuth, requireRole('ADMIN'), async (request, re
       updateData.username = nextUsername;
     }
 
+    if (parsed.data.displayName) {
+      updateData.displayName = parsed.data.displayName.trim();
+    }
+
     if (parsed.data.isActive !== undefined) {
       updateData.isActive = parsed.data.isActive;
     }
@@ -129,18 +123,10 @@ router.patch('/users/:id', requireAuth, requireRole('ADMIN'), async (request, re
       updateData.role = { connect: { id: nextRole.id } };
     }
 
-    if (existingUser.employee && parsed.data.displayName) {
-      updateData.employee = {
-        update: {
-          fullName: parsed.data.displayName.trim()
-        }
-      };
-    }
-
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: updateData,
-      include: { role: true, employee: true }
+      include: { role: true }
     });
 
     return response.json({ user: serializeUser(updatedUser), message: 'Cập nhật tài khoản thành công.' });
@@ -157,13 +143,13 @@ router.patch('/users/:id/status', requireAuth, requireRole('ADMIN'), async (requ
     const parsed = z.object({ isActive: z.boolean() }).safeParse(request.body);
     if (!parsed.success) return response.status(400).json({ message: 'Trạng thái không hợp lệ.' });
 
-    const user = await prisma.user.findUnique({ where: { id: userId }, include: { role: true, employee: true } });
+    const user = await prisma.user.findUnique({ where: { id: userId }, include: { role: true } });
     if (!user) return response.status(404).json({ message: 'Không tìm thấy tài khoản.' });
 
     const updated = await prisma.user.update({
       where: { id: userId },
       data: { isActive: parsed.data.isActive },
-      include: { role: true, employee: true }
+      include: { role: true }
     });
 
     return response.json({ user: serializeUser(updated), message: parsed.data.isActive ? 'Tài khoản đã được kích hoạt.' : 'Tài khoản đã được vô hiệu hóa.' });
@@ -206,10 +192,14 @@ router.patch('/users/:id/password', requireAuth, requireRole('ADMIN'), async (re
   }
 });
 
-router.get('/employees', requireAuth, requireRole('ADMIN', 'SUPERVISOR'), async (_request, response, next) => {
+router.get('/collections', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async (_request, response, next) => {
   try {
-    const employees = await prisma.employee.findMany({ orderBy: { employeeCode: 'asc' } });
-    return response.json({ employees });
+    const collections = await prisma.collectionRecord.findMany({
+      include: { bin: { select: { binCode: true, name: true } } },
+      orderBy: { collectedAt: 'desc' },
+      take: 200
+    });
+    return response.json({ collections });
   } catch (error) {
     return next(error);
   }

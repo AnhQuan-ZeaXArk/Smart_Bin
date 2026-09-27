@@ -26,8 +26,8 @@ router.post('/login', async (request, response, next) => {
 
 router.get('/me', requireAuth, async (request: AuthenticatedRequest, response, next) => {
   try {
-    const user = await prisma.user.findUnique({ include: { role: true, employee: true }, where: { id: request.user!.userId } });
-    return user ? response.json({ id: user.id, username: user.username, role: user.role.name, employee: user.employee }) : response.status(404).json({ message: 'User not found' });
+    const user = await prisma.user.findUnique({ include: { role: true }, where: { id: request.user!.userId } });
+    return user ? response.json({ id: user.id, username: user.username, displayName: user.displayName ?? user.username, role: user.role.name }) : response.status(404).json({ message: 'User not found' });
   } catch (error) {
     return next(error);
   }

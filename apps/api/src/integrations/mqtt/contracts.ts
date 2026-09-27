@@ -12,14 +12,6 @@ export const ultrasonicTelemetrySchema = z.object({
 });
 export type UltrasonicTelemetry = z.infer<typeof ultrasonicTelemetrySchema>;
 
-export const nfcScanSchema = z.object({
-  binCode,
-  uid: z.string().trim().min(1),
-  timestamp: isoTimestamp,
-  deviceId: z.string().trim().min(1).optional()
-});
-export type NfcScan = z.infer<typeof nfcScanSchema>;
-
 export const deviceStatusSchema = z.object({
   binCode,
   status: z.enum(['ONLINE', 'OFFLINE', 'MAINTENANCE']),
@@ -28,18 +20,17 @@ export const deviceStatusSchema = z.object({
 });
 export type DeviceStatusMessage = z.infer<typeof deviceStatusSchema>;
 
-export const lockCommandSchema = z.object({
-  action: z.enum(['OPEN', 'CLOSE']),
-  requestId: z.string().trim().min(1),
-  timestamp: isoTimestamp
+export const deviceHeartbeatSchema = z.object({
+  deviceId: z.string().trim().min(1).max(64),
+  deviceName: z.string().trim().min(1).max(120).optional(),
+  deviceType: z.enum(['RASPBERRY_PI', 'ULTRASONIC_SENSOR', 'CAMERA', 'MQTT']).optional(),
+  status: z.enum(['ONLINE', 'WARNING', 'OFFLINE']).default('ONLINE'),
+  ipAddress: z.string().trim().max(45).optional().nullable(),
+  uptime: z.number().int().nonnegative().optional().nullable(),
+  firmwareVersion: z.string().trim().max(32).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional().nullable(),
+  timestamp: isoTimestamp.optional()
 });
-export type LockCommand = z.infer<typeof lockCommandSchema>;
+export type DeviceHeartbeat = z.infer<typeof deviceHeartbeatSchema>;
 
-export const nfcResultSchema = z.object({
-  result: z.enum(['ALLOWED', 'DENIED']),
-  reason: z.string(),
-  action: z.literal('AUTHENTICATE'),
-  uid: z.string(),
-  timestamp: isoTimestamp
-});
-export type NfcResultMessage = z.infer<typeof nfcResultSchema>;
+export * from '../realtime/realtime.contract.js';

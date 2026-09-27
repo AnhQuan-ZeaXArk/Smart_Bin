@@ -156,7 +156,7 @@ export function SettingsPage() {
           headers: { Authorization: `Bearer ${token}` }
         });
         const payload = await response.json().catch(() => ({})) as {
-          users?: Array<{ id: string; username: string; displayName?: string; role?: string; isActive?: boolean; employee?: { fullName?: string } }>;
+          users?: Array<{ id: string; username: string; displayName?: string; role?: string; isActive?: boolean }>;
         };
 
         if (!response.ok) {
@@ -166,7 +166,7 @@ export function SettingsPage() {
         setAccountUsers((payload.users ?? []).map((entry) => ({
           id: entry.id,
           username: entry.username,
-          displayName: entry.displayName ?? entry.employee?.fullName ?? entry.username,
+          displayName: entry.displayName ?? entry.username,
           role: ROLE_OPTIONS.includes(entry.role as AccountRole) ? (entry.role as AccountRole) : 'WORKER',
           isActive: entry.isActive ?? true
         })));
@@ -226,7 +226,7 @@ export function SettingsPage() {
       headers: { Authorization: `Bearer ${token}` }
     });
     const payload = await response.json().catch(() => ({})) as {
-      users?: Array<{ id: string; username: string; displayName?: string; role?: string; isActive?: boolean; employee?: { fullName?: string } }>;
+      users?: Array<{ id: string; username: string; displayName?: string; role?: string; isActive?: boolean }>;
     };
 
     if (!response.ok) {
@@ -237,7 +237,7 @@ export function SettingsPage() {
     setAccountUsers((payload.users ?? []).map((entry) => ({
       id: entry.id,
       username: entry.username,
-      displayName: entry.displayName ?? entry.employee?.fullName ?? entry.username,
+      displayName: entry.displayName ?? entry.username,
       role: ROLE_OPTIONS.includes(entry.role as AccountRole) ? (entry.role as AccountRole) : 'WORKER',
       isActive: entry.isActive ?? true
     })));

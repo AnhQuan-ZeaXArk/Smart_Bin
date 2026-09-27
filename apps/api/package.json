@@ -8,10 +8,10 @@
     "build": "tsc -p tsconfig.json",
     "start": "node --env-file=./.env dist/src/server.js",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "db:generate": "node --env-file=./.env ./node_modules/prisma/build/index.js generate",
-    "db:migrate": "node --env-file=./.env ./node_modules/prisma/build/index.js migrate dev --name init",
-    "db:seed": "node --env-file=./.env ./node_modules/tsx/dist/cli.mjs prisma/seed.ts",
-    "mqtt:simulator": "node --env-file=./.env ./node_modules/tsx/dist/cli.mjs src/integrations/mqtt/simulator.ts"
+    "db:generate": "node --env-file=./.env ../../node_modules/prisma/build/index.js generate",
+    "db:migrate": "node --env-file=./.env ../../node_modules/prisma/build/index.js migrate dev --name init",
+    "db:seed": "node --env-file=./.env ../../node_modules/tsx/dist/cli.mjs prisma/seed.ts",
+    "mqtt:simulator": "node --env-file=./.env ../../node_modules/tsx/dist/cli.mjs src/integrations/mqtt/simulator.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.0",

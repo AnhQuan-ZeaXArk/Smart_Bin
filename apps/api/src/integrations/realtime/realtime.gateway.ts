@@ -4,17 +4,35 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
+import {
+  REALTIME_EVENTS,
+  type DeviceStatusPayload,
+  type RealtimeAlertPayload,
+  type RealtimeTelemetryPayload
+} from './realtime.contract.js';
+
+export * from './realtime.contract.js';
+export type TelemetryEvent = RealtimeTelemetryPayload;
 
 const tokenSchema = z.object({ sub: z.string().min(1) });
-
-export type TelemetryEvent = { binCode: string; fillLevel: number; fillCategory: string; distanceCm: number; timestamp: string };
-export type NfcAccessEvent = { binCode: string | null; uid: string; result: string; reason: string; employeeId: string | null; timestamp: string };
 
 export class RealtimeGateway {
   readonly io: Server;
 
   constructor(httpServer: NodeHttpServer) {
-    this.io = new Server(httpServer, { cors: { origin: env.WEB_ORIGIN } });
+    const allowedOrigins = env.CORS_ORIGINS.length > 0 ? env.CORS_ORIGINS : [env.FRONTEND_URL, env.WEB_ORIGIN];
+
+    this.io = new Server(httpServer, {
+      cors: {
+        origin: (origin, callback) => {
+          if (!origin) return callback(null, true);
+          if (allowedOrigins.includes(origin)) return callback(null, true);
+          return callback(new Error('CORS origin not allowed for socket'));
+        },
+        credentials: true
+      }
+    });
+
     this.io.use(async (socket, next) => {
       try {
         const token = socket.handshake.auth.token as string | undefined;
@@ -28,13 +46,35 @@ export class RealtimeGateway {
         return next(new Error('Invalid or expired token'));
       }
     });
+
     this.io.on('connection', (socket) => {
-      socket.emit('realtime:connected', { connectedAt: new Date().toISOString() });
-      socket.on('disconnect', (reason) => console.log(`Socket disconnected: ${reason}`));
+      socket.emit(REALTIME_EVENTS.CONNECTED, { connectedAt: new Date().toISOString() });
+      socket.on('disconnect', (reason) => {
+        // Safe logging without exposing secrets
+        if (reason !== 'client namespace disconnect') {
+          console.log(`Socket disconnected: ${reason}`);
+        }
+      });
     });
   }
 
-  emitTelemetry(event: TelemetryEvent) { this.io.emit('bin:telemetry', event); }
-  emitNfcAccess(event: NfcAccessEvent) { this.io.emit('nfc:access', event); }
-  emitAlert(event: unknown) { this.io.emit('alert:created', event); }
+  emitTelemetry(event: RealtimeTelemetryPayload): void {
+    this.io.emit(REALTIME_EVENTS.BIN_TELEMETRY, event);
+    this.io.emit(REALTIME_EVENTS.TELEMETRY, event);
+  }
+
+  emitDeviceStatus(device: DeviceStatusPayload): void {
+    this.io.emit(REALTIME_EVENTS.DEVICE_STATUS, device);
+  }
+
+  emitAlert(event: RealtimeAlertPayload): void {
+    this.io.emit(REALTIME_EVENTS.ALERT_CREATED, event);
+    this.io.emit(REALTIME_EVENTS.ALERT, event);
+  }
+
+  emitAlertResolved(event: RealtimeAlertPayload): void {
+    this.io.emit(REALTIME_EVENTS.ALERT_RESOLVED, event);
+    this.io.emit(REALTIME_EVENTS.ALERT_UPDATED, event);
+    this.io.emit(REALTIME_EVENTS.ALERT, event);
+  }
 }

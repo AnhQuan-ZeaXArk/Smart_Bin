@@ -5,8 +5,7 @@ import { env } from './config/env.js';
 import authRoutes from './routes/auth.routes.js';
 import protectedRoutes from './routes/protected.routes.js';
 import binRoutes from './routes/bin.routes.js';
-import employeeRoutes from './routes/employee.routes.js';
-import nfcCardRoutes from './routes/nfc-card.routes.js';
+import deviceRoutes from './routes/device.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 
 export const app = express();
@@ -26,8 +25,7 @@ app.use(express.json());
 app.get('/health', (_request, response) => response.json({ status: 'ok', service: 'smartbin-api' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/bins', binRoutes);
-app.use('/api/employees', employeeRoutes);
-app.use('/api/nfc-cards', nfcCardRoutes);
+app.use('/api/devices', deviceRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api', protectedRoutes);
 app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
