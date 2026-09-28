@@ -38,6 +38,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.3.0",
     "prisma": "^6.19.0",
+    "socket.io-client": "^4.8.3",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }

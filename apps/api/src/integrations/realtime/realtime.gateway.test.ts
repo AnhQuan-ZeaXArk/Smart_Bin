@@ -85,7 +85,7 @@ async function runRealtimeTests() {
 
     await new Promise<void>((resolve, reject) => {
       clientSocket!.on('connect', () => resolve());
-      clientSocket!.on('connect_error', (err) => reject(err));
+      clientSocket!.on('connect_error', (err: Error) => reject(err));
     });
     console.log('  -> Socket.IO client connected with authentication\n');
 
@@ -328,7 +328,7 @@ async function runRealtimeTests() {
     });
 
     const unauthError = await new Promise<string>((resolve) => {
-      unauthClient.on('connect_error', (err) => {
+      unauthClient.on('connect_error', (err: Error) => {
         resolve(err.message);
       });
     });
@@ -345,7 +345,7 @@ async function runRealtimeTests() {
     });
 
     const invalidError = await new Promise<string>((resolve) => {
-      invalidClient.on('connect_error', (err) => {
+      invalidClient.on('connect_error', (err: Error) => {
         resolve(err.message);
       });
     });
