@@ -9,3 +9,4 @@ dist/
 coverage/
 .vscode/
 apps/web/.vite/
+.expo/
