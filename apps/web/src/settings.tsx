@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from './auth-context';
+import { useRealtime } from './realtime-store';
 import {
   DEFAULT_THRESHOLDS,
   readSmartBinThresholds,
@@ -102,6 +103,7 @@ function validateThresholds(value: DemoSettings) {
 
 export function SettingsPage() {
   const { user, token } = useAuth();
+  const { connected: realtimeConnected } = useRealtime();
   const [settings, setSettings] = useState<DemoSettings>(() => readSettings());
   const [status, setStatus] = useState('');
   const [thresholdError, setThresholdError] = useState('');
@@ -110,6 +112,7 @@ export function SettingsPage() {
   const [accountError, setAccountError] = useState('');
   const [accountSuccess, setAccountSuccess] = useState('');
   const [accountFormOpen, setAccountFormOpen] = useState(false);
+  const [closingModal, setClosingModal] = useState<string | null>(null);
   const [accountMode, setAccountMode] = useState<'create' | 'edit'>('create');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [accountForm, setAccountForm] = useState<AccountFormState>(defaultAccountForm);
@@ -133,6 +136,31 @@ export function SettingsPage() {
   const [adminResetLoading, setAdminResetLoading] = useState(false);
   const [showAccountPass, setShowAccountPass] = useState(false);
   const [showAccountConfirmPass, setShowAccountConfirmPass] = useState(false);
+
+  function finishModalClose(name: string) {
+    if (closingModal !== name) return;
+    setClosingModal(null);
+    if (name === 'account') {
+      setAccountForm(defaultAccountForm);
+      setEditingUserId(null);
+    }
+    if (name === 'change-password') {
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    }
+    if (name === 'admin-reset') {
+      setAdminResetAccount(null);
+      setAdminNewPassword('');
+      setAdminConfirmPassword('');
+      setAdminResetError('');
+    }
+  }
+
+  function closeAccountForm() {
+    setAccountFormOpen(false);
+    setClosingModal('account');
+  }
 
   useEffect(() => {
     const handleConnectionChange = () => setIsOnline(window.navigator.onLine);
@@ -244,6 +272,7 @@ export function SettingsPage() {
   }
 
   function openCreateAccount() {
+    setClosingModal(null);
     setAccountMode('create');
     setEditingUserId(null);
     setAccountForm(defaultAccountForm);
@@ -255,6 +284,7 @@ export function SettingsPage() {
   }
 
   function openEditAccount(account: AccountUser) {
+    setClosingModal(null);
     setAccountMode('edit');
     setEditingUserId(account.id);
     setAccountForm({
@@ -348,9 +378,7 @@ export function SettingsPage() {
 
       setAccountSuccess(accountMode === 'create' ? 'Tạo tài khoản thành công.' : 'Cập nhật tài khoản thành công.');
       setAccountError('');
-      setAccountFormOpen(false);
-      setAccountForm(defaultAccountForm);
-      setEditingUserId(null);
+      closeAccountForm();
       await fetchAccountUsers();
     } catch (error) {
       setAccountError(error instanceof Error ? error.message : 'Không thể lưu tài khoản.');
@@ -358,6 +386,7 @@ export function SettingsPage() {
   }
 
   function openChangePasswordModal() {
+    setClosingModal(null);
     setCurrentPassword('');
     setNewPassword('');
     setConfirmPassword('');
@@ -371,10 +400,8 @@ export function SettingsPage() {
   }
 
   function closeChangePasswordModal() {
-    setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
     setChangePasswordModalOpen(false);
+    setClosingModal('change-password');
   }
 
   async function submitChangePassword(event: FormEvent<HTMLFormElement>) {
@@ -433,7 +460,7 @@ export function SettingsPage() {
       setNewPassword('');
       setConfirmPassword('');
       setTimeout(() => {
-        setChangePasswordModalOpen(false);
+        closeChangePasswordModal();
         setChangePasswordSuccess('');
       }, 1500);
     } catch (error) {
@@ -444,6 +471,7 @@ export function SettingsPage() {
   }
 
   function openAdminResetPassword(account: AccountUser) {
+    setClosingModal(null);
     setAdminResetAccount(account);
     setAdminNewPassword('');
     setAdminConfirmPassword('');
@@ -454,10 +482,7 @@ export function SettingsPage() {
   }
 
   function closeAdminResetPassword() {
-    setAdminResetAccount(null);
-    setAdminNewPassword('');
-    setAdminConfirmPassword('');
-    setAdminResetError('');
+    setClosingModal('admin-reset');
   }
 
   async function submitAdminResetPassword(event: FormEvent<HTMLFormElement>) {
@@ -534,7 +559,7 @@ export function SettingsPage() {
     }
   }
 
-  const connectionText = isOnline ? 'Đã kết nối' : 'Mất kết nối';
+  const connectionText = isOnline ? 'Trình duyệt trực tuyến' : 'Trình duyệt ngoại tuyến';
 
   return (
     <section className="page settings-page">
@@ -565,8 +590,8 @@ export function SettingsPage() {
             </div>
 
             <div className="settings-field">
-              <span className="settings-field__label">Trạng thái hệ thống</span>
-              <div className="settings-readonly settings-readonly--status"><span className="status-dot" />Đang hoạt động</div>
+              <span className="settings-field__label">Lưu cấu hình</span>
+              <div className="settings-readonly settings-readonly--status">Lưu trên thiết bị này</div>
             </div>
 
             <div className="settings-field">
@@ -671,7 +696,7 @@ export function SettingsPage() {
 
             <div className="settings-field">
               <span className="settings-field__label">Socket.IO</span>
-              <div className="settings-readonly"><span className="status-dot" />Đang hoạt động bình thường</div>
+              <div className={`settings-readonly ${realtimeConnected ? 'settings-readonly--success' : 'settings-readonly--warning'}`}><span className="status-dot" />{realtimeConnected ? 'Đã kết nối' : 'Mất kết nối'}</div>
             </div>
 
             <div className="settings-field settings-field--full">
@@ -804,15 +829,17 @@ export function SettingsPage() {
         {status && <p className="settings-success">{status}</p>}
       </div>
 
-      {accountFormOpen && (
-        <div className="modal-backdrop" onClick={() => setAccountFormOpen(false)}>
-          <div className="account-modal" onClick={(event) => event.stopPropagation()}>
+      {(accountFormOpen || closingModal === 'account') && (
+        <div className={`modal-backdrop${closingModal === 'account' ? ' modal-backdrop--closing' : ''}`} onClick={closeAccountForm}>
+          <div className={`account-modal${closingModal === 'account' ? ' account-modal--closing' : ''}`} onClick={(event) => event.stopPropagation()} onAnimationEnd={(event) => {
+            if (event.target === event.currentTarget) finishModalClose('account');
+          }}>
             <div className="modal-header">
               <div>
                 <div className="eyebrow">QUẢN LÝ TÀI KHOẢN</div>
                 <h3>{accountMode === 'create' ? 'Cấp tài khoản' : 'Chỉnh sửa tài khoản'}</h3>
               </div>
-              <button type="button" className="close-button" onClick={() => setAccountFormOpen(false)} aria-label="Đóng">×</button>
+              <button type="button" className="close-button" onClick={closeAccountForm} aria-label="Đóng">×</button>
             </div>
 
             <form className="account-form" onSubmit={submitAccount}>
@@ -892,7 +919,7 @@ export function SettingsPage() {
               )}
 
               <div className="modal-actions">
-                <button type="button" className="button-secondary" onClick={() => setAccountFormOpen(false)}>Hủy</button>
+                <button type="button" className="button-secondary" onClick={closeAccountForm}>Hủy</button>
                 <button type="submit" className="button-primary">{accountMode === 'create' ? 'Thêm tài khoản' : 'Lưu thay đổi'}</button>
               </div>
             </form>
@@ -900,9 +927,11 @@ export function SettingsPage() {
         </div>
       )}
 
-      {changePasswordModalOpen && (
-        <div className="modal-backdrop" onClick={closeChangePasswordModal}>
-          <div className="account-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="change-pw-title">
+      {(changePasswordModalOpen || closingModal === 'change-password') && (
+        <div className={`modal-backdrop${closingModal === 'change-password' ? ' modal-backdrop--closing' : ''}`} onClick={closeChangePasswordModal}>
+          <div className={`account-modal${closingModal === 'change-password' ? ' account-modal--closing' : ''}`} onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="change-pw-title" onAnimationEnd={(event) => {
+            if (event.target === event.currentTarget) finishModalClose('change-password');
+          }}>
             <div className="modal-header">
               <div className="modal-title-wrap">
                 <div className="modal-header-icon-box">
@@ -1003,8 +1032,10 @@ export function SettingsPage() {
       )}
 
       {adminResetAccount && (
-        <div className="modal-backdrop" onClick={closeAdminResetPassword}>
-          <div className="account-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="admin-reset-pw-title">
+        <div className={`modal-backdrop${closingModal === 'admin-reset' ? ' modal-backdrop--closing' : ''}`} onClick={closeAdminResetPassword}>
+          <div className={`account-modal${closingModal === 'admin-reset' ? ' account-modal--closing' : ''}`} onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="admin-reset-pw-title" onAnimationEnd={(event) => {
+            if (event.target === event.currentTarget) finishModalClose('admin-reset');
+          }}>
             <div className="modal-header">
               <div className="modal-title-wrap">
                 <div className="modal-header-icon-box">

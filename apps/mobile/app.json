@@ -28,6 +28,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "a4527d03-2890-4150-b8d6-f29dd21d49c1"
+      }
+    },
+    "owner": "zeaxark"
   }
 }

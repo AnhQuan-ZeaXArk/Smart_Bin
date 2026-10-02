@@ -1,10 +1,12 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../constants/colors';
 import { useNavigation, Screen } from '../hooks/useNavigation';
 
 export const BottomTabBar: React.FC = () => {
   const { currentScreen, navigate } = useNavigation();
+  const insets = useSafeAreaInsets();
 
   // If on detail screen, hide bottom tab bar to maximize workspace
   if (currentScreen === 'bin-detail') {
@@ -39,8 +41,11 @@ export const BottomTabBar: React.FC = () => {
     },
   ];
 
+  // Dynamically calculate bottom padding so tab bar safely clears Android gesture bar / 3-button navigation
+  const bottomPadding = Math.max(insets.bottom, 8);
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingBottom: bottomPadding }]}>
       {tabs.map((tab) => {
         const isActive = currentScreen === tab.screen;
         return (
@@ -74,9 +79,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
-    paddingBottom: 8,
     paddingTop: 6,
-    height: 56,
   },
   tabButton: {
     flex: 1,
@@ -84,6 +87,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     position: 'relative',
     paddingHorizontal: 2,
+    paddingTop: 2,
+    paddingBottom: 6,
   },
   tabButtonActive: {},
   tabIcon: {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { io, type Socket } from 'socket.io-client';
 import { useAuth } from './auth-context';
+import { useRealtime } from './realtime-store';
 import {
   IconCpu,
   IconCamera,
@@ -69,11 +69,13 @@ function getStatusBadge(status: DeviceStatusEnum) {
 
 export function DeviceListPage() {
   const { token } = useAuth();
+  const { socket, connected } = useRealtime();
   const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [connected, setConnected] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState<DeviceItem | null>(null);
+  const [detailClosing, setDetailClosing] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [deviceDetail, setDeviceDetail] = useState<DeviceHealthDetail | null>(null);
 
@@ -84,8 +86,8 @@ export function DeviceListPage() {
 
   const fetchDevices = useCallback(async () => {
     if (!token) return;
+    setRefreshing(true);
     try {
-      setError('');
       const res = await fetch(`${apiUrl}/api/devices`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -94,10 +96,12 @@ export function DeviceListPage() {
       }
       const data = await res.json();
       setDevices(data.devices || []);
+      setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không thể tải trạng thái thiết bị.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [token]);
 
@@ -126,28 +130,11 @@ export function DeviceListPage() {
     };
   }, [token]);
 
-  // Realtime Socket.IO subscription
+  // Realtime device updates use the AppShell connection.
   useEffect(() => {
-    if (!token) return;
+    if (!socket) return;
 
-    let socket: Socket | null = io(apiUrl, {
-      auth: { token },
-      transports: ['websocket', 'polling']
-    });
-
-    socket.on('connect', () => {
-      setConnected(true);
-    });
-
-    socket.on('disconnect', () => {
-      setConnected(false);
-    });
-
-    socket.on('connect_error', () => {
-      setConnected(false);
-    });
-
-    socket.on('device:status', (updated: DeviceItem) => {
+    const onDeviceStatus = (updated: DeviceItem) => {
       setDevices((prev) => {
         const index = prev.findIndex(
           (d) => d.deviceId === updated.deviceId || d.id === updated.id
@@ -173,18 +160,17 @@ export function DeviceListPage() {
         }
         return curr;
       });
-    });
+    };
+    socket.on('device:status', onDeviceStatus);
 
     return () => {
-      if (socket) {
-        socket.disconnect();
-        socket = null;
-      }
+      socket.off('device:status', onDeviceStatus);
     };
-  }, [token]);
+  }, [socket]);
 
   // Open detail modal and fetch health endpoint
   const openDetail = async (device: DeviceItem) => {
+    setDetailClosing(false);
     setSelectedDevice(device);
     setDetailLoading(true);
     setDeviceDetail(null);
@@ -228,8 +214,7 @@ export function DeviceListPage() {
   };
 
   const closeDetail = () => {
-    setSelectedDevice(null);
-    setDeviceDetail(null);
+    setDetailClosing(true);
   };
 
   // Filtered devices
@@ -268,9 +253,7 @@ export function DeviceListPage() {
             <p>Tình trạng kết nối và sức khỏe phần cứng IoT theo thời gian thực.</p>
           </div>
         </div>
-        <div className="empty-state">
-          <p>Đang tải trạng thái thiết bị...</p>
-        </div>
+        <div className="skeleton-grid device-skeleton-grid" aria-label="Đang tải trạng thái thiết bị"><div /><div /><div /><div /></div>
       </section>
     );
   }
@@ -288,7 +271,7 @@ export function DeviceListPage() {
         <div className="empty-state error-state">
           <p>Không thể tải trạng thái thiết bị.</p>
           <span>{error}</span>
-          <button type="button" className="button-secondary" onClick={() => void fetchDevices()} style={{ marginTop: '14px' }}>
+          <button type="button" className={`button-secondary refresh-button${refreshing ? ' is-refreshing' : ''}`} onClick={() => void fetchDevices()} disabled={refreshing} style={{ marginTop: '14px' }}>
             <IconRefresh /> Thử lại
           </button>
         </div>
@@ -309,7 +292,7 @@ export function DeviceListPage() {
             <span className="status-dot" />
             {connected ? 'Realtime: Đã kết nối' : 'Realtime: Mất kết nối'}
           </div>
-          <button type="button" className="button-secondary" onClick={() => void fetchDevices()} title="Làm mới dữ liệu">
+          <button type="button" className={`button-secondary refresh-button${refreshing ? ' is-refreshing' : ''}`} onClick={() => void fetchDevices()} disabled={refreshing} title="Làm mới dữ liệu">
             <IconRefresh /> Làm mới
           </button>
         </div>
@@ -450,8 +433,14 @@ export function DeviceListPage() {
 
       {/* Device Detail Modal */}
       {selectedDevice && (
-        <div className="modal-backdrop" onClick={closeDetail}>
-          <div className="modal device-modal" onClick={(e) => e.stopPropagation()}>
+        <div className={`modal-backdrop${detailClosing ? ' modal-backdrop--closing' : ''}`} onClick={closeDetail}>
+          <div className={`modal device-modal${detailClosing ? ' modal--closing' : ''}`} onClick={(e) => e.stopPropagation()} onAnimationEnd={(event) => {
+            if (event.target === event.currentTarget && detailClosing) {
+              setSelectedDevice(null);
+              setDeviceDetail(null);
+              setDetailClosing(false);
+            }
+          }}>
             <div className="modal-heading">
               <div>
                 <div className="eyebrow">THÔNG TIN CHI TIẾT THIẾT BỊ</div>

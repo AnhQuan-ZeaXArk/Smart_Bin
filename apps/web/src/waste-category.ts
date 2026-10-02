@@ -19,22 +19,16 @@ const WASTE_CATEGORY_KEYWORDS: Partial<Record<WasteCategoryKey, RegExp>> = {
 const WASTE_MATCH_ORDER: WasteCategoryKey[] = ['NON_RECYCLABLE', 'ORGANIC', 'RECYCLABLE'];
 
 /**
- * Model Bin hiện tại chưa có field phân loại rác theo enum riêng, nên hệ thống suy luận từ mã/ngăn
- * và tên hiển thị để gán đúng ba loại rác của SmartBin: hữu cơ, tái chế, không tái chế.
- * Nếu không khớp từ khóa nào, hệ thống sẽ gán phần còn lại theo thứ tự logic để đảm bảo Dashboard
- * luôn có đủ 3 ngăn hiển thị đúng với mô hình hệ thống.
+ * Model Bin hiện tại chưa có field phân loại rác theo enum riêng, nên hệ thống chỉ suy luận từ mã/ngăn
+ * và tên hiển thị đã được API trả về. Bin không nhận diện được sẽ không bị gán vào một loại bất kỳ.
  */
 export function assignWasteCategories<T extends { binCode: string; name: string }>(bins: T[]): Partial<Record<WasteCategoryKey, T>> {
   const sorted = [...bins].sort((a, b) => a.binCode.localeCompare(b.binCode));
   const result: Partial<Record<WasteCategoryKey, T>> = {};
-  const remaining: T[] = [];
   for (const bin of sorted) {
     const haystack = `${bin.binCode} ${bin.name}`;
     const matched = WASTE_MATCH_ORDER.find((key) => !result[key] && WASTE_CATEGORY_KEYWORDS[key]!.test(haystack));
-    if (matched) result[matched] = bin; else remaining.push(bin);
-  }
-  for (const key of WASTE_CATEGORY_ORDER) {
-    if (!result[key] && remaining.length > 0) result[key] = remaining.shift();
+    if (matched) result[matched] = bin;
   }
   return result;
 }

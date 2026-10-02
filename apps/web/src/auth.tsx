@@ -153,14 +153,13 @@ export function LoginPage() {
 
   return (
     <main className="login-page">
-      <form className="login-card" onSubmit={submit} noValidate>
-        <div className="brand">
-          SMART<span>BIN</span>
-          <small>OPERATIONS</small>
+      <div className="login-container">
+        <div className="login-branding">
+          <span className="brand-mark">S</span>
+          <span><strong>SMART<span>BIN</span></strong><small>Smart Waste Management</small></span>
         </div>
-        <div className="eyebrow">TRUY CẬP BẢO MẬT</div>
-        <h1>Chào mừng trở lại</h1>
-        <p className="login-copy">Đăng nhập bằng tài khoản SmartBin để tiếp tục.</p>
+        <form className="login-card" onSubmit={submit} noValidate>
+          <h1>Đăng nhập</h1>
 
         <label htmlFor="username">
           Tên đăng nhập
@@ -221,7 +220,8 @@ export function LoginPage() {
             'Đăng nhập'
           )}
         </button>
-      </form>
+        </form>
+      </div>
     </main>
   );
 }
