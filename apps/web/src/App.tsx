@@ -11,6 +11,7 @@ import { CollectionsPage } from './collections';
 import { UsersPage } from './users';
 import { RealtimeProvider } from './realtime-context';
 import { useRealtime } from './realtime-store';
+import { ErrorBoundary } from './error-boundary';
 import { IconActivity, IconBell, IconCpu, IconGrid, IconHistory, IconLogout, IconMenu, IconSettings, IconTrash, IconUsers } from './icons';
 import './App.css';
 
@@ -92,6 +93,7 @@ function AppShell() {
 
         <main className="workspace">
           <TopBar title={currentRoute?.label ?? 'Tổng quan'} onMenu={() => setSidebarOpen((value) => !value)} />
+          <ErrorBoundary key={location.pathname}>
           <Routes>
             <Route path="/dashboard" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><DashboardPage /></ProtectedRoute>} />
             <Route path="/bins" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><BinListPage /></ProtectedRoute>} />
@@ -109,6 +111,7 @@ function AppShell() {
                 <Route key={route.path} path={route.path} element={<ProtectedRoute roles={route.roles}><PagePlaceholder title={route.label} /></ProtectedRoute>} />
               ))}
           </Routes>
+          </ErrorBoundary>
         </main>
       </div>
     </RealtimeProvider>

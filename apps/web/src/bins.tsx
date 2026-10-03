@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useAuth } from './auth-context';
 import { translateBinStatus, translateFillCategory } from './i18n-labels';
 import { IconActivity, IconRefresh, IconTrash } from './icons';
+import { ErrorBoundary } from './error-boundary';
 
 const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 const SensorHistoryChart = lazy(() => import('./sensor-history-chart'));
@@ -37,7 +38,13 @@ type SensorReading = {
 };
 
 async function getData<T>(path: string, token: string): Promise<T> {
-  const response = await fetch(`${apiUrl}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  let response: Response;
+  try {
+    response = await fetch(`${apiUrl}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  } catch {
+    throw new Error('Không thể kết nối đến máy chủ');
+  }
+  if (response.status === 404) throw new Error('Không tìm thấy thùng rác');
   if (!response.ok) throw new Error('Không thể tải dữ liệu thùng rác từ máy chủ.');
   return response.json() as Promise<T>;
 }
@@ -182,7 +189,7 @@ export function BinDetailPage() {
   const refreshDetail = () => { setLoading(true); setError(''); setHistoryError(''); void loadDetail(); };
 
   if (loading) return <section className="page detail-page"><Link className="back-link" to="/bins">← Quản lý thùng rác</Link><div className="skeleton-grid"><div /><div /><div /></div></section>;
-  if (error || !bin) return <section className="page detail-page"><Link className="back-link" to="/bins">← Quản lý thùng rác</Link><div className="state-panel state-panel--error"><IconActivity /><strong>Không thể tải chi tiết</strong><span>{error || 'Không tìm thấy thùng rác.'}</span><button className="button-secondary" type="button" onClick={refreshDetail}>Thử lại</button></div></section>;
+  if (error || !bin) return <section className="page detail-page"><Link className="back-link" to="/bins">← Quản lý thùng rác</Link><div className="state-panel state-panel--error"><IconActivity /><strong>Không thể tải thông tin thùng rác</strong><span>{error || 'Không tìm thấy thùng rác'}</span><div className="state-panel__actions"><button className="button-secondary" type="button" onClick={refreshDetail}>Thử lại</button><Link className="button-secondary" to="/bins">Quay lại</Link></div></div></section>;
 
   return (
     <section className="page detail-page">
@@ -197,7 +204,7 @@ export function BinDetailPage() {
       <section className="surface-panel sensor-history-panel">
         <div className="section-heading"><div><div className="eyebrow">TELEMETRY</div><h2>Lịch sử cảm biến</h2><p className="section-subtext">Các lần đo được lưu cho {bin.binCode}.</p></div><button className="button-secondary" type="button" onClick={refreshDetail} disabled={loading}><IconRefresh /> Làm mới</button></div>
         {historyError ? <div className="state-panel state-panel--inline state-panel--error"><IconActivity /><strong>Không thể tải lịch sử cảm biến</strong><span>{historyError}</span><button className="button-secondary" type="button" onClick={refreshDetail}>Thử lại</button></div> : readings.length === 0 ? <div className="state-panel state-panel--inline"><IconActivity /><strong>Chưa có dữ liệu cảm biến</strong><span>Chưa nhận được bản ghi lịch sử cho thùng này.</span></div> : <>
-          <div className="sensor-chart"><Suspense fallback={<div className="skeleton-chart" aria-label="Đang tải biểu đồ" />}><SensorHistoryChart readings={readings} /></Suspense></div>
+          <div className="sensor-chart"><ErrorBoundary inline title="Không thể tải biểu đồ" message="Bảng dữ liệu bên dưới vẫn hiển thị. Tải lại trang để thử lại."><Suspense fallback={<div className="skeleton-chart" aria-label="Đang tải biểu đồ" />}><SensorHistoryChart readings={readings} /></Suspense></ErrorBoundary></div>
           <div className="table-wrap"><table><thead><tr><th>Thời gian</th><th>Mức đầy</th><th>Khoảng cách</th></tr></thead><tbody>{readings.map((reading) => <tr key={reading.id}><td>{formatDate(reading.timestamp)}</td><td>{reading.fillLevel}%</td><td>{reading.distance} cm</td></tr>)}</tbody></table></div>
         </>}
       </section>

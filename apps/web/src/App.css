@@ -1226,6 +1226,8 @@ tbody tr:hover { background: #17283a; }
 .user-count { color: var(--text-muted); font-size: 10px; }
 .users-table td strong { color: var(--text-main); }
 .alert-resolution-filter { width: fit-content; min-width: 240px; padding: 10px; }
+.state-panel__actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
+.state-panel__actions .button-secondary { margin-top: 0; text-decoration: none; }
 button:not(:disabled) { transition: transform .15s ease, background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .18s ease; }
 button:disabled { cursor: not-allowed; }
 .account-logout { transition: opacity .14s ease, transform .18s ease, flex-basis .22s ease; }
