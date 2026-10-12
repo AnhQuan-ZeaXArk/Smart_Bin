@@ -5,8 +5,11 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 
+import { env } from '../config/env.js';
+import { demoService } from '../demo/demo.service.js';
+
 const router = Router();
-const idSchema = z.string().cuid();
+const idSchema = z.string().min(1);
 const coordinateSchema = z.number().finite().optional().nullable();
 const createBinSchema = z.object({
   binCode: z.string().trim().min(1).max(40),
@@ -60,6 +63,12 @@ router.get('/', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async
   try {
     const queryResult = querySchema.safeParse(request.query);
     if (!queryResult.success) return validationError(response, 'Invalid bin filters');
+
+    if (env.isDemoMode) {
+      const bins = demoService.getAllBins(queryResult.data);
+      return response.json({ bins });
+    }
+
     const query = queryResult.data;
     const bins = await prisma.bin.findMany({ where: { isActive: true, ...(query.status ? { status: query.status } : {}), ...(query.search ? { OR: [{ binCode: { contains: query.search } }, { name: { contains: query.search } }, { location: { contains: query.search } }] } : {}) }, orderBy: { binCode: 'asc' } });
     const filtered = query.fillCategory ? bins.filter((bin) => getFillCategory(bin.currentFillLevel) === query.fillCategory) : bins;
@@ -73,6 +82,12 @@ router.get('/:id', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), as
   try {
     const id = parseId(request.params.id);
     if (!id) return notFound(response);
+
+    if (env.isDemoMode) {
+      const bin = demoService.getBinById(id);
+      return bin ? response.json({ bin }) : notFound(response);
+    }
+
     const bin = await prisma.bin.findFirst({ where: { id, isActive: true } });
     return bin ? response.json({ bin: serializeBin(bin) }) : notFound(response);
   } catch (error) {
@@ -82,6 +97,15 @@ router.get('/:id', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), as
 
 router.post('/', requireAuth, requireRole('ADMIN', 'SUPERVISOR'), async (request, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.status(403).json({
+        error: {
+          code: 'DEMO_MODE_READ_ONLY',
+          message: 'Hệ thống SmartBin đang hoạt động ở chế độ Demo mô phỏng. Thao tác ghi dữ liệu bị vô hiệu hóa.'
+        }
+      });
+    }
+
     const inputResult = createBinSchema.safeParse(request.body);
     if (!inputResult.success) return validationError(response, 'Invalid bin data');
     const input = inputResult.data;
@@ -95,6 +119,15 @@ router.post('/', requireAuth, requireRole('ADMIN', 'SUPERVISOR'), async (request
 
 router.put('/:id', requireAuth, requireRole('ADMIN', 'SUPERVISOR'), async (request, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.status(403).json({
+        error: {
+          code: 'DEMO_MODE_READ_ONLY',
+          message: 'Hệ thống SmartBin đang hoạt động ở chế độ Demo mô phỏng. Thao tác ghi dữ liệu bị vô hiệu hóa.'
+        }
+      });
+    }
+
     const id = parseId(request.params.id);
     if (!id) return notFound(response);
     const inputResult = updateBinSchema.safeParse(request.body);
@@ -111,6 +144,15 @@ router.put('/:id', requireAuth, requireRole('ADMIN', 'SUPERVISOR'), async (reque
 
 router.delete('/:id', requireAuth, requireRole('ADMIN'), async (request, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.status(403).json({
+        error: {
+          code: 'DEMO_MODE_READ_ONLY',
+          message: 'Hệ thống SmartBin đang hoạt động ở chế độ Demo mô phỏng. Thao tác ghi dữ liệu bị vô hiệu hóa.'
+        }
+      });
+    }
+
     const id = parseId(request.params.id);
     if (!id) return notFound(response);
     const existing = await prisma.bin.findFirst({ where: { id, isActive: true } });

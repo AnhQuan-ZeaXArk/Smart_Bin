@@ -3,17 +3,72 @@ import {
   View,
   Text,
   TextInput,
-  TouchableOpacity,
   StyleSheet,
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  TouchableWithoutFeedback,
   Keyboard,
 } from 'react-native';
-import { Colors } from '../constants/colors';
+import { Colors, Tones } from '../constants/colors';
+import { FontSize, Radius, Shadow, Spacing } from '../constants/theme';
 import { useAuth } from '../hooks/useAuth';
+import { BrandMark, BrandWord, Button } from './ui/kit';
+import { Icon, IconName } from './ui/Icon';
+import { FadeIn, PressableScale } from './ui/motion';
+
+interface FieldProps {
+  label: string;
+  icon: IconName;
+  value: string;
+  onChangeText: (text: string) => void;
+  placeholder: string;
+  editable: boolean;
+  invalid?: boolean;
+  secure?: boolean;
+  onSubmitEditing?: () => void;
+  returnKeyType?: 'next' | 'done';
+  trailing?: React.ReactNode;
+}
+
+const Field: React.FC<FieldProps> = ({
+  label,
+  icon,
+  value,
+  onChangeText,
+  placeholder,
+  editable,
+  invalid,
+  secure,
+  onSubmitEditing,
+  returnKeyType,
+  trailing,
+}) => {
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={styles.inputGroup}>
+      <Text style={styles.inputLabel}>{label}</Text>
+      <View style={[styles.field, focused && styles.fieldFocused, invalid && styles.fieldInvalid]}>
+        <Icon name={icon} size={16} color={focused ? Colors.brandHighlight : Colors.textMuted} />
+        <TextInput
+          style={styles.fieldInput}
+          placeholder={placeholder}
+          placeholderTextColor="#697E91"
+          value={value}
+          onChangeText={onChangeText}
+          secureTextEntry={secure}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={editable}
+          returnKeyType={returnKeyType}
+          onSubmitEditing={onSubmitEditing}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+        />
+        {trailing}
+      </View>
+    </View>
+  );
+};
 
 export const LoginScreen: React.FC = () => {
   const { login } = useAuth();
@@ -27,7 +82,6 @@ export const LoginScreen: React.FC = () => {
     if (isSubmitting) return;
     Keyboard.dismiss();
 
-    // Field validations
     if (!username.trim()) {
       setErrorMessage('Vui lòng nhập tên đăng nhập.');
       return;
@@ -70,123 +124,82 @@ export const LoginScreen: React.FC = () => {
       style={styles.keyboardContainer}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Brand Header */}
-          <View style={styles.brandContainer}>
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>SMARTBIN</Text>
-            </View>
-            <Text style={styles.systemTitle}>HỆ THỐNG QUẢN LÝ THÙNG RÁC THÔNG MINH</Text>
-            <Text style={styles.subtitle}>Đăng nhập để truy cập không gian vận hành</Text>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <FadeIn style={styles.brandContainer}>
+          <BrandMark size={52} />
+          <View style={styles.brandText}>
+            <BrandWord subtitle={false} />
           </View>
+        </FadeIn>
+        <FadeIn delay={100} style={styles.subtitleWrap}>
+          <Text style={styles.subtitle}>Smart Waste Management</Text>
+        </FadeIn>
 
-          {/* Login Card */}
+        <FadeIn delay={180} distance={18}>
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>ĐĂNG NHẬP VẬN HÀNH</Text>
+            <Text style={styles.cardTitle}>Đăng nhập</Text>
+            <Text style={styles.cardSub}>Truy cập không gian vận hành</Text>
 
-            {/* Error Banner */}
             {errorMessage ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorIcon}>!</Text>
+              <View style={styles.errorBox} accessibilityRole="alert">
+                <Icon name="alert-triangle" size={15} color={Tones.critical.text} />
                 <Text style={styles.errorText}>{errorMessage}</Text>
               </View>
             ) : null}
 
-            {/* Username Input */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Tên đăng nhập</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  errorMessage && !username.trim() ? styles.inputErrorBorder : null,
-                ]}
-                placeholder="Nhập tên đăng nhập"
-                placeholderTextColor={Colors.textMuted}
-                value={username}
-                onChangeText={(text) => {
-                  setUsername(text);
-                  if (errorMessage) setErrorMessage(null);
-                }}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!isSubmitting}
-              />
-            </View>
+            <Field
+              label="Tên đăng nhập"
+              icon="user"
+              placeholder="Nhập tên đăng nhập"
+              value={username}
+              onChangeText={(text) => {
+                setUsername(text);
+                if (errorMessage) setErrorMessage(null);
+              }}
+              editable={!isSubmitting}
+              invalid={!!errorMessage && !username.trim()}
+              returnKeyType="next"
+            />
 
-            {/* Password Input with Show/Hide Toggle */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Mật khẩu</Text>
-              <View style={styles.passwordContainer}>
-                <TextInput
-                  style={[
-                    styles.input,
-                    styles.passwordInput,
-                    errorMessage && !password ? styles.inputErrorBorder : null,
-                  ]}
-                  placeholder="Nhập mật khẩu"
-                  placeholderTextColor={Colors.textMuted}
-                  value={password}
-                  onChangeText={(text) => {
-                    setPassword(text);
-                    if (errorMessage) setErrorMessage(null);
-                  }}
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  editable={!isSubmitting}
-                />
-                <TouchableOpacity
-                  style={styles.eyeButton}
+            <Field
+              label="Mật khẩu"
+              icon="lock"
+              placeholder="Nhập mật khẩu"
+              value={password}
+              onChangeText={(text) => {
+                setPassword(text);
+                if (errorMessage) setErrorMessage(null);
+              }}
+              secure={!showPassword}
+              editable={!isSubmitting}
+              invalid={!!errorMessage && !password}
+              returnKeyType="done"
+              onSubmitEditing={handleSubmit}
+              trailing={
+                <PressableScale
                   onPress={() => setShowPassword((prev) => !prev)}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  activeOpacity={0.7}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
                 >
-                  <Text style={styles.eyeText}>{showPassword ? 'Ẩn' : 'Hiện'}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+                  <Icon name={showPassword ? 'eye-off' : 'eye'} size={18} color={Colors.textSecondary} />
+                </PressableScale>
+              }
+            />
 
-            {/* Submit Button */}
-            <TouchableOpacity
-              style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
+            <Button
+              label={isSubmitting ? 'Đang đăng nhập...' : 'Đăng nhập'}
               onPress={handleSubmit}
-              disabled={isSubmitting}
-              activeOpacity={0.8}
-            >
-              {isSubmitting ? (
-                <View style={styles.loadingRow}>
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                  <Text style={styles.submitButtonText}>Đang đăng nhập...</Text>
-                </View>
-              ) : (
-                <Text style={styles.submitButtonText}>ĐĂNG NHẬP</Text>
-              )}
-            </TouchableOpacity>
+              loading={isSubmitting}
+              style={styles.submit}
+            />
           </View>
-
-          {/* Security & Role Information */}
-          <View style={styles.infoCard}>
-            <Text style={styles.infoTitle}>PHÂN QUYỀN TRUY CẬP</Text>
-            <Text style={styles.infoText}>
-              Hệ thống áp dụng chính sách bảo mật đa vai trò: Quản trị viên (Admin), Giám sát viên (Supervisor) và Nhân viên thu gom (Worker).
-            </Text>
-            <View style={styles.securityNote}>
-              <Text style={styles.securityDot}>🔒</Text>
-              <Text style={styles.securityText}>
-                Xác thực bảo mật qua JWT và lưu trữ mã hóa trên thiết bị (Android Keystore).
-              </Text>
-            </View>
-          </View>
-
-          <Text style={styles.footerText}>
-            © 2026 SmartBin Management System • All rights reserved
-          </Text>
-        </ScrollView>
-      </TouchableWithoutFeedback>
+        </FadeIn>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 };
@@ -199,182 +212,100 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 32,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.xxl,
   },
   brandContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 24,
+    justifyContent: 'center',
+    gap: Spacing.md,
   },
-  badge: {
-    backgroundColor: Colors.brandPrimary,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 4,
-    marginBottom: 8,
+  brandText: {
+    justifyContent: 'center',
   },
-  badgeText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 2,
-  },
-  systemTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: Colors.textPrimary,
-    textAlign: 'center',
-    letterSpacing: 1,
+  subtitleWrap: {
+    alignItems: 'center',
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xl,
   },
   subtitle: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    marginTop: 4,
+    fontSize: FontSize.small,
+    color: Colors.textMuted,
+    letterSpacing: 0.4,
   },
   card: {
     backgroundColor: Colors.surfaceCard,
-    borderRadius: 14,
-    padding: 20,
+    borderRadius: Radius.lg,
+    padding: Spacing.xl,
     borderWidth: 1,
     borderColor: Colors.border,
-    marginBottom: 20,
+    ...Shadow.card,
   },
   cardTitle: {
-    fontSize: 16,
+    fontSize: FontSize.title,
     fontWeight: '800',
-    color: Colors.brandHighlight,
-    letterSpacing: 1,
-    marginBottom: 16,
-    textAlign: 'center',
+    color: Colors.textPrimary,
+  },
+  cardSub: {
+    fontSize: FontSize.small,
+    color: Colors.textSecondary,
+    marginTop: 2,
+    marginBottom: Spacing.lg,
   },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.errorLight,
+    gap: Spacing.sm,
+    backgroundColor: Tones.critical.bg,
     borderWidth: 1,
-    borderColor: Colors.errorBorder,
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 16,
-  },
-  errorIcon: {
-    color: Colors.error,
-    fontWeight: '900',
-    fontSize: 14,
-    marginRight: 8,
+    borderColor: Tones.critical.border,
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.lg,
   },
   errorText: {
-    color: Colors.error,
-    fontSize: 13,
+    color: Tones.critical.text,
+    fontSize: FontSize.small,
     fontWeight: '600',
     flex: 1,
     lineHeight: 18,
   },
   inputGroup: {
-    marginBottom: 16,
+    marginBottom: Spacing.lg,
   },
   inputLabel: {
     color: Colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: FontSize.small,
+    fontWeight: '700',
     marginBottom: 6,
   },
-  input: {
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: Colors.textPrimary,
-    fontSize: 14,
-  },
-  inputErrorBorder: {
-    borderColor: Colors.error,
-  },
-  passwordContainer: {
-    position: 'relative',
-    justifyContent: 'center',
-  },
-  passwordInput: {
-    paddingRight: 56,
-  },
-  eyeButton: {
-    position: 'absolute',
-    right: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    backgroundColor: Colors.surfaceCardElevated,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  eyeText: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  submitButton: {
-    backgroundColor: Colors.buttonPrimaryBg,
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-  },
-  submitButtonDisabled: {
-    backgroundColor: Colors.buttonDisabledBg,
-    opacity: 0.7,
-  },
-  submitButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '800',
-    letterSpacing: 1,
-  },
-  loadingRow: {
+  field: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-  },
-  infoCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 10,
-    padding: 14,
+    gap: Spacing.sm,
+    height: 46,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
     borderWidth: 1,
-    borderColor: Colors.borderLight,
-    marginBottom: 16,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
   },
-  infoTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: Colors.textMuted,
-    letterSpacing: 1,
-    marginBottom: 4,
+  fieldFocused: {
+    borderColor: Colors.brandHighlight,
+    backgroundColor: '#0F1C2B',
   },
-  infoText: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    lineHeight: 17,
+  fieldInvalid: {
+    borderColor: Tones.critical.solid,
   },
-  securityNote: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-    gap: 6,
-  },
-  securityDot: {
-    fontSize: 12,
-  },
-  securityText: {
-    fontSize: 11,
-    color: Colors.brandHighlight,
+  fieldInput: {
     flex: 1,
+    color: Colors.textPrimary,
+    fontSize: FontSize.body,
+    paddingVertical: 0,
   },
-  footerText: {
-    color: Colors.textMuted,
-    fontSize: 11,
-    textAlign: 'center',
+  submit: {
+    marginTop: Spacing.sm,
+    height: 48,
   },
 });

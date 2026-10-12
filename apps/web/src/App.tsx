@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { AuthProvider, LoginPage, ProtectedRoute } from './auth';
+import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { AuthProvider, ProtectedRoute } from './auth';
 import { useAuth } from './auth-context';
 import { appRoutes } from './route-config';
 import { BinDetailPage, BinListPage } from './bins';
@@ -8,11 +8,10 @@ import { DeviceListPage } from './devices';
 import { AlertsPage, DashboardPage, SensorHistoryPage } from './dashboard';
 import { SettingsPage } from './settings';
 import { CollectionsPage } from './collections';
-import { UsersPage } from './users';
 import { RealtimeProvider } from './realtime-context';
 import { useRealtime } from './realtime-store';
 import { ErrorBoundary } from './error-boundary';
-import { IconActivity, IconBell, IconCpu, IconGrid, IconHistory, IconLogout, IconMenu, IconSettings, IconTrash, IconUsers } from './icons';
+import { IconActivity, IconBell, IconCpu, IconGrid, IconHistory, IconMenu, IconSettings, IconTrash } from './icons';
 import './App.css';
 
 function PagePlaceholder({ title }: { title: string }) {
@@ -42,12 +41,11 @@ function ErrorPage({ code, title, description }: { code: string; title: string; 
 }
 
 function AppShell() {
-  const { user, token, logout } = useAuth();
-  const navigate = useNavigate();
+  const { token } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const visibleRoutes = appRoutes.filter((route) => route.roles.includes(user!.role));
+  const visibleRoutes = appRoutes;
   const currentRoute = [...visibleRoutes].sort((a, b) => b.path.length - a.path.length).find((route) => location.pathname.startsWith(route.path));
   const icons: Record<string, React.ReactNode> = {
     '/dashboard': <IconGrid />,
@@ -56,14 +54,8 @@ function AppShell() {
     '/sensor-history': <IconActivity />,
     '/collections': <IconHistory />,
     '/alerts': <IconBell />,
-    '/users': <IconUsers />,
     '/settings': <IconSettings />
   };
-
-  function signOut() {
-    logout();
-    navigate('/login', { replace: true });
-  }
 
   return (
     <RealtimeProvider token={token}>
@@ -82,9 +74,8 @@ function AppShell() {
             ))}
           </nav>
           <div className="sidebar-bottom">
-            <div className="account-avatar">{user!.username.slice(0, 1).toUpperCase()}</div>
-            <div className="account-copy"><strong>{user!.username}</strong><span>{user!.role}</span></div>
-            <button className="icon-button account-logout" type="button" onClick={signOut} title="Đăng xuất" aria-label="Đăng xuất"><IconLogout /></button>
+            <div className="account-avatar">SB</div>
+            <div className="account-copy"><strong>SmartBin Demo</strong><span>Chế độ mô phỏng</span></div>
           </div>
           <button className="collapse-button" type="button" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? 'Mở rộng thanh điều hướng' : 'Thu gọn thanh điều hướng'}>
             <span>{collapsed ? '›' : '‹'}</span><span className="collapse-copy">Thu gọn</span>
@@ -95,20 +86,22 @@ function AppShell() {
           <TopBar title={currentRoute?.label ?? 'Tổng quan'} onMenu={() => setSidebarOpen((value) => !value)} />
           <ErrorBoundary key={location.pathname}>
           <Routes>
-            <Route path="/dashboard" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><DashboardPage /></ProtectedRoute>} />
-            <Route path="/bins" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><BinListPage /></ProtectedRoute>} />
-            <Route path="/bins/:id" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><BinDetailPage /></ProtectedRoute>} />
-            <Route path="/devices" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><DeviceListPage /></ProtectedRoute>} />
-            <Route path="/sensor-history" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR']}><SensorHistoryPage /></ProtectedRoute>} />
-            <Route path="/alerts" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR']}><AlertsPage /></ProtectedRoute>} />
-            <Route path="/collections" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><CollectionsPage /></ProtectedRoute>} />
-            <Route path="/users" element={<ProtectedRoute roles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><SettingsPage /></ProtectedRoute>} />
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+            <Route path="/bins" element={<ProtectedRoute><BinListPage /></ProtectedRoute>} />
+            <Route path="/bins/:id" element={<ProtectedRoute><BinDetailPage /></ProtectedRoute>} />
+            <Route path="/devices" element={<ProtectedRoute><DeviceListPage /></ProtectedRoute>} />
+            <Route path="/sensor-history" element={<ProtectedRoute><SensorHistoryPage /></ProtectedRoute>} />
+            <Route path="/alerts" element={<ProtectedRoute><AlertsPage /></ProtectedRoute>} />
+            <Route path="/collections" element={<ProtectedRoute><CollectionsPage /></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+            <Route path="/users" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/login" element={<Navigate to="/dashboard" replace />} />
 
             {appRoutes
-              .filter((route) => !['/dashboard', '/bins', '/devices', '/sensor-history', '/alerts', '/collections', '/users', '/settings'].includes(route.path))
+              .filter((route) => !['/dashboard', '/bins', '/devices', '/sensor-history', '/alerts', '/collections', '/settings'].includes(route.path))
               .map((route) => (
-                <Route key={route.path} path={route.path} element={<ProtectedRoute roles={route.roles}><PagePlaceholder title={route.label} /></ProtectedRoute>} />
+                <Route key={route.path} path={route.path} element={<ProtectedRoute><PagePlaceholder title={route.label} /></ProtectedRoute>} />
               ))}
           </Routes>
           </ErrorBoundary>
@@ -119,7 +112,6 @@ function AppShell() {
 }
 
 function TopBar({ title, onMenu }: { title: string; onMenu: () => void }) {
-  const { user } = useAuth();
   const { connected } = useRealtime();
 
   return (
@@ -130,8 +122,8 @@ function TopBar({ title, onMenu }: { title: string; onMenu: () => void }) {
       </div>
       <div className="topbar-actions">
         <div className={`realtime-pill ${connected ? 'is-connected' : 'is-disconnected'}`}><span className="status-dot" />{connected ? 'Realtime connected' : 'Realtime disconnected'}</div>
-        {user!.role !== 'WORKER' && <Link className="icon-button notification-link" to="/alerts" aria-label="Mở cảnh báo" title="Cảnh báo"><IconBell /></Link>}
-        <div className="topbar-user"><span className="account-avatar">{user!.username.slice(0, 1).toUpperCase()}</span><span><strong>{user!.username}</strong><small>{user!.role}</small></span></div>
+        <Link className="icon-button notification-link" to="/alerts" aria-label="Mở cảnh báo" title="Cảnh báo"><IconBell /></Link>
+        <div className="topbar-user"><span className="account-avatar">SB</span><span><strong>SmartBin</strong><small>Demo Mode</small></span></div>
       </div>
     </header>
   );
@@ -142,10 +134,10 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
+          <Route path="/login" element={<Navigate to="/dashboard" replace />} />
           <Route path="/forbidden" element={<ErrorPage code="403" title="Bạn không có quyền truy cập" description="Bạn không có quyền thực hiện hành động này." />} />
-          <Route path="/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />
-          <Route path="/unauthorized" element={<ErrorPage code="401" title="Yêu cầu đăng nhập" description="Vui lòng đăng nhập để tiếp tục." />} />
+          <Route path="/unauthorized" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/*" element={<AppShell />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

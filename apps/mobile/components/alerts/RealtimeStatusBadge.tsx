@@ -1,60 +1,31 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Colors } from '../../constants/colors';
+import { Tones, ToneName } from '../../constants/colors';
 import { RealtimeConnectionStatus } from '../../types/alert';
+import { StatusDot } from '../ui/motion';
 
 interface RealtimeStatusBadgeProps {
   status: RealtimeConnectionStatus;
 }
 
-const STATUS_CONFIG: Record<
-  RealtimeConnectionStatus,
-  { label: string; dot: string; color: string; bg: string; border: string }
-> = {
-  connected: {
-    label: 'Realtime: Đã kết nối',
-    dot: Colors.success,
-    color: Colors.success,
-    bg: Colors.successLight,
-    border: Colors.successBorder,
-  },
-  connecting: {
-    label: 'Realtime: Đang kết nối...',
-    dot: Colors.warning,
-    color: Colors.warning,
-    bg: Colors.warningLight,
-    border: Colors.warningBorder,
-  },
-  reconnecting: {
-    label: 'Realtime: Đang thử lại...',
-    dot: Colors.warning,
-    color: Colors.warning,
-    bg: Colors.warningLight,
-    border: Colors.warningBorder,
-  },
-  disconnected: {
-    label: 'Realtime: Mất kết nối',
-    dot: Colors.textMuted,
-    color: Colors.textMuted,
-    bg: 'rgba(100, 116, 139, 0.15)',
-    border: Colors.border,
-  },
-  error: {
-    label: 'Realtime: Lỗi kết nối',
-    dot: Colors.error,
-    color: Colors.error,
-    bg: Colors.errorLight,
-    border: Colors.errorBorder,
-  },
+const STATUS_CONFIG: Record<RealtimeConnectionStatus, { label: string; tone: ToneName; pulse: boolean }> = {
+  connected: { label: 'Realtime: Đã kết nối', tone: 'normal', pulse: true },
+  connecting: { label: 'Realtime: Đang kết nối...', tone: 'monitor', pulse: false },
+  reconnecting: { label: 'Realtime: Đang thử lại...', tone: 'monitor', pulse: false },
+  disconnected: { label: 'Realtime: Mất kết nối', tone: 'neutral', pulse: false },
+  error: { label: 'Realtime: Lỗi kết nối', tone: 'critical', pulse: false },
 };
 
 export const RealtimeStatusBadge: React.FC<RealtimeStatusBadgeProps> = ({ status }) => {
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.disconnected;
+  const t = Tones[config.tone];
 
   return (
-    <View style={[styles.badge, { backgroundColor: config.bg, borderColor: config.border }]}>
-      <View style={[styles.dot, { backgroundColor: config.dot }]} />
-      <Text style={[styles.label, { color: config.color }]}>{config.label}</Text>
+    <View style={[styles.badge, { backgroundColor: t.bg, borderColor: t.border }]}>
+      <StatusDot color={t.solid} pulse={config.pulse} size={5} />
+      <Text style={[styles.label, { color: t.text }]} numberOfLines={1}>
+        {config.label}
+      </Text>
     </View>
   );
 };
@@ -63,21 +34,16 @@ const styles = StyleSheet.create({
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 2,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     alignSelf: 'flex-start',
   },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
   label: {
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 10,
+    fontWeight: '800',
     letterSpacing: 0.2,
   },
 });

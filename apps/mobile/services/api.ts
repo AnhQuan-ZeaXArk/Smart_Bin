@@ -110,7 +110,11 @@ class ApiClient {
         let errorDetail = '';
         try {
           const errorJson = await response.json();
-          errorDetail = errorJson.message || errorJson.error || '';
+          const nested = errorJson.error;
+          errorDetail =
+            errorJson.message ||
+            (typeof nested === 'string' ? nested : nested?.message) ||
+            '';
         } catch {
           // If response body is not JSON, ignore
         }

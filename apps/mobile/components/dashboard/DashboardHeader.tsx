@@ -1,123 +1,111 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Colors } from '../../constants/colors';
+import { FontSize, Radius, Spacing } from '../../constants/theme';
 import { User, RoleName } from '../../types/auth';
+import { RealtimeConnectionStatus } from '../../types/alert';
 import { formatTime } from '../../utils/formatters';
+import { Badge, BrandMark, BrandWord } from '../ui/kit';
+import { Icon } from '../ui/Icon';
+import { PressableScale } from '../ui/motion';
+import { RealtimeStatusBadge } from '../alerts/RealtimeStatusBadge';
+import { ToneName } from '../../constants/colors';
 
 interface DashboardHeaderProps {
-  user: User | null;
+  user?: User | null;
   lastUpdated?: Date;
-  onLogout: () => void;
+  onLogout?: () => void;
   isLoggingOut?: boolean;
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
+  realtimeStatus?: RealtimeConnectionStatus;
 }
 
 function getRoleLabel(role?: RoleName): string {
   switch (role) {
     case 'ADMIN':
-      return 'Quản trị viên (Admin)';
+      return 'Quản trị viên';
     case 'SUPERVISOR':
-      return 'Giám sát viên (Supervisor)';
+      return 'Giám sát viên';
     case 'WORKER':
-      return 'Nhân viên thu gom (Worker)';
+      return 'Nhân viên thu gom';
     default:
       return 'Người dùng';
   }
 }
 
-function getRoleBadgeColors(role?: RoleName) {
+function getRoleTone(role?: RoleName): ToneName {
   switch (role) {
     case 'ADMIN':
-      return {
-        bg: 'rgba(16, 185, 129, 0.15)',
-        text: Colors.brandHighlight,
-        border: Colors.brandPrimary,
-      };
+      return 'normal';
     case 'SUPERVISOR':
-      return {
-        bg: 'rgba(245, 158, 11, 0.15)',
-        text: Colors.warning,
-        border: Colors.warningBorder,
-      };
+      return 'monitor';
     case 'WORKER':
-      return {
-        bg: 'rgba(56, 189, 248, 0.15)',
-        text: Colors.info,
-        border: Colors.infoBorder,
-      };
+      return 'info';
     default:
-      return {
-        bg: Colors.surfaceCard,
-        text: Colors.textSecondary,
-        border: Colors.border,
-      };
+      return 'neutral';
   }
 }
 
 export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
-  user,
   lastUpdated,
-  onLogout,
-  isLoggingOut = false,
+  onRefresh,
+  isRefreshing = false,
+  realtimeStatus,
 }) => {
-  const roleColors = getRoleBadgeColors(user?.role);
-
   return (
     <View style={styles.container}>
       <View style={styles.topRow}>
-        <View style={styles.brandBadge}>
-          <Text style={styles.brandBadgeText}>SMARTBIN</Text>
+        <View style={styles.brand}>
+          <BrandMark size={34} />
+          <BrandWord />
         </View>
-        <TouchableOpacity
-          style={styles.logoutBtn}
-          onPress={onLogout}
-          disabled={isLoggingOut}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.logoutBtnText}>
-            {isLoggingOut ? 'Đang thoát...' : 'Đăng xuất'}
-          </Text>
-        </TouchableOpacity>
       </View>
 
       <View style={styles.profileRow}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
-            {user?.username?.slice(0, 2).toUpperCase() || 'SB'}
-          </Text>
+          <Text style={styles.avatarText}>SB</Text>
         </View>
         <View style={styles.profileInfo}>
-          <Text style={styles.greeting}>Xin chào,</Text>
+          <Text style={styles.greeting}>Hệ thống SmartBin</Text>
           <Text style={styles.displayName} numberOfLines={1}>
-            {user?.displayName || user?.username || 'Vận hành viên'}
+            Bảng điều khiển Demo
           </Text>
-          <View
-            style={[
-              styles.roleBadge,
-              { backgroundColor: roleColors.bg, borderColor: roleColors.border },
-            ]}
-          >
-            <Text style={[styles.roleText, { color: roleColors.text }]}>
-              {getRoleLabel(user?.role)}
-            </Text>
-          </View>
         </View>
+        <Badge tone="normal" label="Demo Mode" />
       </View>
 
-      {lastUpdated && (
-        <View style={styles.metaRow}>
-          <Text style={styles.metaText}>
-            Cập nhật lúc: <Text style={styles.metaHighlight}>{formatTime(lastUpdated)}</Text> (Kéo xuống để làm mới)
-          </Text>
+      <View style={styles.metaRow}>
+        <View style={styles.metaLeft}>
+          {realtimeStatus ? <RealtimeStatusBadge status={realtimeStatus} /> : null}
+          {lastUpdated ? (
+            <Text style={styles.metaText} numberOfLines={1}>
+              Cập nhật <Text style={styles.metaHighlight}>{formatTime(lastUpdated)}</Text>
+            </Text>
+          ) : null}
         </View>
-      )}
+        {onRefresh && (
+          <PressableScale
+            onPress={onRefresh}
+            disabled={isRefreshing}
+            accessibilityRole="button"
+            accessibilityLabel="Làm mới dữ liệu"
+            style={styles.refreshBtn}
+          >
+            <Icon name="refresh" size={14} color={Colors.brandHighlight} />
+            <Text style={styles.refreshText}>{isRefreshing ? 'Đang làm mới' : 'Làm mới'}</Text>
+          </PressableScale>
+        )}
+      </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    gap: Spacing.md,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
     backgroundColor: Colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
@@ -126,90 +114,92 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
   },
-  brandBadge: {
-    backgroundColor: Colors.brandPrimary,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
+  brand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
   },
-  brandBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 1.5,
-  },
-  logoutBtn: {
-    backgroundColor: Colors.surfaceCard,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
+  iconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: Radius.md,
     borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  logoutBtnText: {
-    color: Colors.error,
-    fontSize: 11,
-    fontWeight: '700',
+    borderColor: '#673B43',
+    backgroundColor: '#312329',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   profileRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: Spacing.md,
   },
   avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: Colors.brandPrimary,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: '#3B5B6C',
+    backgroundColor: '#183145',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
   },
   avatarText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '900',
+    color: '#BBF7E5',
+    fontSize: FontSize.base,
+    fontWeight: '800',
   },
   profileInfo: {
     flex: 1,
+    minWidth: 0,
   },
   greeting: {
     color: Colors.textMuted,
-    fontSize: 11,
-    fontWeight: '500',
+    fontSize: FontSize.caption,
   },
   displayName: {
     color: Colors.textPrimary,
-    fontSize: 17,
+    fontSize: FontSize.title,
     fontWeight: '800',
     marginTop: 1,
   },
-  roleBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    alignSelf: 'flex-start',
-    marginTop: 4,
-  },
-  roleText: {
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
   metaRow: {
-    marginTop: 10,
-    paddingTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.sm,
+    paddingTop: Spacing.md,
     borderTopWidth: 1,
     borderTopColor: Colors.borderLight,
   },
+  metaLeft: {
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
+  },
   metaText: {
-    fontSize: 11,
+    fontSize: FontSize.caption,
     color: Colors.textMuted,
   },
   metaHighlight: {
     color: Colors.brandHighlight,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  refreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 36,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.buttonSecondaryBorder,
+    backgroundColor: Colors.buttonSecondaryBg,
+  },
+  refreshText: {
+    color: '#CFDAE4',
+    fontSize: FontSize.small,
+    fontWeight: '700',
   },
 });

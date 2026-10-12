@@ -12,6 +12,13 @@ const loginSchema = z.object({ username: z.string().trim().min(1), password: z.s
 
 router.post('/login', async (request, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.status(200).json({
+        token: 'demo-mode-token',
+        user: { id: 'demo-operator', username: 'demo', displayName: 'Người vận hành Demo', role: 'ADMIN' }
+      });
+    }
+
     const { username, password } = loginSchema.parse(request.body);
     const user = await prisma.user.findUnique({ include: { role: true }, where: { username } });
     if (!user || !user.isActive || !(await bcrypt.compare(password, user.passwordHash))) {
@@ -26,6 +33,10 @@ router.post('/login', async (request, response, next) => {
 
 router.get('/me', requireAuth, async (request: AuthenticatedRequest, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.json({ id: 'demo-operator', username: 'demo', displayName: 'Người vận hành Demo', role: 'ADMIN' });
+    }
+
     const user = await prisma.user.findUnique({ include: { role: true }, where: { id: request.user!.userId } });
     return user ? response.json({ id: user.id, username: user.username, displayName: user.displayName ?? user.username, role: user.role.name }) : response.status(404).json({ message: 'User not found' });
   } catch (error) {
@@ -41,6 +52,10 @@ const changePasswordSchema = z.object({
 
 router.patch('/me/password', requireAuth, async (request: AuthenticatedRequest, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.status(403).json({ message: 'Đổi mật khẩu bị vô hiệu hóa trong chế độ Demo.' });
+    }
+
     const parsed = changePasswordSchema.safeParse(request.body);
     if (!parsed.success) {
       const firstError = parsed.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ.';

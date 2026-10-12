@@ -4,16 +4,17 @@ import { RealtimeContext } from './realtime-store';
 
 const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 
-export function RealtimeProvider({ token, children }: { token: string | null; children: ReactNode }) {
+export function RealtimeProvider({ token, children }: { token?: string | null; children: ReactNode }) {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    if (!token) return;
-
     const realtime = io(apiUrl, {
-      auth: { token },
-      transports: ['websocket', 'polling']
+      auth: token ? { token } : undefined,
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000
     });
     queueMicrotask(() => setSocket(realtime));
     realtime.on('connect', () => setConnected(true));

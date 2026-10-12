@@ -12,16 +12,28 @@ const mqttAdapter = new MqttAdapter(realtime, deviceHealthService);
 const port = env.PORT ?? env.API_PORT;
 
 httpServer.listen(port, () => {
-  console.log(`SmartBin API listening on port ${port}`);
-  deviceHealthService.startMonitoring();
-  void mqttAdapter.start();
+  if (env.isDemoMode) {
+    console.log(`SmartBin API listening on port ${port} [DEMO MODE: Standalone, No Database, No Login]`);
+  } else {
+    console.log(`SmartBin API listening on port ${port} [PRODUCTION MODE]`);
+    deviceHealthService.startMonitoring();
+    void mqttAdapter.start();
+  }
 });
 
 process.once('SIGINT', () => {
-  deviceHealthService.stopMonitoring();
-  void mqttAdapter.stop().finally(() => httpServer.close(() => process.exit(0)));
+  if (!env.isDemoMode) {
+    deviceHealthService.stopMonitoring();
+    void mqttAdapter.stop().finally(() => httpServer.close(() => process.exit(0)));
+  } else {
+    httpServer.close(() => process.exit(0));
+  }
 });
 process.once('SIGTERM', () => {
-  deviceHealthService.stopMonitoring();
-  void mqttAdapter.stop().finally(() => httpServer.close(() => process.exit(0)));
+  if (!env.isDemoMode) {
+    deviceHealthService.stopMonitoring();
+    void mqttAdapter.stop().finally(() => httpServer.close(() => process.exit(0)));
+  } else {
+    httpServer.close(() => process.exit(0));
+  }
 });

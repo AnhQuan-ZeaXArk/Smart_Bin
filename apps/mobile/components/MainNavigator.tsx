@@ -9,13 +9,14 @@ import { DeviceHealthScreen } from './device/DeviceHealthScreen';
 import { AlertScreen } from './alerts/AlertScreen';
 import { CollectionHistoryScreen } from './collection/CollectionHistoryScreen';
 import { BottomTabBar } from './BottomTabBar';
+import { FadeIn } from './ui/motion';
 
 export const MainNavigator: React.FC = () => {
   const { currentScreen, params } = useNavigation();
 
   return (
     <View style={styles.container}>
-      <View style={styles.screenContainer}>
+      <FadeIn key={`${currentScreen}:${params?.binId ?? ''}`} style={styles.screenContainer} duration={260} distance={8}>
         {currentScreen === 'dashboard' && <HomeScreen />}
         {currentScreen === 'bins' && <BinsScreen />}
         {currentScreen === 'devices' && <DeviceHealthScreen />}
@@ -28,7 +29,7 @@ export const MainNavigator: React.FC = () => {
             binName={params?.binName}
           />
         )}
-      </View>
+      </FadeIn>
       <BottomTabBar />
     </View>
   );

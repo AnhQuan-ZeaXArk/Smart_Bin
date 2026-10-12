@@ -6,6 +6,9 @@ import { DEVICE_HEALTH_CONFIG } from '../config/device-health.config.js';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 
+import { env } from '../config/env.js';
+import { demoService } from '../demo/demo.service.js';
+
 const router = Router();
 
 function notFound(response: Response, message = 'Device not found') {
@@ -28,6 +31,9 @@ function validationError(response: Response, message: string) {
 
 router.get('/', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async (_request, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.json({ devices: demoService.getAllDevices() });
+    }
     const devices = await deviceHealthService.getAllDevices();
     return response.json({ devices });
   } catch (error) {
@@ -37,6 +43,15 @@ router.get('/', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async
 
 router.post('/heartbeat', async (request, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.status(403).json({
+        error: {
+          code: 'DEMO_MODE_READ_ONLY',
+          message: 'Hệ thống SmartBin đang hoạt động ở chế độ Demo mô phỏng. Thao tác ghi dữ liệu bị vô hiệu hóa.'
+        }
+      });
+    }
+
     const parsed = deviceHeartbeatSchema.safeParse(request.body);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
@@ -63,6 +78,12 @@ router.get('/:id', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), as
     const id = request.params.id;
     if (!id || typeof id !== 'string') return notFound(response);
 
+    if (env.isDemoMode) {
+      const device = demoService.getDeviceById(id);
+      if (!device) return notFound(response);
+      return response.json({ device });
+    }
+
     const device = await deviceHealthService.getDeviceById(id);
     if (!device) return notFound(response);
 
@@ -76,6 +97,38 @@ router.get('/:id/health', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKE
   try {
     const id = request.params.id;
     if (!id || typeof id !== 'string') return notFound(response);
+
+    if (env.isDemoMode) {
+      const device = demoService.getDeviceById(id);
+      if (!device) return notFound(response);
+
+      let parsedMetadata: unknown = null;
+      if (device.metadata) {
+        try {
+          parsedMetadata = JSON.parse(device.metadata);
+        } catch {
+          parsedMetadata = device.metadata;
+        }
+      }
+
+      return response.json({
+        deviceId: device.deviceId,
+        deviceName: device.deviceName,
+        deviceType: device.deviceType,
+        status: device.status,
+        lastSeen: device.lastSeen,
+        lastHeartbeat: device.lastHeartbeat,
+        uptime: device.uptime,
+        firmwareVersion: device.firmwareVersion,
+        ipAddress: device.ipAddress,
+        metadata: parsedMetadata,
+        health: {
+          onlineThresholdMs: DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_MS,
+          warningThresholdMs: DEVICE_HEALTH_CONFIG.WARNING_THRESHOLD_MS,
+          offlineThresholdMs: DEVICE_HEALTH_CONFIG.OFFLINE_THRESHOLD_MS
+        }
+      });
+    }
 
     const device = await deviceHealthService.getDeviceById(id);
     if (!device) return notFound(response);

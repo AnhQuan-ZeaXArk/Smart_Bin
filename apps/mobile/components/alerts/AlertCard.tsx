@@ -1,223 +1,182 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { Colors } from '../../constants/colors';
-import {
-  AlertItem,
-  AlertSeverity,
-  ALERT_SEVERITY_LABELS,
-  ALERT_TYPE_LABELS,
-} from '../../types/alert';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
+import { Colors, Tones } from '../../constants/colors';
+import { FontSize, Mono, Radius, SEVERITY_TONE, Shadow, Spacing } from '../../constants/theme';
+import { AlertItem, ALERT_SEVERITY_LABELS, ALERT_TYPE_LABELS } from '../../types/alert';
 import { formatRelativeTime, formatDateTime } from '../../utils/formatters';
+import { Badge } from '../ui/kit';
+import { Icon } from '../ui/Icon';
+import { useReducedMotion } from '../ui/motion';
 
 interface AlertCardProps {
   alert: AlertItem;
+  /** True only for alerts that arrived after the list first loaded (realtime or refresh). */
+  isNew?: boolean;
 }
 
-function getSeverityConfig(severity: AlertSeverity) {
-  switch (severity) {
-    case 'CRITICAL':
-      return {
-        label: ALERT_SEVERITY_LABELS.CRITICAL,
-        color: Colors.error,
-        bg: Colors.errorLight,
-        border: Colors.errorBorder,
-        icon: '🚨',
-      };
-    case 'WARNING':
-      return {
-        label: ALERT_SEVERITY_LABELS.WARNING,
-        color: Colors.warning,
-        bg: Colors.warningLight,
-        border: Colors.warningBorder,
-        icon: '⚠️',
-      };
-    case 'INFO':
-    default:
-      return {
-        label: ALERT_SEVERITY_LABELS.INFO,
-        color: Colors.info,
-        bg: Colors.infoLight,
-        border: Colors.infoBorder,
-        icon: 'ℹ️',
-      };
-  }
-}
+export const AlertCard: React.FC<AlertCardProps> = ({ alert, isNew = false }) => {
+  const reduced = useReducedMotion();
+  const enter = useRef(new Animated.Value(isNew ? 0 : 1)).current;
+  const glow = useRef(new Animated.Value(isNew ? 1 : 0)).current;
 
-export const AlertCard: React.FC<AlertCardProps> = ({ alert }) => {
-  const severityConfig = getSeverityConfig(alert.severity);
+  useEffect(() => {
+    if (!isNew || reduced) {
+      enter.setValue(1);
+      glow.setValue(0);
+      return;
+    }
+    const slide = Animated.timing(enter, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true });
+    const fade = Animated.timing(glow, { toValue: 0, duration: 1800, delay: 300, easing: Easing.out(Easing.quad), useNativeDriver: true });
+    slide.start();
+    fade.start();
+    return () => {
+      slide.stop();
+      fade.stop();
+    };
+  }, [isNew, reduced, enter, glow]);
+
+  const tone = SEVERITY_TONE[alert.severity] ?? 'info';
+  const t = Tones[tone];
   const typeLabel = ALERT_TYPE_LABELS[alert.type] || alert.type;
   const binName = alert.bin?.name || alert.bin?.binCode;
 
   return (
-    <View
+    <Animated.View
       style={[
         styles.card,
+        { borderLeftColor: t.solid },
+        alert.isResolved && styles.cardResolved,
         {
-          borderColor: alert.isResolved ? Colors.border : severityConfig.border,
-          backgroundColor: alert.isResolved
-            ? Colors.surfaceCard
-            : 'rgba(30, 41, 59, 0.95)',
+          opacity: enter,
+          transform: [{ translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [-14, 0] }) }],
         },
       ]}
     >
-      {/* Top Row: Type & Severity Badge */}
-      <View style={styles.topRow}>
-        <View style={styles.typeContainer}>
-          <Text style={styles.typeIcon}>{severityConfig.icon}</Text>
-          <Text style={styles.typeLabel}>{typeLabel}</Text>
-        </View>
+      <Animated.View pointerEvents="none" style={[styles.glow, { opacity: glow }]} />
 
-        <View
-          style={[
-            styles.severityBadge,
-            {
-              backgroundColor: severityConfig.bg,
-              borderColor: severityConfig.border,
-            },
-          ]}
-        >
-          <Text style={[styles.severityText, { color: severityConfig.color }]}>
-            {severityConfig.label}
-          </Text>
+      <View style={styles.topRow}>
+        <View style={[styles.iconBox, { backgroundColor: t.bg, borderColor: t.border }]}>
+          <Icon name={alert.severity === 'INFO' ? 'info' : 'alert-triangle'} size={15} color={t.text} />
         </View>
+        <Text style={styles.typeLabel} numberOfLines={1}>
+          {typeLabel}
+        </Text>
+        <Badge tone={tone} label={ALERT_SEVERITY_LABELS[alert.severity] ?? alert.severity} />
       </View>
 
-      {/* Alert Message */}
       <Text style={styles.messageText}>{alert.message}</Text>
 
-      {/* Associated Resource Meta */}
       {(binName || alert.deviceId) && (
         <View style={styles.resourceRow}>
-          {binName && (
-            <Text style={styles.resourceText}>
-              📍 Ngăn rác: <Text style={styles.resourceHighlight}>{binName}</Text>
-            </Text>
-          )}
-          {alert.deviceId && (
-            <Text style={styles.resourceText}>
-              🖥️ Thiết bị: <Text style={styles.resourceHighlight}>{alert.deviceId}</Text>
-            </Text>
-          )}
+          {binName ? (
+            <View style={styles.resource}>
+              <Icon name="trash" size={12} color={Colors.textMuted} />
+              <Text style={styles.resourceText} numberOfLines={1}>
+                {binName}
+              </Text>
+            </View>
+          ) : null}
+          {alert.deviceId ? (
+            <View style={styles.resource}>
+              <Icon name="cpu" size={12} color={Colors.textMuted} />
+              <Text style={styles.resourceText} numberOfLines={1}>
+                {alert.deviceId}
+              </Text>
+            </View>
+          ) : null}
         </View>
       )}
 
-      {/* Footer Row: Resolution Status & Timestamp */}
       <View style={styles.footerRow}>
-        <View style={styles.statusTag}>
-          {alert.isResolved ? (
-            <Text style={styles.resolvedText}>✓ Đã xử lý</Text>
-          ) : (
-            <Text style={[styles.activeText, { color: severityConfig.color }]}>
-              ● Đang kích hoạt
-            </Text>
-          )}
-        </View>
-
+        <Badge tone={alert.isResolved ? 'normal' : 'monitor'} label={alert.isResolved ? 'Đã xử lý' : 'Chưa xử lý'} dot />
         <View style={styles.timeContainer}>
-          <Text style={styles.relativeTimeText}>
-            {formatRelativeTime(alert.createdAt)}
-          </Text>
-          <Text style={styles.fullTimeText}>
-            {formatDateTime(alert.createdAt)}
-          </Text>
+          <Text style={styles.relativeTimeText}>{formatRelativeTime(alert.createdAt)}</Text>
+          <Text style={styles.fullTimeText}>{formatDateTime(alert.createdAt)}</Text>
         </View>
       </View>
-    </View>
+    </Animated.View>
   );
 };
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 12,
-    padding: 14,
+    gap: Spacing.sm + 2,
+    padding: Spacing.md + 2,
+    marginBottom: Spacing.sm + 2,
+    borderRadius: Radius.lg,
     borderWidth: 1,
-    marginBottom: 12,
+    borderLeftWidth: 3,
+    borderColor: Colors.border,
+    backgroundColor: '#142438',
+    ...Shadow.card,
+  },
+  cardResolved: {
+    opacity: 0.7,
+  },
+  glow: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.cyan,
+    backgroundColor: 'rgba(56, 189, 248, 0.08)',
   },
   topRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: Spacing.sm,
   },
-  typeContainer: {
-    flexDirection: 'row',
+  iconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    borderWidth: 1,
     alignItems: 'center',
-    flex: 1,
-    marginRight: 8,
-  },
-  typeIcon: {
-    fontSize: 15,
-    marginRight: 6,
+    justifyContent: 'center',
   },
   typeLabel: {
-    fontSize: 13,
+    flex: 1,
+    fontSize: FontSize.body,
     fontWeight: '800',
     color: Colors.textPrimary,
-    letterSpacing: 0.2,
-  },
-  severityBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  severityText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.3,
   },
   messageText: {
-    fontSize: 14,
-    color: Colors.textPrimary,
+    fontSize: FontSize.base,
+    color: Colors.textSecondary,
     lineHeight: 20,
     fontWeight: '600',
-    marginBottom: 8,
   },
   resourceRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    backgroundColor: 'rgba(15, 23, 42, 0.4)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    marginBottom: 8,
+    gap: Spacing.md,
+  },
+  resource: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    maxWidth: '100%',
   },
   resourceText: {
-    fontSize: 11,
+    fontSize: FontSize.caption,
     color: Colors.textSecondary,
-  },
-  resourceHighlight: {
-    color: Colors.brandHighlight,
-    fontWeight: '700',
+    fontFamily: Mono,
+    flexShrink: 1,
   },
   footerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-end',
-    paddingTop: 8,
+    paddingTop: Spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(51, 65, 85, 0.3)',
-  },
-  statusTag: {
-    paddingVertical: 2,
-  },
-  resolvedText: {
-    fontSize: 11,
-    color: Colors.success,
-    fontWeight: '700',
-  },
-  activeText: {
-    fontSize: 11,
-    fontWeight: '800',
+    borderTopColor: Colors.borderLight,
   },
   timeContainer: {
     alignItems: 'flex-end',
   },
   relativeTimeText: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    fontWeight: '600',
+    fontSize: FontSize.caption,
+    color: Colors.textSecondary,
+    fontWeight: '700',
   },
   fullTimeText: {
     fontSize: 10,

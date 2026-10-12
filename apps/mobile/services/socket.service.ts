@@ -51,13 +51,9 @@ class SocketService {
    */
   public connect(customToken?: string): void {
     const token = customToken || apiClient.getToken();
-    if (!token) {
-      this.setStatus('disconnected');
-      return;
-    }
 
-    // If socket already connected with the same auth, reuse
-    if (this.socket && this.socket.connected) {
+    // If socket already connected or still connecting, reuse it
+    if (this.socket && (this.socket.connected || this.connectionStatus === 'connecting')) {
       return;
     }
 
@@ -72,7 +68,7 @@ class SocketService {
 
     try {
       this.socket = io(Config.apiUrl, {
-        auth: { token },
+        auth: token ? { token } : undefined,
         transports: ['websocket', 'polling'],
         reconnection: true,
         reconnectionAttempts: 10,

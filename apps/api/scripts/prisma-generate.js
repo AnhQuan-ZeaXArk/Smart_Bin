@@ -14,6 +14,11 @@ if (fs.existsSync(envPath)) {
   dotenv.config({ path: envPath });
 }
 
+// Fallback dummy URL so prisma generate succeeds on Render without database configured
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = 'postgresql://demo:demo@localhost:5432/smartbin_demo';
+}
+
 const databaseUrl = process.env.DATABASE_URL || '';
 const isRender = Boolean(process.env.RENDER);
 const isProduction = process.env.NODE_ENV === 'production';

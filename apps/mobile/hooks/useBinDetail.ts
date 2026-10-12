@@ -7,6 +7,7 @@ interface UseBinDetailResult {
   isLoading: boolean;
   isRefreshing: boolean;
   error: string | null;
+  errorStatus: number | null;
   refresh: () => Promise<void>;
   reload: () => Promise<void>;
 }
@@ -16,6 +17,7 @@ export function useBinDetail(binId: string, binCode?: string): UseBinDetailResul
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
 
   const isMountedRef = useRef<boolean>(true);
 
@@ -36,6 +38,7 @@ export function useBinDetail(binId: string, binCode?: string): UseBinDetailResul
         setIsLoading(true);
       }
       setError(null);
+      setErrorStatus(null);
 
       try {
         const detail = await binService.getBinDetail(binId, binCode);
@@ -44,8 +47,9 @@ export function useBinDetail(binId: string, binCode?: string): UseBinDetailResul
         }
       } catch (err: unknown) {
         if (isMountedRef.current) {
-          const apiError = err as { message?: string };
+          const apiError = err as { message?: string; statusCode?: number };
           setError(apiError.message || 'Không thể tải thông tin thùng rác.');
+          setErrorStatus(apiError.statusCode ?? null);
         }
       } finally {
         if (isMountedRef.current) {
@@ -74,6 +78,7 @@ export function useBinDetail(binId: string, binCode?: string): UseBinDetailResul
     isLoading,
     isRefreshing,
     error,
+    errorStatus,
     refresh,
     reload,
   };

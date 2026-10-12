@@ -11,6 +11,11 @@ export interface AuthenticatedRequest extends Request {
 }
 
 export async function requireAuth(request: AuthenticatedRequest, response: Response, next: NextFunction) {
+  if (env.isDemoMode) {
+    request.user = { userId: 'demo-operator', role: 'ADMIN' };
+    return next();
+  }
+
   const token = request.header('authorization')?.replace('Bearer ', '');
   if (!token) return response.status(401).json({ message: 'Authentication required' });
   try {
@@ -27,6 +32,10 @@ export async function requireAuth(request: AuthenticatedRequest, response: Respo
 
 export function requireRole(...roles: RoleName[]) {
   return (request: AuthenticatedRequest, response: Response, next: NextFunction) => {
+    if (env.isDemoMode) {
+      return next();
+    }
+
     if (!request.user || !roles.includes(request.user.role)) {
       return response.status(403).json({ message: 'Insufficient permissions' });
     }

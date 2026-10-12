@@ -39,9 +39,10 @@ export function CollectionsPage() {
   const [to, setTo] = useState('');
 
   const loadCollections = useCallback(async () => {
-    if (!token) return;
     try {
-      const response = await fetch(`${apiUrl}/api/collections`, { headers: { Authorization: `Bearer ${token}` } });
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const response = await fetch(`${apiUrl}/api/collections`, { headers });
       if (!response.ok) throw new Error('Không thể tải lịch sử thu gom.');
       const payload = await response.json() as { collections: CollectionRecord[] };
       setRecords(payload.collections);

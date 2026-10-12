@@ -69,13 +69,16 @@ type DashboardData = {
   alerts: DashboardAlert[];
 };
 
-async function getData<T>(path: string, token: string): Promise<T> {
-  const response = await fetch(`${apiUrl}${path}`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
+async function getData<T>(path: string, token?: string | null): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const response = await fetch(`${apiUrl}${path}`, { headers });
   if (!response.ok) throw new Error('Không thể tải dữ liệu từ máy chủ.');
   return response.json() as Promise<T>;
 }
+
 
 function ago(value: string | null) {
   return value ? new Date(value).toLocaleString('vi-VN') : 'Chưa có dữ liệu';
@@ -192,7 +195,6 @@ export function DashboardPage() {
   // Load Dashboard summary data
   useEffect(() => {
     let active = true;
-    if (!token) return;
 
     getData<DashboardData>('/api/dashboard/summary', token)
       .then((result) => {
@@ -221,7 +223,6 @@ export function DashboardPage() {
   // Load Device list data independently
   useEffect(() => {
     let active = true;
-    if (!token) return;
 
     getData<{ devices: DeviceItem[] }>('/api/devices', token)
       .then((result) => {
@@ -563,7 +564,6 @@ export function SensorHistoryPage() {
 
   useEffect(() => {
     let active = true;
-    if (!token) return;
     getData<{ bins: Bin[] }>('/api/bins', token)
       .then((result) => { if (active) setBins(result.bins); })
       .catch((loadError) => { if (active) setError(loadError instanceof Error ? loadError.message : 'Không thể tải danh sách thùng.'); })
@@ -575,7 +575,7 @@ export function SensorHistoryPage() {
   const categoryByBinCode = useMemo(() => new Map(compartments.filter((c) => c.bin).map((c) => [c.bin!.binCode, c.label])), [compartments]);
 
   useEffect(() => {
-    if (!token || !binsLoaded || error) return;
+    if (!binsLoaded || error) return;
     let active = true;
     const params = new URLSearchParams();
     if (category !== 'ALL') {
@@ -590,7 +590,7 @@ export function SensorHistoryPage() {
       params.set('from', from.toISOString());
     }
     const query = params.toString() ? `?${params.toString()}` : '';
-    getData<{ readings: DashboardData['recentSensorReadings'] }>(`/api/dashboard/sensor-readings${query}`, token!)
+    getData<{ readings: DashboardData['recentSensorReadings'] }>(`/api/dashboard/sensor-readings${query}`, token)
       .then((result) => { if (active) setReadings(result.readings); })
       .catch((loadError) => { if (active) setError(loadError instanceof Error ? loadError.message : 'Không thể tải lịch sử cảm biến.'); })
       .finally(() => { if (active) setLoading(false); });
@@ -678,7 +678,6 @@ export function AlertsPage() {
 
   useEffect(() => {
     let active = true;
-    if (!token) return;
     getData<{ alerts: DashboardData['alerts'] }>('/api/dashboard/alerts', token)
       .then((data) => {
         if (active) {

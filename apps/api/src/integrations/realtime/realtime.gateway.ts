@@ -34,6 +34,11 @@ export class RealtimeGateway {
     });
 
     this.io.use(async (socket, next) => {
+      if (env.isDemoMode) {
+        socket.data.userId = 'demo-operator';
+        return next();
+      }
+
       try {
         const token = socket.handshake.auth.token as string | undefined;
         if (!token) return next(new Error('Authentication required'));

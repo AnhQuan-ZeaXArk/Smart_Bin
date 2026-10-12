@@ -85,12 +85,11 @@ export function DeviceListPage() {
   const [statusFilter, setStatusFilter] = useState<'ALL' | DeviceStatusEnum>('ALL');
 
   const fetchDevices = useCallback(async () => {
-    if (!token) return;
     setRefreshing(true);
     try {
-      const res = await fetch(`${apiUrl}/api/devices`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${apiUrl}/api/devices`, { headers });
       if (!res.ok) {
         throw new Error('Không thể tải trạng thái thiết bị.');
       }
@@ -107,24 +106,22 @@ export function DeviceListPage() {
 
   useEffect(() => {
     let active = true;
-    if (token) {
-      fetch(`${apiUrl}/api/devices`, {
-        headers: { Authorization: `Bearer ${token}` }
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    fetch(`${apiUrl}/api/devices`, { headers })
+      .then((res) => {
+        if (!res.ok) throw new Error('Không thể tải trạng thái thiết bị.');
+        return res.json();
       })
-        .then((res) => {
-          if (!res.ok) throw new Error('Không thể tải trạng thái thiết bị.');
-          return res.json();
-        })
-        .then((data) => {
-          if (active) setDevices(data.devices || []);
-        })
-        .catch((err) => {
-          if (active) setError(err instanceof Error ? err.message : 'Không thể tải trạng thái thiết bị.');
-        })
-        .finally(() => {
-          if (active) setLoading(false);
-        });
-    }
+      .then((data) => {
+        if (active) setDevices(data.devices || []);
+      })
+      .catch((err) => {
+        if (active) setError(err instanceof Error ? err.message : 'Không thể tải trạng thái thiết bị.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
     };
@@ -175,9 +172,9 @@ export function DeviceListPage() {
     setDetailLoading(true);
     setDeviceDetail(null);
     try {
-      const res = await fetch(`${apiUrl}/api/devices/${device.deviceId}/health`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${apiUrl}/api/devices/${device.deviceId}/health`, { headers });
       if (res.ok) {
         const data = await res.json();
         setDeviceDetail(data);

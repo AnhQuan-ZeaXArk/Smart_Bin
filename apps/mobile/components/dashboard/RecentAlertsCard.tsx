@@ -1,39 +1,17 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Colors } from '../../constants/colors';
-import { DashboardAlert, AlertSeverity } from '../../types/dashboard';
-import { formatTime, formatDate } from '../../utils/formatters';
+import { View, Text, StyleSheet } from 'react-native';
+import { Colors, Tones } from '../../constants/colors';
+import { FontSize, Mono, Radius, SEVERITY_TONE, Spacing } from '../../constants/theme';
+import { DashboardAlert } from '../../types/dashboard';
+import { ALERT_SEVERITY_LABELS } from '../../types/alert';
+import { formatDateTime } from '../../utils/formatters';
+import { Badge, Card, SectionHeader, StateCard } from '../ui/kit';
+import { Icon } from '../ui/Icon';
+import { FadeIn } from '../ui/motion';
 
 interface RecentAlertsCardProps {
   alerts: DashboardAlert[];
   onViewAllAlerts?: () => void;
-}
-
-function getSeverityBadge(severity: AlertSeverity) {
-  switch (severity) {
-    case 'CRITICAL':
-      return {
-        label: 'Nghiêm trọng',
-        color: Colors.error,
-        bg: Colors.errorLight,
-        border: Colors.errorBorder,
-      };
-    case 'WARNING':
-      return {
-        label: 'Cảnh báo',
-        color: Colors.warning,
-        bg: Colors.warningLight,
-        border: Colors.warningBorder,
-      };
-    case 'INFO':
-    default:
-      return {
-        label: 'Thông tin',
-        color: Colors.info,
-        bg: Colors.infoLight,
-        border: Colors.infoBorder,
-      };
-  }
 }
 
 export const RecentAlertsCard: React.FC<RecentAlertsCardProps> = ({
@@ -44,198 +22,78 @@ export const RecentAlertsCard: React.FC<RecentAlertsCardProps> = ({
   const previewAlerts = alerts.filter((a) => !a.isResolved).slice(0, 5);
 
   return (
-    <View style={styles.card}>
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.title}>CẢNH BÁO GẦN ĐÂY</Text>
-          <Text style={styles.subtitle}>Sự kiện cần chú ý từ các ngăn rác</Text>
-        </View>
-        <View style={styles.headerRight}>
-          <Text style={styles.countBadge}>
-            {previewAlerts.length > 0 ? `${previewAlerts.length} cảnh báo` : 'An toàn'}
-          </Text>
-          {onViewAllAlerts && (
-            <TouchableOpacity
-              style={styles.viewAllButton}
-              activeOpacity={0.7}
-              onPress={onViewAllAlerts}
-            >
-              <Text style={styles.viewAllText}>Xem tất cả →</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
+    <Card style={styles.card}>
+      <SectionHeader
+        title="Cảnh báo gần đây"
+        subtitle={previewAlerts.length > 0 ? `${previewAlerts.length} cảnh báo chưa xử lý` : 'Sự kiện cần chú ý từ các ngăn rác'}
+        actionLabel={onViewAllAlerts ? 'Xem tất cả' : undefined}
+        onAction={onViewAllAlerts}
+      />
 
       {previewAlerts.length === 0 ? (
-        <View style={styles.emptyBox}>
-          <Text style={styles.emptyIcon}>✓</Text>
-          <Text style={styles.emptyText}>Hiện không có cảnh báo nào chưa xử lý.</Text>
-          <Text style={styles.emptySub}>Tất cả các thùng rác đều ở trạng thái bình thường.</Text>
-        </View>
+        <StateCard kind="empty" icon="check-circle" title="Không có cảnh báo chưa xử lý" message="Các thùng rác hiện không có sự kiện cần chú ý." />
       ) : (
         <View style={styles.alertList}>
-          {previewAlerts.map((alert) => {
-            const severityMeta = getSeverityBadge(alert.severity);
-            const alertDate = alert.createdAt ? new Date(alert.createdAt) : null;
-
+          {previewAlerts.map((alert, index) => {
+            const tone = SEVERITY_TONE[alert.severity] ?? 'info';
+            const t = Tones[tone];
             return (
-              <View key={alert.id} style={styles.alertItem}>
-                <View style={styles.alertTop}>
-                  <View
-                    style={[
-                      styles.severityBadge,
-                      {
-                        backgroundColor: severityMeta.bg,
-                        borderColor: severityMeta.border,
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[styles.severityText, { color: severityMeta.color }]}
-                    >
-                      {severityMeta.label}
-                    </Text>
+              <FadeIn key={alert.id} delay={index * 50}>
+                <View style={[styles.alertItem, { borderLeftColor: t.solid }]}>
+                  <View style={styles.alertTop}>
+                    <Icon name={alert.severity === 'INFO' ? 'info' : 'alert-triangle'} size={15} color={t.text} />
+                    <Badge tone={tone} label={ALERT_SEVERITY_LABELS[alert.severity] ?? alert.severity} />
+                    {alert.bin?.binCode ? <Text style={styles.binCodeTag}>{alert.bin.binCode}</Text> : null}
                   </View>
-
-                  {alert.bin?.binCode && (
-                    <Text style={styles.binCodeTag}>Ngăn: {alert.bin.binCode}</Text>
-                  )}
+                  <Text style={styles.alertMessage}>{alert.message}</Text>
+                  <Text style={styles.alertTime}>{formatDateTime(alert.createdAt)}</Text>
                 </View>
-
-                <Text style={styles.alertMessage}>{alert.message}</Text>
-
-                <Text style={styles.alertTime}>
-                  {formatDate(alertDate)} lúc {formatTime(alertDate)}
-                </Text>
-              </View>
+              </FadeIn>
             );
           })}
         </View>
       )}
-    </View>
+    </Card>
   );
 };
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: Colors.surfaceCard,
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
     marginBottom: 16,
   },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
-  },
-  title: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: Colors.brandHighlight,
-    letterSpacing: 1.2,
-  },
-  subtitle: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    marginTop: 2,
-  },
-  headerRight: {
-    alignItems: 'flex-end',
-    gap: 4,
-  },
-  countBadge: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textSecondary,
-    backgroundColor: Colors.surface,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: Colors.borderLight,
-  },
-  viewAllButton: {
-    paddingVertical: 2,
-    paddingHorizontal: 4,
-  },
-  viewAllText: {
-    fontSize: 11,
-    color: Colors.brandHighlight,
-    fontWeight: '700',
-  },
-  emptyBox: {
-    alignItems: 'center',
-    paddingVertical: 18,
-    backgroundColor: Colors.surface,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.borderLight,
-  },
-  emptyIcon: {
-    fontSize: 22,
-    color: Colors.success,
-    marginBottom: 6,
-    fontWeight: '900',
-  },
-  emptyText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: Colors.textPrimary,
-  },
-  emptySub: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    marginTop: 2,
-  },
   alertList: {
-    gap: 10,
+    gap: Spacing.sm,
   },
   alertItem: {
-    backgroundColor: Colors.surface,
-    padding: 12,
-    borderRadius: 8,
+    gap: 6,
+    padding: Spacing.md,
+    borderRadius: Radius.md,
     borderWidth: 1,
-    borderColor: Colors.borderLight,
+    borderLeftWidth: 3,
+    borderColor: Colors.border,
+    backgroundColor: '#111F2F',
   },
   alertTop: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
-  },
-  severityBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-    borderWidth: 1,
-  },
-  severityText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
+    gap: 8,
   },
   binCodeTag: {
-    fontSize: 10,
-    color: Colors.textMuted,
-    fontFamily: 'monospace',
-    fontWeight: '600',
+    marginLeft: 'auto',
+    fontSize: FontSize.micro,
+    color: '#9AB1C4',
+    fontFamily: Mono,
+    fontWeight: '700',
   },
   alertMessage: {
-    fontSize: 13,
+    fontSize: FontSize.body,
     color: Colors.textPrimary,
     lineHeight: 18,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   alertTime: {
-    fontSize: 10,
+    fontSize: FontSize.micro,
     color: Colors.textMuted,
-    marginTop: 6,
-    fontFamily: 'monospace',
+    fontFamily: Mono,
   },
 });

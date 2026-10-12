@@ -5,6 +5,9 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 
+import { env } from '../config/env.js';
+import { demoService } from '../demo/demo.service.js';
+
 const router = Router();
 const roleSchema = z.enum(['ADMIN', 'SUPERVISOR', 'WORKER']);
 
@@ -25,6 +28,15 @@ function serializeUser(user: { id: string; username: string; displayName?: strin
 
 router.get('/users', requireAuth, requireRole('ADMIN'), async (_request, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.status(403).json({
+        error: {
+          code: 'DEMO_MODE_DISABLED',
+          message: 'Chức năng quản lý người dùng không khả dụng trong chế độ Demo.'
+        }
+      });
+    }
+
     const users = await prisma.user.findMany({ include: { role: true }, orderBy: { createdAt: 'desc' } });
     return response.json({ users: users.map(serializeUser) });
   } catch (error) {
@@ -34,6 +46,14 @@ router.get('/users', requireAuth, requireRole('ADMIN'), async (_request, respons
 
 router.post('/users', requireAuth, requireRole('ADMIN'), async (request, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.status(403).json({
+        error: {
+          code: 'DEMO_MODE_DISABLED',
+          message: 'Chức năng quản lý người dùng không khả dụng trong chế độ Demo.'
+        }
+      });
+    }
     const parsed = z.object({
       username: z.string().trim().min(1),
       displayName: z.string().trim().min(1),
@@ -81,6 +101,15 @@ router.post('/users', requireAuth, requireRole('ADMIN'), async (request, respons
 
 router.patch('/users/:id', requireAuth, requireRole('ADMIN'), async (request, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.status(403).json({
+        error: {
+          code: 'DEMO_MODE_DISABLED',
+          message: 'Chức năng quản lý người dùng không khả dụng trong chế độ Demo.'
+        }
+      });
+    }
+
     const userId = getUserId(request.params.id);
     if (!userId) return response.status(400).json({ message: 'ID tài khoản không hợp lệ.' });
 
@@ -137,6 +166,15 @@ router.patch('/users/:id', requireAuth, requireRole('ADMIN'), async (request, re
 
 router.patch('/users/:id/status', requireAuth, requireRole('ADMIN'), async (request, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.status(403).json({
+        error: {
+          code: 'DEMO_MODE_DISABLED',
+          message: 'Chức năng quản lý người dùng không khả dụng trong chế độ Demo.'
+        }
+      });
+    }
+
     const userId = getUserId(request.params.id);
     if (!userId) return response.status(400).json({ message: 'ID tài khoản không hợp lệ.' });
 
@@ -160,6 +198,15 @@ router.patch('/users/:id/status', requireAuth, requireRole('ADMIN'), async (requ
 
 router.patch('/users/:id/password', requireAuth, requireRole('ADMIN'), async (request, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.status(403).json({
+        error: {
+          code: 'DEMO_MODE_DISABLED',
+          message: 'Chức năng quản lý người dùng không khả dụng trong chế độ Demo.'
+        }
+      });
+    }
+
     const userId = getUserId(request.params.id);
     if (!userId) return response.status(400).json({ message: 'ID tài khoản không hợp lệ.' });
 
@@ -194,6 +241,10 @@ router.patch('/users/:id/password', requireAuth, requireRole('ADMIN'), async (re
 
 router.get('/collections', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async (_request, response, next) => {
   try {
+    if (env.isDemoMode) {
+      return response.json({ collections: demoService.getCollections() });
+    }
+
     const collections = await prisma.collectionRecord.findMany({
       include: { bin: { select: { binCode: true, name: true } } },
       orderBy: { collectedAt: 'desc' },

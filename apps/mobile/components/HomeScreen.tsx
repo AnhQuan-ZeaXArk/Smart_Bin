@@ -1,17 +1,11 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  RefreshControl,
-  TouchableOpacity,
-} from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native';
 import { Colors } from '../constants/colors';
 import { useAuth } from '../hooks/useAuth';
 import { useDashboard } from '../hooks/useDashboard';
 import { useHealthCheck } from '../hooks/useHealthCheck';
 import { useNavigation } from '../hooks/useNavigation';
+import { useRealtimeStatus } from '../hooks/useRealtimeStatus';
 import { DashboardHeader } from './dashboard/DashboardHeader';
 import { SummaryCards } from './dashboard/SummaryCards';
 import { BinStatusBreakdown } from './dashboard/BinStatusBreakdown';
@@ -21,11 +15,13 @@ import { RecentAlertsCard } from './dashboard/RecentAlertsCard';
 import { LoadingDashboard } from './dashboard/LoadingDashboard';
 import { DashboardError } from './dashboard/DashboardError';
 import { ConnectionCard } from './ConnectionCard';
+import { Button } from './ui/kit';
 
 export const HomeScreen: React.FC = () => {
   const { user, logout } = useAuth();
   const { navigate } = useNavigation();
   const { data, isLoading, isRefreshing, error, refresh, reload } = useDashboard();
+  const realtimeStatus = useRealtimeStatus();
 
   // Reusable health check for direct API ping verification
   const {
@@ -44,6 +40,9 @@ export const HomeScreen: React.FC = () => {
         user={user}
         lastUpdated={data?.lastUpdated}
         onLogout={logout}
+        onRefresh={refresh}
+        isRefreshing={isRefreshing}
+        realtimeStatus={realtimeStatus}
       />
 
       <ScrollView
@@ -56,6 +55,7 @@ export const HomeScreen: React.FC = () => {
             onRefresh={refresh}
             tintColor={Colors.brandHighlight}
             colors={[Colors.brandHighlight]}
+            progressBackgroundColor={Colors.surfaceCard}
           />
         }
       >
@@ -73,14 +73,11 @@ export const HomeScreen: React.FC = () => {
             {/* 1. High-level Summary Cards */}
             <SummaryCards
               summary={data.summary}
+              bins={data.bins}
               devices={data.devices}
-              alerts={data.alerts}
             />
 
-            {/* 2. Bin Status Breakdown */}
-            <BinStatusBreakdown bins={data.bins} />
-
-            {/* 3. Compartment Fill Levels & Progress */}
+            {/* 2. Compartment Fill Levels & Progress */}
             <BinFillCard
               bins={data.bins}
               onViewAllBins={() => navigate('bins')}
@@ -92,6 +89,9 @@ export const HomeScreen: React.FC = () => {
                 })
               }
             />
+
+            {/* 3. Status distribution chart */}
+            <BinStatusBreakdown bins={data.bins} />
 
             {/* 4. IoT Devices Health Status */}
             <DeviceHealthCard
@@ -105,27 +105,14 @@ export const HomeScreen: React.FC = () => {
               onViewAllAlerts={() => navigate('alerts')}
             />
 
-            {/* 6. Collection History Shortcut Card */}
-            <View style={styles.collectionActionCard}>
-              <View style={styles.collectionActionInfo}>
-                <Text style={styles.collectionActionIcon}>📋</Text>
-                <View style={styles.collectionActionTextContainer}>
-                  <Text style={styles.collectionActionTitle}>
-                    Lịch sử thu gom
-                  </Text>
-                  <Text style={styles.collectionActionSub}>
-                    Xem nhật ký các lần thu gom rác thực tế
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                style={styles.collectionActionButton}
-                activeOpacity={0.8}
-                onPress={() => navigate('collections')}
-              >
-                <Text style={styles.collectionActionText}>Xem lịch sử thu gom →</Text>
-              </TouchableOpacity>
-            </View>
+            {/* 6. Collection History Shortcut */}
+            <Button
+              label="Xem lịch sử thu gom"
+              icon="history"
+              variant="secondary"
+              onPress={() => navigate('collections')}
+              style={styles.collectionButton}
+            />
 
             {/* 7. Live API Health Connection Check */}
             <ConnectionCard
@@ -163,49 +150,8 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 36,
   },
-  collectionActionCard: {
-    backgroundColor: Colors.surfaceCard,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 14,
+  collectionButton: {
     marginBottom: 16,
-  },
-  collectionActionInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
-  },
-  collectionActionIcon: {
-    fontSize: 22,
-  },
-  collectionActionTextContainer: {
-    flex: 1,
-  },
-  collectionActionTitle: {
-    color: Colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  collectionActionSub: {
-    color: Colors.textMuted,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  collectionActionButton: {
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
-  collectionActionText: {
-    color: Colors.brandHighlight,
-    fontSize: 12,
-    fontWeight: '700',
   },
   footer: {
     alignItems: 'center',

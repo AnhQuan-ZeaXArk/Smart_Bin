@@ -37,10 +37,12 @@ type SensorReading = {
   bin: { binCode: string; name: string };
 };
 
-async function getData<T>(path: string, token: string): Promise<T> {
+async function getData<T>(path: string, token?: string | null): Promise<T> {
   let response: Response;
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   try {
-    response = await fetch(`${apiUrl}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    response = await fetch(`${apiUrl}${path}`, { headers });
   } catch {
     throw new Error('Không thể kết nối đến máy chủ');
   }
@@ -89,7 +91,6 @@ export function BinListPage() {
   const [error, setError] = useState('');
 
   const loadBins = useCallback(async () => {
-    if (!token) return;
     try {
       const [result, history] = await Promise.all([
         getData<{ bins: Bin[] }>('/api/bins', token),
@@ -162,7 +163,7 @@ export function BinDetailPage() {
   const [historyError, setHistoryError] = useState('');
 
   const loadDetail = useCallback(async () => {
-    if (!token || !id) return;
+    if (!id) return;
     try {
       const { bin: result } = await getData<{ bin: Bin }>(`/api/bins/${encodeURIComponent(id)}`, token);
       setBin(result);
