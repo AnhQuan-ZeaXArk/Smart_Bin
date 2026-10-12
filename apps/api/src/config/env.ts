@@ -1,24 +1,35 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
-const rawOrigins = [
+const defaultOrigins = [
+  'https://smartbin-web.onrender.com',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:4000',
+  'http://127.0.0.1:5173'
+];
+
+const userOrigins = [
   process.env.FRONTEND_URL,
   process.env.CORS_ORIGIN,
   process.env.WEB_ORIGIN
 ].flatMap((value) => value ? value.split(',').map((item) => item.trim()).filter(Boolean) : []);
 
+const rawOrigins = [...defaultOrigins, ...userOrigins].map((origin) => origin.replace(/\/+$/, ''));
+
+// Default to Demo Mode unless explicitly set to 'false' or '0'
 const rawDemoMode = process.env.DEMO_MODE;
 const computedDemoMode = rawDemoMode !== undefined
   ? (rawDemoMode === 'true' || rawDemoMode === '1')
-  : (!process.env.DATABASE_URL || process.env.DATABASE_URL.trim() === '');
+  : (process.env.DEMO_MODE !== 'false' && process.env.DEMO_MODE !== '0');
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().optional(),
   API_PORT: z.coerce.number().int().positive().default(4000),
-  FRONTEND_URL: z.string().url().default('http://localhost:5173'),
+  FRONTEND_URL: z.string().url().default('https://smartbin-web.onrender.com'),
   CORS_ORIGIN: z.string().optional(),
-  WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
+  WEB_ORIGIN: z.string().url().default('https://smartbin-web.onrender.com'),
   DEMO_MODE: z.boolean().default(computedDemoMode),
   DATABASE_URL: computedDemoMode ? z.string().optional().default('') : z.string().min(1),
   JWT_SECRET: computedDemoMode ? z.string().optional().default('smartbin-demo-jwt-secret-placeholder-min16chars') : z.string().min(16),
@@ -44,4 +55,5 @@ export const env = {
   isDemoMode: parsedEnv.DEMO_MODE,
   CORS_ORIGINS: [...new Set(rawOrigins)]
 };
-export const isDemoMode = env.isDemoMode;
+export const isDemoMode = env.isDemoMode;
+

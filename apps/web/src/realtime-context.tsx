@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { RealtimeContext } from './realtime-store';
 
-const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+import { apiUrl } from './api-config';
 
 export function RealtimeProvider({ token, children }: { token?: string | null; children: ReactNode }) {
   const [socket, setSocket] = useState<Socket | null>(null);

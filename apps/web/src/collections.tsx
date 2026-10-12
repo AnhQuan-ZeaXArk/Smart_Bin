@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from './auth-context';
 import { IconHistory, IconRefresh } from './icons';
 
-const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+import { apiUrl } from './api-config';
 type CollectionStatus = 'COMPLETED' | 'IN_PROGRESS' | 'PENDING' | 'CANCELLED';
 type CollectionRecord = {
   id: string;

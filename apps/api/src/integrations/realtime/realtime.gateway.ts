@@ -20,14 +20,22 @@ export class RealtimeGateway {
   readonly io: Server;
 
   constructor(httpServer: NodeHttpServer) {
-    const allowedOrigins = env.CORS_ORIGINS.length > 0 ? env.CORS_ORIGINS : [env.FRONTEND_URL, env.WEB_ORIGIN];
+    const allowedOrigins = new Set(env.CORS_ORIGINS.map((o) => o.replace(/\/+$/, '')));
 
     this.io = new Server(httpServer, {
       cors: {
         origin: (origin, callback) => {
           if (!origin) return callback(null, true);
-          if (allowedOrigins.includes(origin)) return callback(null, true);
-          return callback(new Error('CORS origin not allowed for socket'));
+          const cleanOrigin = origin.trim().replace(/\/+$/, '');
+          if (
+            allowedOrigins.has(cleanOrigin) ||
+            cleanOrigin.endsWith('.onrender.com') ||
+            cleanOrigin.includes('localhost') ||
+            cleanOrigin.includes('127.0.0.1')
+          ) {
+            return callback(null, true);
+          }
+          return callback(null, false);
         },
         credentials: true
       }

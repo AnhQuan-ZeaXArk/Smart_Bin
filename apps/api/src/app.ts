@@ -10,17 +10,30 @@ import dashboardRoutes from './routes/dashboard.routes.js';
 
 export const app = express();
 app.use(helmet());
-app.use(cors({
+
+const allowedOrigins = new Set(env.CORS_ORIGINS.map((o) => o.replace(/\/+$/, '')));
+
+const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    const allowedOrigins = env.CORS_ORIGINS.length > 0 ? env.CORS_ORIGINS : [env.FRONTEND_URL, env.WEB_ORIGIN];
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error('CORS origin not allowed'));
+    const cleanOrigin = origin.trim().replace(/\/+$/, '');
+    if (
+      allowedOrigins.has(cleanOrigin) ||
+      cleanOrigin.endsWith('.onrender.com') ||
+      cleanOrigin.includes('localhost') ||
+      cleanOrigin.includes('127.0.0.1')
+    ) {
+      return callback(null, true);
+    }
+    return callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
-}));
+};
+
+app.use(cors(corsOptions));
+
 app.use(express.json());
 app.get('/health', (_request, response) => response.json({ status: 'ok', service: 'smartbin-api', mode: env.isDemoMode ? 'demo' : 'production' }));
 app.use('/api/auth', authRoutes);

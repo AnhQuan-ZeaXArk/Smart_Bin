@@ -25,7 +25,7 @@ import {
   formatUptime
 } from './device-utils';
 
-const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+import { apiUrl } from './api-config';
 
 function getDeviceIcon(type: DeviceType) {
   switch (type) {

@@ -10,6 +10,8 @@
     "dev:mobile": "npm run start --workspace @smartbin/mobile",
     "lint:mobile": "npm run lint --workspace @smartbin/mobile",
     "build": "npm run build --workspace @smartbin/api && npm run build --workspace @smartbin/web",
+    "start": "npm run start --workspace @smartbin/api",
+    "start:api": "npm run start --workspace @smartbin/api",
     "lint": "npm run lint --workspace @smartbin/api && npm run lint --workspace @smartbin/web",
     "db:validate": "npm run db:validate --workspace @smartbin/api",
     "db:generate": "npm run db:generate --workspace @smartbin/api",

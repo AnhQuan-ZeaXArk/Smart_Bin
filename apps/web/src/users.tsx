@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from './auth-context';
 import { IconRefresh, IconUsers } from './icons';
 
-const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+import { apiUrl } from './api-config';
 type AccountRole = 'ADMIN' | 'SUPERVISOR' | 'WORKER';
 type AccountUser = {
   id: string;

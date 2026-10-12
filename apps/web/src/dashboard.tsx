@@ -25,7 +25,7 @@ import {
   IconRefresh
 } from './icons';
 
-const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+import { apiUrl } from './api-config';
 
 type RealtimeTelemetry = {
   binCode: string;
@@ -74,8 +74,15 @@ async function getData<T>(path: string, token?: string | null): Promise<T> {
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
-  const response = await fetch(`${apiUrl}${path}`, { headers });
-  if (!response.ok) throw new Error('Không thể tải dữ liệu từ máy chủ.');
+  let response: Response;
+  try {
+    response = await fetch(`${apiUrl}${path}`, { headers });
+  } catch {
+    throw new Error(`Không thể kết nối đến máy chủ API (${apiUrl}). Vui lòng kiểm tra trạng thái máy chủ Render.`);
+  }
+  if (!response.ok) {
+    throw new Error(`Máy chủ phản hồi lỗi (${response.status}): ${response.statusText || 'Không thể tải dữ liệu.'}`);
+  }
   return response.json() as Promise<T>;
 }
 

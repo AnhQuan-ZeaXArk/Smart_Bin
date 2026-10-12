@@ -5,7 +5,7 @@ import { translateBinStatus, translateFillCategory } from './i18n-labels';
 import { IconActivity, IconRefresh, IconTrash } from './icons';
 import { ErrorBoundary } from './error-boundary';
 
-const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+import { apiUrl } from './api-config';
 const SensorHistoryChart = lazy(() => import('./sensor-history-chart'));
 
 export type BinStatus = 'ONLINE' | 'OFFLINE' | 'MAINTENANCE';
@@ -44,10 +44,10 @@ async function getData<T>(path: string, token?: string | null): Promise<T> {
   try {
     response = await fetch(`${apiUrl}${path}`, { headers });
   } catch {
-    throw new Error('Không thể kết nối đến máy chủ');
+    throw new Error(`Không thể kết nối đến máy chủ API (${apiUrl})`);
   }
   if (response.status === 404) throw new Error('Không tìm thấy thùng rác');
-  if (!response.ok) throw new Error('Không thể tải dữ liệu thùng rác từ máy chủ.');
+  if (!response.ok) throw new Error(`Lỗi máy chủ (${response.status}) khi tải dữ liệu thùng rác.`);
   return response.json() as Promise<T>;
 }
 

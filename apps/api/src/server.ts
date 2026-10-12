@@ -9,13 +9,14 @@ const httpServer = createServer(app);
 const realtime = new RealtimeGateway(httpServer);
 deviceHealthService.setRealtime(realtime);
 const mqttAdapter = new MqttAdapter(realtime, deviceHealthService);
-const port = env.PORT ?? env.API_PORT;
+const port = Number(process.env.PORT) || env.PORT || env.API_PORT || 4000;
+const host = '0.0.0.0';
 
-httpServer.listen(port, () => {
+httpServer.listen(port, host, () => {
   if (env.isDemoMode) {
-    console.log(`SmartBin API listening on port ${port} [DEMO MODE: Standalone, No Database, No Login]`);
+    console.log(`SmartBin API listening on http://${host}:${port} [DEMO MODE: Standalone, No Database, No Login]`);
   } else {
-    console.log(`SmartBin API listening on port ${port} [PRODUCTION MODE]`);
+    console.log(`SmartBin API listening on http://${host}:${port} [PRODUCTION MODE]`);
     deviceHealthService.startMonitoring();
     void mqttAdapter.start();
   }
