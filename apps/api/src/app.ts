@@ -7,6 +7,7 @@ import protectedRoutes from './routes/protected.routes.js';
 import binRoutes from './routes/bin.routes.js';
 import deviceRoutes from './routes/device.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
+import demoRoutes from './routes/demo.routes.js';
 
 export const app = express();
 app.use(helmet());
@@ -36,6 +37,7 @@ app.use(cors(corsOptions));
 
 app.use(express.json());
 app.get('/health', (_request, response) => response.json({ status: 'ok', service: 'smartbin-api', mode: env.isDemoMode ? 'demo' : 'production' }));
+app.use('/api/demo', demoRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/bins', binRoutes);
 app.use('/api/devices', deviceRoutes);

@@ -26,6 +26,7 @@ import {
 } from './device-utils';
 
 import { apiUrl } from './api-config';
+import { RealDeviceCard } from './real-device-card';
 
 function getDeviceIcon(type: DeviceType) {
   switch (type) {
@@ -293,6 +294,16 @@ export function DeviceListPage() {
             <IconRefresh /> Làm mới
           </button>
         </div>
+      </div>
+
+      {/* Real Hardware Telemetry */}
+      <RealDeviceCard />
+
+      <div className="section-sub-heading" style={{ margin: '20px 0 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <h3 style={{ margin: 0, fontSize: '15px', color: '#456257', textTransform: 'uppercase', letterSpacing: '0.6px', fontWeight: 700 }}>
+          Cảm biến & Thiết bị mô phỏng (Demo Simulation)
+        </h3>
+        <span style={{ fontSize: '12px', color: '#718078' }}>Dữ liệu sinh tự động cho chế độ demo</span>
       </div>
 
       {/* Summary KPI Grid */}

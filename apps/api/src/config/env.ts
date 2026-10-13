@@ -41,7 +41,8 @@ const envSchema = z.object({
   SIM_BIN_CODE: z.string().min(1).optional(),
   SEED_ADMIN_PASSWORD: z.string().min(8).default('change-me-admin'),
   SEED_SUPERVISOR_PASSWORD: z.string().min(8).default('change-me-supervisor'),
-  SEED_WORKER_PASSWORD: z.string().min(8).default('change-me-worker')
+  SEED_WORKER_PASSWORD: z.string().min(8).default('change-me-worker'),
+  DEVICE_INGEST_TOKEN: z.string().optional()
 });
 
 const parsedEnv = envSchema.parse({

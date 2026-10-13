@@ -1253,3 +1253,315 @@ button:disabled { cursor: not-allowed; }
 @keyframes loginCardEnter { from { opacity: 0; transform: translateY(17px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes loginIconSwap { from { opacity: .45; transform: scale(.86); } to { opacity: 1; transform: scale(1); } }
 
+/* ==========================================================================
+   Real Hardware Telemetry - Raspberry Pi 5 Card
+   ========================================================================== */
+.real-device-container {
+  margin-bottom: 24px;
+  transition: all 0.3s ease;
+}
+
+.real-device-card {
+  background: #ffffff;
+  border: 2px solid #bde1c8;
+  border-radius: 14px;
+  padding: 22px;
+  box-shadow: 0 4px 16px rgba(24, 60, 50, 0.06);
+  position: relative;
+  overflow: hidden;
+}
+
+.real-device-container.has-pulse .real-device-card {
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.25), 0 6px 20px rgba(16, 185, 129, 0.15);
+}
+
+.real-device-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.real-device-card__title-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.real-hardware-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #e8f5e9;
+  border: 1px solid #81c784;
+  color: #1b5e20;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  width: fit-content;
+}
+
+.real-hardware-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2e7d32;
+  box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.2);
+}
+
+.real-device-card__main-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.real-device-icon-wrapper {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #183c32;
+  color: #e6ad51;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.real-device-card__main-title h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: #183c32;
+}
+
+.real-device-subtitle {
+  margin: 2px 0 0;
+  color: #63756b;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.real-device-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.realtime-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #d9e0d8;
+  background: #f7faf5;
+}
+
+.realtime-badge.is-connected {
+  color: #1b5e20;
+  border-color: #bde1c8;
+  background: #eef8f1;
+}
+
+.realtime-badge.is-disconnected {
+  color: #b94c42;
+  border-color: #f2c7bf;
+  background: #fdf0ed;
+}
+
+.button-sm {
+  padding: 6px 12px !important;
+  font-size: 12px !important;
+  min-height: 32px !important;
+}
+
+.real-device-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.real-device-loading {
+  padding: 24px;
+  text-align: center;
+  color: #63756b;
+  font-size: 14px;
+}
+
+/* Metrics Grid */
+.real-device-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.real-metric-card {
+  background: #fbfdfa;
+  border: 1px solid #e2ebe0;
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.real-metric-card .metric-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #63756b;
+}
+
+.real-metric-card .metric-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #183c32;
+  line-height: 1.2;
+}
+
+.metric-device-code {
+  font-family: var(--font-ui-mono) !important;
+  font-size: 15px !important;
+  color: #24322d !important;
+}
+
+.real-metric-card .metric-hint {
+  font-size: 11px;
+  color: #83958b;
+  line-height: 1.3;
+}
+
+/* Status Badges */
+.badge-real-device {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  width: fit-content;
+}
+
+.badge-real-online {
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+
+.badge-real-stale {
+  background: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.badge-real-offline {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.live-ping-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  animation: pingAnimation 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes pingAnimation {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+/* Guide Section */
+.real-device-guide-section {
+  border-top: 1px dashed #d9e0d8;
+  padding-top: 12px;
+  margin-top: 8px;
+}
+
+.guide-toggle-button {
+  background: transparent;
+  border: 0;
+  color: #23664e;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 6px 0;
+}
+
+.guide-toggle-button:hover {
+  text-decoration: underline;
+  color: #183c32;
+}
+
+.guide-content-box {
+  background: #1a2321;
+  color: #e2ede7;
+  border-radius: 8px;
+  padding: 14px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.guide-desc {
+  margin: 0 0 8px 0;
+  color: #9ab5a8;
+}
+
+.guide-code-block {
+  margin: 0;
+  padding: 12px;
+  background: #0f1614;
+  border-radius: 6px;
+  color: #75e7bb;
+  font-family: var(--font-ui-mono) !important;
+  font-size: 11px;
+  overflow-x: auto;
+  line-height: 1.45;
+}
+
+.guide-note {
+  margin: 8px 0 0 0;
+  color: #ffd07a;
+  font-size: 11px;
+}
+
+.guide-note code {
+  background: rgba(255, 208, 122, 0.15);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: var(--font-ui-mono) !important;
+}
