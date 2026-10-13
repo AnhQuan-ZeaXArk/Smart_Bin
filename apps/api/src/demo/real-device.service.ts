@@ -68,7 +68,7 @@ export class RealDeviceService {
     }
   }
 
-  recordHeartbeat(input: HeartbeatPayload): RealDeviceStatus {
+  recordHeartbeat(input: HeartbeatPayload, fallbackIo?: any): RealDeviceStatus {
     const now = new Date();
     this.deviceId = input.deviceId || this.deviceId;
     this.lastHeartbeatDate = now;
@@ -84,8 +84,12 @@ export class RealDeviceService {
     this.previousStatus = statusObj.status;
 
     // Broadcast realtime event 'device:heartbeat'
-    if (this.realtime?.io) {
-      this.realtime.io.emit('device:heartbeat', statusObj);
+    const ioEmitter = this.realtime?.io || fallbackIo;
+    if (ioEmitter) {
+      ioEmitter.emit('device:heartbeat', statusObj);
+      console.log(`[RealDeviceService] Broadcasted 'device:heartbeat' for ${this.deviceId} (#${this.heartbeatCount}, status=${statusObj.status}, uptime=${statusObj.uptimeSeconds}s)`);
+    } else {
+      console.warn(`[RealDeviceService] Warning: Socket.IO emitter not ready when recording heartbeat #${this.heartbeatCount}`);
     }
 
     return statusObj;

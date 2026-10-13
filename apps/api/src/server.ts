@@ -8,6 +8,8 @@ import { realDeviceService } from './demo/real-device.service.js';
 
 const httpServer = createServer(app);
 const realtime = new RealtimeGateway(httpServer);
+app.set('realtime', realtime);
+app.set('io', realtime.io);
 deviceHealthService.setRealtime(realtime);
 realDeviceService.setRealtime(realtime);
 realDeviceService.startMonitoring();

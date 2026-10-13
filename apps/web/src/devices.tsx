@@ -74,6 +74,7 @@ export function DeviceListPage() {
   const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [error, setError] = useState('');
   const [selectedDevice, setSelectedDevice] = useState<DeviceItem | null>(null);
   const [detailClosing, setDetailClosing] = useState(false);
@@ -87,6 +88,7 @@ export function DeviceListPage() {
 
   const fetchDevices = useCallback(async () => {
     setRefreshing(true);
+    setRefreshTrigger((k) => k + 1);
     try {
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -297,7 +299,7 @@ export function DeviceListPage() {
       </div>
 
       {/* Real Hardware Telemetry */}
-      <RealDeviceCard />
+      <RealDeviceCard refreshTrigger={refreshTrigger} />
 
       <div className="section-sub-heading" style={{ margin: '20px 0 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h3 style={{ margin: 0, fontSize: '15px', color: '#456257', textTransform: 'uppercase', letterSpacing: '0.6px', fontWeight: 700 }}>

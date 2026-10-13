@@ -62,7 +62,8 @@ router.post('/device-heartbeat', authenticateDeviceToken, (req: Request, res: Re
     });
   }
 
-  const recordedStatus = realDeviceService.recordHeartbeat(parseResult.data);
+  const io = req.app.get('io');
+  const recordedStatus = realDeviceService.recordHeartbeat(parseResult.data, io);
 
   return res.status(200).json({
     success: true,
@@ -76,6 +77,10 @@ router.post('/device-heartbeat', authenticateDeviceToken, (req: Request, res: Re
  * Endpoint công khai cho Web/Mobile lấy trạng thái live của Pi thật
  */
 router.get('/device-status', (_req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+
   const status = realDeviceService.getStatus();
   return res.status(200).json({
     success: true,

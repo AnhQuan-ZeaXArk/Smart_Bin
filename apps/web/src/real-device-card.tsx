@@ -32,13 +32,16 @@ export interface RealDeviceData {
 }
 
 interface RealDeviceCardProps {
-  /** Optional title or section context */
+  /** Optional compact styling */
   compact?: boolean;
+  /** External trigger to refresh card (e.g. from page header refresh button) */
+  refreshTrigger?: number | string;
 }
 
-export function RealDeviceCard({ compact = false }: RealDeviceCardProps) {
+export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCardProps) {
   const { socket, connected: realtimeConnected } = useRealtime();
   const [data, setData] = useState<RealDeviceData | null>(null);
+  const [receivedAtLocalMs, setReceivedAtLocalMs] = useState<number>(() => Date.now());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,10 +57,17 @@ export function RealDeviceCard({ compact = false }: RealDeviceCardProps) {
     return () => clearInterval(timer);
   }, []);
 
-  // Initial fetch
+  // Initial fetch and trigger on external refresh
   useEffect(() => {
     let active = true;
-    fetch(`${apiUrl}/api/demo/device-status`)
+    const fetchUrl = `${apiUrl}/api/demo/device-status?_t=${Date.now()}`;
+    fetch(fetchUrl, {
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
+    })
       .then((res) => {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}: Không thể tải trạng thái thiết bị thực.`);
@@ -67,6 +77,7 @@ export function RealDeviceCard({ compact = false }: RealDeviceCardProps) {
       .then((json) => {
         if (active && json.success && json.data) {
           setData(json.data);
+          setReceivedAtLocalMs(Date.now());
           setError(null);
         }
       })
@@ -80,11 +91,19 @@ export function RealDeviceCard({ compact = false }: RealDeviceCardProps) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [refreshTrigger]);
 
+  // Manual refresh handler
   const handleManualRefresh = useCallback(() => {
     setRefreshing(true);
-    fetch(`${apiUrl}/api/demo/device-status`)
+    const fetchUrl = `${apiUrl}/api/demo/device-status?_t=${Date.now()}`;
+    fetch(fetchUrl, {
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
+    })
       .then((res) => {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}: Không thể tải trạng thái thiết bị thực.`);
@@ -94,6 +113,7 @@ export function RealDeviceCard({ compact = false }: RealDeviceCardProps) {
       .then((json) => {
         if (json.success && json.data) {
           setData(json.data);
+          setReceivedAtLocalMs(Date.now());
           setError(null);
         }
       })
@@ -105,50 +125,57 @@ export function RealDeviceCard({ compact = false }: RealDeviceCardProps) {
       });
   }, []);
 
-  // Realtime Socket.IO listener for device:heartbeat
+  // Realtime Socket.IO listener for device:heartbeat & reconnection sync
   useEffect(() => {
     if (!socket) return;
 
     const handleHeartbeat = (payload: RealDeviceData) => {
       setData(payload);
+      setReceivedAtLocalMs(Date.now());
       setError(null);
       // Trigger heartbeat animation pulse
       setPulse(true);
-      const timeout = setTimeout(() => setPulse(false), 1200);
-      return () => clearTimeout(timeout);
+      setTimeout(() => setPulse(false), 1200);
+    };
+
+    const handleReconnect = () => {
+      handleManualRefresh();
     };
 
     socket.on('device:heartbeat', handleHeartbeat);
+    socket.on('connect', handleReconnect);
 
     return () => {
       socket.off('device:heartbeat', handleHeartbeat);
+      socket.off('connect', handleReconnect);
     };
-  }, [socket]);
+  }, [socket, handleManualRefresh]);
 
-  // Calculate live age and real status
+  // Calculate live age and real status eliminating client-server clock skew
   const { liveAgeSeconds, liveStatus } = useMemo(() => {
-    if (!data || !data.lastHeartbeat) {
+    if (!data || !data.lastHeartbeat || data.heartbeatCount === 0) {
       return { liveAgeSeconds: null, liveStatus: 'OFFLINE' as const };
     }
 
-    const lastTime = new Date(data.lastHeartbeat).getTime();
-    if (isNaN(lastTime)) {
-      return { liveAgeSeconds: null, liveStatus: 'OFFLINE' as const };
-    }
+    // Elapsed seconds on client browser since this telemetry packet arrived
+    const elapsedSinceReceive = Math.max(0, Math.floor((now - receivedAtLocalMs) / 1000));
 
-    const age = Math.max(0, Math.floor((now - lastTime) / 1000));
+    // Base age reported by server at delivery time + client elapsed seconds
+    const serverBaseAge = typeof data.ageSeconds === 'number' && !isNaN(data.ageSeconds) ? data.ageSeconds : 0;
+    const effectiveAge = serverBaseAge + elapsedSinceReceive;
+
     const staleLimit = data.metadata?.staleThresholdSeconds ?? 45;
     const offlineLimit = data.metadata?.offlineThresholdSeconds ?? 90;
 
-    let status: 'ONLINE' | 'STALE' | 'OFFLINE' = 'ONLINE';
-    if (age >= offlineLimit) {
-      status = 'OFFLINE';
-    } else if (age >= staleLimit) {
-      status = 'STALE';
+    let computedStatus: 'ONLINE' | 'STALE' | 'OFFLINE' = 'ONLINE';
+    if (effectiveAge >= offlineLimit) {
+      computedStatus = 'OFFLINE';
+    } else if (effectiveAge >= staleLimit) {
+      computedStatus = 'STALE';
     }
 
-    return { liveAgeSeconds: age, liveStatus: status };
-  }, [data, now]);
+    return { liveAgeSeconds: effectiveAge, liveStatus: computedStatus };
+  }, [data, receivedAtLocalMs, now]);
 
   function renderAgeText(seconds: number | null) {
     if (seconds === null) return 'Chưa nhận heartbeat';
