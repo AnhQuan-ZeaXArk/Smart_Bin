@@ -11,7 +11,12 @@ export const REALTIME_EVENTS = {
   ALERT_RESOLVED: 'alert:resolved',
   ALERT_UPDATED: 'alert:updated',
   ALERT: 'alert',
-  CONNECTED: 'realtime:connected'
+  CONNECTED: 'realtime:connected',
+  DEVICE_HEARTBEAT: 'device:heartbeat',
+  DEVICE_TELEMETRY: 'device:telemetry',
+  DEVICE_COMMAND: 'device:command',
+  DEVICE_COMMAND_ACK: 'device:command:ack',
+  DEVICE_COMMAND_STATUS: 'device:command:status'
 } as const;
 
 export type RealtimeEventName = typeof REALTIME_EVENTS[keyof typeof REALTIME_EVENTS];
@@ -63,3 +68,44 @@ export interface RealtimeAlertPayload {
   createdAt: Date | string;
   resolvedAt?: Date | string | null;
 }
+
+/**
+ * Payload sent from Backend to Pi to dispatch a command
+ */
+export interface DeviceCommandPayload {
+  commandId: string;
+  deviceId: string;
+  action: 'PING' | 'TRIGGER_ULTRASONIC';
+  params?: Record<string, unknown>;
+  issuedAt: string;
+}
+
+/**
+ * Payload sent from Pi back to Backend to acknowledge a command
+ */
+export interface DeviceCommandAckPayload {
+  commandId: string;
+  deviceId: string;
+  action: string;
+  status: 'RECEIVED' | 'COMPLETED' | 'FAILED';
+  message?: string;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  executedAt?: string;
+}
+
+/**
+ * Payload emitted by Backend to Web clients to inform of command status
+ */
+export interface DeviceCommandStatusPayload {
+  commandId: string;
+  deviceId: string;
+  action: string;
+  status: 'PENDING' | 'RECEIVED' | 'COMPLETED' | 'FAILED' | 'TIMEOUT';
+  message?: string;
+  latencyMs?: number;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  updatedAt: string;
+}
+

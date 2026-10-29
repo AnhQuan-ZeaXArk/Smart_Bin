@@ -1565,3 +1565,187 @@ button:disabled { cursor: not-allowed; }
   border-radius: 3px;
   font-family: var(--font-ui-mono) !important;
 }
+
+/* ==========================================================================
+   Real Device Interactive Two-Way Controls & Feedback
+   ========================================================================== */
+.real-device-control-panel {
+  background: #f4f8f4;
+  border: 1px solid #d4e5d6;
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-top: 14px;
+  margin-bottom: 12px;
+}
+
+.real-device-control-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.real-device-control-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #183c32;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.real-device-channel-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 12px;
+}
+
+.real-device-channel-badge.socket-direct {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+}
+
+.real-device-channel-badge.http-fallback {
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+.real-device-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.button-control-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.button-control-action.button-ping {
+  background: #183c32;
+  color: #ffffff;
+  border-color: #183c32;
+}
+
+.button-control-action.button-ping:hover:not(:disabled) {
+  background: #235849;
+  box-shadow: 0 2px 8px rgba(24, 60, 50, 0.25);
+  transform: translateY(-1px);
+}
+
+.button-control-action.button-ultrasonic {
+  background: #ffffff;
+  color: #183c32;
+  border-color: #bde1c8;
+}
+
+.button-control-action.button-ultrasonic:hover:not(:disabled) {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+
+.button-control-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.button-control-action.is-loading {
+  position: relative;
+  pointer-events: none;
+}
+
+.control-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: #ffffff;
+  animation: controlSpin 0.7s linear infinite;
+}
+
+.control-spinner.spinner-dark {
+  border-color: rgba(24, 60, 50, 0.2);
+  border-top-color: #183c32;
+}
+
+@keyframes controlSpin {
+  to { transform: rotate(360deg); }
+}
+
+.real-device-command-feedback {
+  margin-top: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  animation: feedbackSlideIn 0.2s ease-out;
+}
+
+@keyframes feedbackSlideIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.feedback-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.feedback-status-pending {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+}
+
+.feedback-status-completed {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+}
+
+.feedback-status-failed {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.feedback-status-timeout {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+
+.feedback-latency-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.07);
+  white-space: nowrap;
+}
+

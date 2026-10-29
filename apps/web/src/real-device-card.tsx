@@ -7,9 +7,16 @@ import {
   IconAlertTriangle,
   IconXCircle,
   IconRefresh,
-  IconInfo
+  IconInfo,
+  IconRadio,
+  IconActivity
 } from './icons';
 import { formatDateTime, formatUptime } from './device-utils';
+
+export interface DeviceSensorsData {
+  distanceCm?: number | null;
+  fillLevel?: number | null;
+}
 
 export interface RealDeviceData {
   deviceId: string;
@@ -24,11 +31,23 @@ export interface RealDeviceData {
   sentAt: string | null;
   heartbeatCount: number;
   ageSeconds: number | null;
+  isSocketConnected?: boolean;
+  sensors?: DeviceSensorsData | null;
   metadata?: {
     staleThresholdSeconds: number;
     offlineThresholdSeconds: number;
     platform: string;
   };
+}
+
+interface CommandExecutionState {
+  status: 'IDLE' | 'PENDING' | 'RECEIVED' | 'COMPLETED' | 'FAILED' | 'TIMEOUT';
+  action: 'PING' | 'TRIGGER_ULTRASONIC' | null;
+  latencyMs?: number;
+  message?: string;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  updatedAt?: number;
 }
 
 interface RealDeviceCardProps {
@@ -48,6 +67,12 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
   const [pulse, setPulse] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+
+  // Trạng thái thực thi lệnh điều khiển hai chiều
+  const [commandState, setCommandState] = useState<CommandExecutionState>({
+    status: 'IDLE',
+    action: null
+  });
 
   // Update clock every second for live age calculation
   useEffect(() => {
@@ -125,7 +150,7 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
       });
   }, []);
 
-  // Realtime Socket.IO listener for device:heartbeat & reconnection sync
+  // Realtime Socket.IO listeners: device:heartbeat, device:command:status, and reconnection sync
   useEffect(() => {
     if (!socket) return;
 
@@ -138,15 +163,34 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
       setTimeout(() => setPulse(false), 1200);
     };
 
+    const handleCommandStatus = (statusPayload: any) => {
+      setCommandState({
+        status: statusPayload.status,
+        action: statusPayload.action,
+        latencyMs: statusPayload.latencyMs,
+        message: statusPayload.message,
+        result: statusPayload.result,
+        error: statusPayload.error,
+        updatedAt: Date.now()
+      });
+
+      if (statusPayload.status === 'COMPLETED') {
+        setPulse(true);
+        setTimeout(() => setPulse(false), 1200);
+      }
+    };
+
     const handleReconnect = () => {
       handleManualRefresh();
     };
 
     socket.on('device:heartbeat', handleHeartbeat);
+    socket.on('device:command:status', handleCommandStatus);
     socket.on('connect', handleReconnect);
 
     return () => {
       socket.off('device:heartbeat', handleHeartbeat);
+      socket.off('device:command:status', handleCommandStatus);
       socket.off('connect', handleReconnect);
     };
   }, [socket, handleManualRefresh]);
@@ -188,6 +232,112 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
     return `${h} giờ trước`;
   }
 
+  // Gửi lệnh PING an toàn tới Raspberry Pi 5
+  const handleSendPing = async () => {
+    if (liveStatus === 'OFFLINE' || commandState.status === 'PENDING') return;
+
+    setCommandState({
+      status: 'PENDING',
+      action: 'PING',
+      message: 'Đang gửi lệnh PING tới Raspberry Pi 5...',
+      updatedAt: Date.now()
+    });
+
+    try {
+      const res = await fetch(`${apiUrl}/api/demo/device-command`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          deviceId: data?.deviceId || 'raspberry-pi-5',
+          action: 'PING'
+        })
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        setCommandState({
+          status: json.error === 'COMMAND_TIMEOUT' ? 'TIMEOUT' : 'FAILED',
+          action: 'PING',
+          message: json.message || 'Lệnh PING thất bại',
+          error: json.error,
+          updatedAt: Date.now()
+        });
+      } else {
+        setCommandState({
+          status: 'COMPLETED',
+          action: 'PING',
+          message: json.message || 'Pong! Raspberry Pi 5 đã phản hồi thành công.',
+          latencyMs: json.latencyMs,
+          result: json.result,
+          updatedAt: Date.now()
+        });
+        setPulse(true);
+        setTimeout(() => setPulse(false), 1200);
+      }
+    } catch (err) {
+      setCommandState({
+        status: 'FAILED',
+        action: 'PING',
+        message: err instanceof Error ? err.message : 'Lỗi kết nối khi gửi lệnh PING',
+        updatedAt: Date.now()
+      });
+    }
+  };
+
+  // Gửi lệnh đo siêu âm (TRIGGER_ULTRASONIC)
+  const handleTriggerUltrasonic = async () => {
+    if (liveStatus === 'OFFLINE' || commandState.status === 'PENDING') return;
+
+    setCommandState({
+      status: 'PENDING',
+      action: 'TRIGGER_ULTRASONIC',
+      message: 'Đang gửi yêu cầu đo cảm biến siêu âm tới Pi 5...',
+      updatedAt: Date.now()
+    });
+
+    try {
+      const res = await fetch(`${apiUrl}/api/demo/device-command`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          deviceId: data?.deviceId || 'raspberry-pi-5',
+          action: 'TRIGGER_ULTRASONIC'
+        })
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        setCommandState({
+          status: json.error === 'COMMAND_TIMEOUT' ? 'TIMEOUT' : 'FAILED',
+          action: 'TRIGGER_ULTRASONIC',
+          message: json.message || 'Cảm biến chưa sẵn sàng hoặc chưa kết nối chân GPIO vật lý.',
+          error: json.error,
+          updatedAt: Date.now()
+        });
+      } else {
+        setCommandState({
+          status: 'COMPLETED',
+          action: 'TRIGGER_ULTRASONIC',
+          message: json.message || 'Đo cảm biến siêu âm thành công.',
+          latencyMs: json.latencyMs,
+          result: json.result,
+          updatedAt: Date.now()
+        });
+      }
+    } catch (err) {
+      setCommandState({
+        status: 'FAILED',
+        action: 'TRIGGER_ULTRASONIC',
+        message: err instanceof Error ? err.message : 'Lỗi kết nối khi gửi lệnh đo siêu âm',
+        updatedAt: Date.now()
+      });
+    }
+  };
+
   const statusBadge = useMemo(() => {
     switch (liveStatus) {
       case 'ONLINE':
@@ -213,6 +363,15 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
     }
   }, [liveStatus]);
 
+  // Kiểm tra cảm biến siêu âm đã có dữ liệu thực tế chưa
+  const hasUltrasonicSensorData = useMemo(() => {
+    return (
+      data?.sensors !== null &&
+      data?.sensors !== undefined &&
+      typeof data.sensors.distanceCm === 'number'
+    );
+  }, [data]);
+
   return (
     <section className={`real-device-container ${compact ? 'compact' : ''} ${pulse ? 'has-pulse' : ''}`}>
       <div className="real-device-card">
@@ -230,7 +389,7 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
               <div>
                 <h3>{data?.deviceName || 'Raspberry Pi 5'}</h3>
                 <p className="real-device-subtitle">
-                  Xác nhận kết nối vật lý thật qua HTTP Heartbeat &amp; Socket.IO realtime. Độc lập với dữ liệu mô phỏng.
+                  Giao tiếp thời gian thực hai chiều qua Socket.IO &amp; HTTP Heartbeat. Độc lập với dữ liệu mô phỏng.
                 </p>
               </div>
             </div>
@@ -239,7 +398,7 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
           <div className="real-device-card__actions">
             <div className={`realtime-badge ${realtimeConnected ? 'is-connected' : 'is-disconnected'}`}>
               <span className="status-dot" />
-              <span>{realtimeConnected ? 'Socket: Sẵn sàng' : 'Socket: Đang kết nối...'}</span>
+              <span>{realtimeConnected ? 'Socket Web: Sẵn sàng' : 'Socket Web: Đang kết nối...'}</span>
             </div>
             <button
               type="button"
@@ -269,7 +428,7 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
           <>
             {/* Real Hardware Metrics Grid */}
             <div className="real-device-metrics-grid">
-              {/* Metric 1: Trạng thái */}
+              {/* Metric 1: Trạng thái kết nối */}
               <div className={`real-metric-card real-metric-status real-metric--${liveStatus.toLowerCase()}`}>
                 <span className="metric-label">Trạng thái kết nối</span>
                 <div className="metric-value-row">{statusBadge}</div>
@@ -306,15 +465,15 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
                 </span>
               </div>
 
-              {/* Metric 4: Số lượng Heartbeat */}
+              {/* Metric 4: Số lượng gói tin */}
               <div className="real-metric-card">
-                <span className="metric-label">Tổng số Heartbeat</span>
+                <span className="metric-label">Tổng gói Telemetry</span>
                 <strong className="metric-value">
                   {data?.heartbeatCount ? `${data.heartbeatCount.toLocaleString()} gói` : '0 gói'}
                 </strong>
                 <span className="metric-hint">
                   {data?.heartbeatCount && data.heartbeatCount > 0
-                    ? 'Đã xác thực thành công'
+                    ? 'Đã xác thực Bearer token'
                     : 'Chưa nhận gói tin nào'}
                 </span>
               </div>
@@ -334,18 +493,132 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
                       : data.cpuTempC < 75
                       ? 'Nhiệt độ ấm'
                       : 'Nhiệt độ cao'
-                    : 'Chưa có đo đạc'}
+                    : 'Chờ cảm biến nhiệt'}
                 </span>
               </div>
 
-              {/* Metric 6: Mã thiết bị ID */}
+              {/* Metric 6: Kênh kết nối Pi 5 */}
               <div className="real-metric-card">
-                <span className="metric-label">Mã định danh (Device ID)</span>
-                <strong className="metric-value metric-device-code">
-                  {data?.deviceId || 'raspberry-pi-5'}
-                </strong>
-                <span className="metric-hint">Nền tảng: {data?.metadata?.platform || 'Raspberry Pi 5'}</span>
+                <span className="metric-label">Kênh kết nối Pi 5</span>
+                <div style={{ marginTop: '4px' }}>
+                  {data?.isSocketConnected ? (
+                    <span className="real-device-channel-badge socket-direct">
+                      <span className="live-ping-dot" style={{ width: 6, height: 6 }} />
+                      Socket.IO Trực tiếp
+                    </span>
+                  ) : (
+                    <span className="real-device-channel-badge http-fallback">
+                      HTTP Heartbeat
+                    </span>
+                  )}
+                </div>
+                <span className="metric-hint">
+                  {data?.isSocketConnected ? 'Hỗ trợ lệnh hai chiều tức thì' : 'Đang ở chế độ nhịp HTTP'}
+                </span>
               </div>
+
+              {/* Metric 7: Cảm biến siêu âm thực tế (nếu Pi đã gửi) */}
+              {hasUltrasonicSensorData && (
+                <div className="real-metric-card">
+                  <span className="metric-label">Cảm biến siêu âm</span>
+                  <strong className="metric-value">
+                    {data?.sensors?.distanceCm !== null && data?.sensors?.distanceCm !== undefined
+                      ? `${data.sensors.distanceCm.toFixed(1)} cm`
+                      : '—'}
+                  </strong>
+                  <span className="metric-hint">
+                    {data?.sensors?.fillLevel !== null && data?.sensors?.fillLevel !== undefined
+                      ? `Mức đầy: ${data.sensors.fillLevel}%`
+                      : 'Dữ liệu đo thực tế'}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* BẢNG ĐIỀU KHIỂN LỆNH HAI CHIỀU (Bi-directional Controls) */}
+            <div className="real-device-control-panel">
+              <div className="real-device-control-header">
+                <div className="real-device-control-title">
+                  <IconRadio />
+                  <span>Điều Khiển Hai Chiều (Bi-directional Commands)</span>
+                </div>
+                <div>
+                  {data?.isSocketConnected ? (
+                    <span className="real-device-channel-badge socket-direct" title="Pi 5 đang duy trì kết nối Socket.IO">
+                      Kênh: Socket.IO Sẵn Sàng
+                    </span>
+                  ) : (
+                    <span className="real-device-channel-badge http-fallback" title="Pi 5 cần kết nối Socket.IO để nhận lệnh">
+                      Kênh: Chờ Pi 5 kết nối Socket.IO
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="real-device-actions-row">
+                {/* Nút 1: PING Thiết Bị */}
+                <button
+                  type="button"
+                  className={`button-control-action button-ping ${commandState.status === 'PENDING' && commandState.action === 'PING' ? 'is-loading' : ''}`}
+                  onClick={handleSendPing}
+                  disabled={liveStatus === 'OFFLINE' || commandState.status === 'PENDING'}
+                  title={liveStatus === 'OFFLINE' ? 'Không thể PING khi Pi đang OFFLINE' : 'Gửi lệnh PING kiểm tra kết nối hai chiều tới Pi 5'}
+                >
+                  {commandState.status === 'PENDING' && commandState.action === 'PING' ? (
+                    <>
+                      <span className="control-spinner" />
+                      <span>Đang PING...</span>
+                    </>
+                  ) : (
+                    <>
+                      <IconActivity />
+                      <span>PING Pi 5 (Kiểm tra phản hồi)</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Nút 2: TRIGGER_ULTRASONIC (Đo cảm biến siêu âm) */}
+                <button
+                  type="button"
+                  className={`button-control-action button-ultrasonic ${commandState.status === 'PENDING' && commandState.action === 'TRIGGER_ULTRASONIC' ? 'is-loading' : ''}`}
+                  onClick={handleTriggerUltrasonic}
+                  disabled={liveStatus === 'OFFLINE' || commandState.status === 'PENDING'}
+                  title={liveStatus === 'OFFLINE' ? 'Không thể đo khi Pi đang OFFLINE' : 'Yêu cầu Pi 5 kích hoạt đọc cảm biến siêu âm'}
+                >
+                  {commandState.status === 'PENDING' && commandState.action === 'TRIGGER_ULTRASONIC' ? (
+                    <>
+                      <span className="control-spinner spinner-dark" />
+                      <span>Đang yêu cầu đo...</span>
+                    </>
+                  ) : (
+                    <>
+                      <IconRadio />
+                      <span>
+                        {hasUltrasonicSensorData ? 'Đo cảm biến siêu âm ngay' : 'Kiểm tra cảm biến siêu âm'}
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Thông báo trạng thái phản hồi lệnh (Command Feedback Banner) */}
+              {commandState.status !== 'IDLE' && (
+                <div className={`real-device-command-feedback feedback-status-${commandState.status.toLowerCase()}`}>
+                  <div className="feedback-left">
+                    {commandState.status === 'PENDING' && <span className="control-spinner spinner-dark" />}
+                    {commandState.status === 'COMPLETED' && <IconCheckCircle />}
+                    {commandState.status === 'FAILED' && <IconXCircle />}
+                    {commandState.status === 'TIMEOUT' && <IconAlertTriangle />}
+                    <span>{commandState.message}</span>
+                  </div>
+
+                  {typeof commandState.latencyMs === 'number' && (
+                    <span className="feedback-latency-badge">
+                      Độ trễ: {commandState.latencyMs} ms
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Quick Test / Integration Instructions toggle */}
@@ -357,14 +630,26 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
               >
                 <IconInfo />
                 <span>
-                  {showGuide ? 'Ẩn lệnh cURL mẫu gửi nhịp cho Pi 5' : 'Xem lệnh cURL mẫu gửi Heartbeat từ Raspberry Pi 5'}
+                  {showGuide ? 'Ẩn hướng dẫn kết nối Pi 5 qua Socket.IO / PuTTY' : 'Xem hướng dẫn chạy Pi Agent hai chiều & lệnh cURL'}
                 </span>
               </button>
 
               {showGuide && (
                 <div className="guide-content-box">
                   <p className="guide-desc">
-                    Chạy lệnh sau trên terminal của Raspberry Pi 5 để gửi heartbeat kiểm tra kết nối lên Render:
+                    <strong>Cách 1: Chạy Pi Agent hai chiều (Khuyên dùng - Hỗ trợ PING &amp; Telemetry liên tục):</strong>
+                  </p>
+                  <pre className="guide-code-block">
+{`# 1. Kết nối qua PuTTY vào Pi 5 (Debian 13 ARM64)
+# 2. Cài đặt thư viện vào virtualenv:
+pip install python-socketio[client] requests python-dotenv
+
+# 3. Chạy script agent (trong apps/device/pi_agent.py):
+python3 pi_agent.py`}
+                  </pre>
+
+                  <p className="guide-desc" style={{ marginTop: '10px' }}>
+                    <strong>Cách 2: Gửi HTTP Heartbeat dự phòng qua cURL (Tương thích ngược):</strong>
                   </p>
                   <pre className="guide-code-block">
 {`curl -X POST https://smartbin-api-e08b.onrender.com/api/demo/device-heartbeat \\
@@ -379,7 +664,7 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
   }'`}
                   </pre>
                   <p className="guide-note">
-                    * Lưu ý: Thay <code>&lt;DEVICE_INGEST_TOKEN&gt;</code> bằng token cấu hình trên Render Environment Variables.
+                    * Lưu ý: Token xác thực được lưu trong file <code>.env</code> trên Pi và cấu hình trên Render (không hiển thị công khai).
                   </p>
                 </div>
               )}
@@ -390,3 +675,4 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
     </section>
   );
 }
+
