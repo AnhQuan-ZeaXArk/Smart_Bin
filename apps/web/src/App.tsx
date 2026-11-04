@@ -1,18 +1,53 @@
 import { useState } from 'react';
 import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { AuthProvider, ProtectedRoute } from './auth';
-import { useAuth } from './auth-context';
+import { AuthProvider, LoginPage, ProtectedRoute } from './auth';
+import { useAuth, type RoleName } from './auth-context';
 import { appRoutes } from './route-config';
 import { BinDetailPage, BinListPage } from './bins';
 import { DeviceListPage } from './devices';
 import { AlertsPage, DashboardPage, SensorHistoryPage } from './dashboard';
 import { SettingsPage } from './settings';
 import { CollectionsPage } from './collections';
+import { UsersPage } from './users';
 import { RealtimeProvider } from './realtime-context';
 import { useRealtime } from './realtime-store';
 import { ErrorBoundary } from './error-boundary';
-import { IconActivity, IconBell, IconCpu, IconGrid, IconHistory, IconMenu, IconSettings, IconTrash } from './icons';
+import {
+  IconActivity,
+  IconBell,
+  IconCpu,
+  IconGrid,
+  IconHistory,
+  IconLogout,
+  IconMenu,
+  IconSettings,
+  IconTrash,
+  IconUsers
+} from './icons';
 import './App.css';
+
+function getUserInitials(name?: string | null): string {
+  if (!name || !name.trim()) return 'SB';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
+function getRoleLabel(role?: RoleName, mode?: string): string {
+  if (mode === 'demo') return 'Chế độ mô phỏng';
+  switch (role) {
+    case 'ADMIN':
+      return 'Quản trị viên';
+    case 'SUPERVISOR':
+      return 'Giám sát viên';
+    case 'WORKER':
+      return 'Nhân viên';
+    default:
+      return 'Người dùng';
+  }
+}
 
 function PagePlaceholder({ title }: { title: string }) {
   return (
@@ -41,12 +76,23 @@ function ErrorPage({ code, title, description }: { code: string; title: string; 
 }
 
 function AppShell() {
-  const { token } = useAuth();
+  const { token, user, systemMode } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const visibleRoutes = appRoutes;
+
+  // Lọc danh sách route hiển thị theo vai trò (RBAC) và chế độ hệ thống
+  const visibleRoutes = appRoutes.filter((route) => {
+    if (systemMode === 'demo') {
+      // Trong Demo Mode: Ẩn quản lý người dùng vì Demo service không hỗ trợ user CRUD
+      return route.path !== '/users';
+    }
+    if (!user) return false;
+    return route.roles.includes(user.role);
+  });
+
   const currentRoute = [...visibleRoutes].sort((a, b) => b.path.length - a.path.length).find((route) => location.pathname.startsWith(route.path));
+
   const icons: Record<string, React.ReactNode> = {
     '/dashboard': <IconGrid />,
     '/bins': <IconTrash />,
@@ -54,8 +100,13 @@ function AppShell() {
     '/sensor-history': <IconActivity />,
     '/collections': <IconHistory />,
     '/alerts': <IconBell />,
-    '/settings': <IconSettings />
+    '/settings': <IconSettings />,
+    '/users': <IconUsers />
   };
+
+  const userDisplayName = user?.displayName || user?.username || (systemMode === 'demo' ? 'SmartBin Demo' : 'Người dùng');
+  const roleLabel = getRoleLabel(user?.role, systemMode);
+  const initials = getUserInitials(userDisplayName);
 
   return (
     <RealtimeProvider token={token}>
@@ -74,8 +125,8 @@ function AppShell() {
             ))}
           </nav>
           <div className="sidebar-bottom">
-            <div className="account-avatar">SB</div>
-            <div className="account-copy"><strong>SmartBin Demo</strong><span>Chế độ mô phỏng</span></div>
+            <div className="account-avatar">{initials}</div>
+            <div className="account-copy"><strong>{userDisplayName}</strong><span>{roleLabel}</span></div>
           </div>
           <button className="collapse-button" type="button" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? 'Mở rộng thanh điều hướng' : 'Thu gọn thanh điều hướng'}>
             <span>{collapsed ? '›' : '‹'}</span><span className="collapse-copy">Thu gọn</span>
@@ -94,12 +145,12 @@ function AppShell() {
             <Route path="/sensor-history" element={<ProtectedRoute><SensorHistoryPage /></ProtectedRoute>} />
             <Route path="/alerts" element={<ProtectedRoute><AlertsPage /></ProtectedRoute>} />
             <Route path="/collections" element={<ProtectedRoute><CollectionsPage /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
-            <Route path="/users" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/settings" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><SettingsPage /></ProtectedRoute>} />
+            <Route path="/users" element={<ProtectedRoute roles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
             <Route path="/login" element={<Navigate to="/dashboard" replace />} />
 
             {appRoutes
-              .filter((route) => !['/dashboard', '/bins', '/devices', '/sensor-history', '/alerts', '/collections', '/settings'].includes(route.path))
+              .filter((route) => !['/dashboard', '/bins', '/devices', '/sensor-history', '/alerts', '/collections', '/settings', '/users'].includes(route.path))
               .map((route) => (
                 <Route key={route.path} path={route.path} element={<ProtectedRoute><PagePlaceholder title={route.label} /></ProtectedRoute>} />
               ))}
@@ -113,6 +164,11 @@ function AppShell() {
 
 function TopBar({ title, onMenu }: { title: string; onMenu: () => void }) {
   const { connected } = useRealtime();
+  const { user, systemMode, logout } = useAuth();
+
+  const userDisplayName = user?.displayName || user?.username || (systemMode === 'demo' ? 'SmartBin' : 'Người dùng');
+  const roleLabel = getRoleLabel(user?.role, systemMode);
+  const initials = getUserInitials(userDisplayName);
 
   return (
     <header className="topbar">
@@ -121,9 +177,49 @@ function TopBar({ title, onMenu }: { title: string; onMenu: () => void }) {
         <div><span className="breadcrumb">SMARTBIN <span>/</span> VẬN HÀNH</span><strong>{title}</strong></div>
       </div>
       <div className="topbar-actions">
-        <div className={`realtime-pill ${connected ? 'is-connected' : 'is-disconnected'}`}><span className="status-dot" />{connected ? 'Realtime connected' : 'Realtime disconnected'}</div>
-        <Link className="icon-button notification-link" to="/alerts" aria-label="Mở cảnh báo" title="Cảnh báo"><IconBell /></Link>
-        <div className="topbar-user"><span className="account-avatar">SB</span><span><strong>SmartBin</strong><small>Demo Mode</small></span></div>
+        {/* Dynamic Mode Badge */}
+        {systemMode === 'demo' ? (
+          <div className="realtime-pill" title="Hệ thống đang chạy chế độ mô phỏng dữ liệu" style={{ borderColor: '#ca8a04', color: '#fef08a' }}>
+            <span className="status-dot" style={{ background: '#eab308', boxShadow: '0 0 0 3px rgba(234, 179, 8, 0.25)' }} />
+            Demo Mode
+          </div>
+        ) : (
+          <div className="realtime-pill is-connected" title="Hệ thống vận hành với cơ sở dữ liệu PostgreSQL thực tế">
+            <span className="status-dot" />
+            Production
+          </div>
+        )}
+
+        {/* Realtime Socket Connection Pill */}
+        <div className={`realtime-pill ${connected ? 'is-connected' : 'is-disconnected'}`}>
+          <span className="status-dot" />
+          {connected ? 'Realtime connected' : 'Realtime disconnected'}
+        </div>
+
+        {/* Notifications */}
+        <Link className="icon-button notification-link" to="/alerts" aria-label="Mở cảnh báo" title="Cảnh báo">
+          <IconBell />
+        </Link>
+
+        {/* User Account Info */}
+        <div className="topbar-user" title={`Tài khoản: ${userDisplayName} (${roleLabel})`}>
+          <span className="account-avatar">{initials}</span>
+          <span><strong>{userDisplayName}</strong><small>{roleLabel}</small></span>
+        </div>
+
+        {/* Logout button */}
+        {systemMode === 'production' && user && (
+          <button
+            className="icon-button"
+            type="button"
+            onClick={logout}
+            title="Đăng xuất khỏi hệ thống"
+            aria-label="Đăng xuất"
+            style={{ color: '#ef4444' }}
+          >
+            <IconLogout />
+          </button>
+        )}
       </div>
     </header>
   );
@@ -134,9 +230,9 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/forbidden" element={<ErrorPage code="403" title="Bạn không có quyền truy cập" description="Bạn không có quyền thực hiện hành động này." />} />
-          <Route path="/unauthorized" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/forbidden" element={<ErrorPage code="403" title="Bạn không có quyền truy cập" description="Tài khoản của bạn không có quyền thực hiện hành động này." />} />
+          <Route path="/unauthorized" element={<Navigate to="/login" replace />} />
           <Route path="/*" element={<AppShell />} />
         </Routes>
       </BrowserRouter>

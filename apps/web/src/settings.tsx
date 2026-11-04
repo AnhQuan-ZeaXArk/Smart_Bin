@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useRealtime } from './realtime-store';
+import { useAuth } from './auth-context';
 import {
   DEFAULT_THRESHOLDS,
   readSmartBinThresholds,
@@ -70,6 +71,7 @@ function validateThresholds(value: DemoSettings) {
 
 export function SettingsPage() {
   const { connected: realtimeConnected } = useRealtime();
+  const { user, systemMode } = useAuth();
   const [settings, setSettings] = useState<DemoSettings>(() => readSettings());
   const [status, setStatus] = useState('');
   const [thresholdError, setThresholdError] = useState('');
@@ -85,8 +87,9 @@ export function SettingsPage() {
     };
   }, []);
 
-  const canEdit = true;
-  const canManageThresholds = true;
+  const isWorker = systemMode !== 'demo' && user?.role === 'WORKER';
+  const canEdit = !isWorker;
+  const canManageThresholds = !isWorker;
 
   function updateField<K extends keyof DemoSettings>(key: K, value: DemoSettings[K]) {
     setSettings((current) => {
@@ -129,7 +132,11 @@ export function SettingsPage() {
       <header className="settings-header">
         <div className="eyebrow">CÀI ĐẶT HỆ THỐNG</div>
         <h1 className="settings-title">Cài đặt</h1>
-        <p className="settings-subtitle">Cấu hình hệ thống SmartBin, ngưỡng cảnh báo và thông tin vận hành Demo.</p>
+        <p className="settings-subtitle">
+          {systemMode === 'production'
+            ? 'Cấu hình hệ thống SmartBin, ngưỡng cảnh báo và thông số vận hành thực tế.'
+            : 'Cấu hình hệ thống SmartBin, ngưỡng cảnh báo và thông tin vận hành Demo.'}
+        </p>
       </header>
 
       <div className="settings-shell">
@@ -209,6 +216,12 @@ export function SettingsPage() {
 
           {thresholdError && <p className="field-error">{thresholdError}</p>}
 
+          {isWorker && (
+            <div className="settings-role-notice" style={{ padding: '10px 14px', background: 'rgba(239, 68, 68, 0.08)', borderRadius: '6px', color: '#f87171', fontSize: '13px', marginTop: '12px' }}>
+              Tài khoản Nhân viên (WORKER) chỉ có quyền xem cấu hình. Chỉ Quản trị viên và Giám sát viên mới có quyền cập nhật ngưỡng cảnh báo.
+            </div>
+          )}
+
           {canManageThresholds && (
             <div className="settings-footer">
               <button type="button" className="button-primary" onClick={saveSettings}>Lưu thay đổi</button>
@@ -273,19 +286,28 @@ export function SettingsPage() {
           <div className="settings-card__header">
             <div>
               <h2 className="settings-card__title">5. Chế độ vận hành</h2>
-              <p className="settings-card__description">Thông tin chế độ Demo độc lập của SmartBin.</p>
+              <p className="settings-card__description">
+                {systemMode === 'production'
+                  ? 'Thông tin môi trường vận hành thực tế kết nối cơ sở dữ liệu PostgreSQL.'
+                  : 'Thông tin chế độ Demo độc lập của SmartBin.'}
+              </p>
             </div>
           </div>
 
           <div className="settings-grid">
             <div className="settings-field">
               <span className="settings-field__label">Chế độ</span>
-              <div className="settings-readonly settings-readonly--success"><span className="status-dot" />Demo Mode (Độc lập, không Database)</div>
+              <div className="settings-readonly settings-readonly--success">
+                <span className="status-dot" />
+                {systemMode === 'production' ? 'Production Mode (PostgreSQL Database)' : 'Demo Mode (Độc lập, không Database)'}
+              </div>
             </div>
 
             <div className="settings-field">
               <span className="settings-field__label">Xác thực tài khoản</span>
-              <div className="settings-readonly">Vô hiệu hóa (Mở trực tiếp)</div>
+              <div className="settings-readonly">
+                {systemMode === 'production' ? 'Đã kích hoạt (JWT & Phân quyền RBAC)' : 'Vô hiệu hóa (Mở trực tiếp)'}
+              </div>
             </div>
           </div>
         </section>
@@ -306,7 +328,9 @@ export function SettingsPage() {
 
             <div className="settings-field">
               <span className="settings-field__label">Phiên bản</span>
-              <div className="settings-readonly">1.0.0 (Demo Mode)</div>
+              <div className="settings-readonly">
+                {systemMode === 'production' ? '1.0.0 (Production)' : '1.0.0 (Demo Mode)'}
+              </div>
             </div>
 
             <div className="settings-field">

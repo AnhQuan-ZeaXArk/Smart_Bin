@@ -1,5 +1,6 @@
 import { AlertSeverity, AlertType, DeviceStatusEnum, DeviceType, type DeviceStatus } from '@prisma/client';
 import { DEVICE_HEALTH_CONFIG } from '../config/device-health.config.js';
+import { CANONICAL_DEVICE_ID, LEGACY_DEVICE_ID, normalizeDeviceId } from '../config/device-id.config.js';
 import { prisma } from '../lib/prisma.js';
 import { env } from '../config/env.js';
 import type { RealtimeGateway } from '../integrations/realtime/realtime.gateway.js';
@@ -93,14 +94,71 @@ export class DeviceHealthService {
     }
   }
 
+  /**
+   * Khử trùng lặp danh sách thiết bị và chuẩn hóa Device ID bằng giải thuật Map (O(N)),
+   * hoàn toàn độc lập với thứ tự xuất hiện của dữ liệu đầu vào.
+   *
+   * NGUYÊN TẮC:
+   * 1. Duyệt qua danh sách và nhóm theo canonicalId (ví dụ 'raspberry-pi-5', 'camera-01', ...).
+   * 2. Nếu phát hiện duplicate cho cùng 1 canonicalId:
+   *    - Luôn ưu tiên bản ghi có deviceId gốc là canonical ('raspberry-pi-5').
+   *    - Nếu bản ghi trước đó trong Map là legacy ('raspberry-pi-01') và bản ghi mới là canonical, thay thế ngay lập tức.
+   *    - Nếu bản ghi trong Map đã là canonical, bỏ qua bản ghi legacy đến sau.
+   * 3. Nếu chỉ có legacy: giữ nguyên bản ghi đó và chuẩn hóa deviceId: 'raspberry-pi-5'.
+   * 4. Nếu chỉ có canonical: giữ nguyên bản ghi canonical.
+   * 5. Các thiết bị khác ('camera-01', 'ultrasonic-01', 'mqtt-broker-01') được bảo toàn nguyên vẹn.
+   */
+  static deduplicateDevices(rawDevices: DeviceStatus[]): DeviceStatus[] {
+    const deviceMap = new Map<string, DeviceStatus>();
+    const rawIdMap = new Map<string, string>();
+
+    for (const dev of rawDevices) {
+      const canonicalId = normalizeDeviceId(dev.deviceId);
+      const existing = deviceMap.get(canonicalId);
+
+      if (!existing) {
+        deviceMap.set(canonicalId, {
+          ...dev,
+          deviceId: canonicalId
+        });
+        rawIdMap.set(canonicalId, dev.deviceId);
+        continue;
+      }
+
+      // Đã tồn tại bản ghi logic này trong Map:
+      const existingRawId = rawIdMap.get(canonicalId);
+      const isCurrentCanonical = dev.deviceId === CANONICAL_DEVICE_ID;
+      const isExistingCanonical = existingRawId === CANONICAL_DEVICE_ID;
+
+      if (isCurrentCanonical && !isExistingCanonical) {
+        console.warn(
+          `[DeviceHealthService WARNING] deduplicateDevices phát hiện duplicate cho '${canonicalId}'. Ưu tiên thay thế bản ghi legacy bằng canonical record.`
+        );
+        // Map.set với existing key cập nhật giá trị mà KHÔNG thay đổi vị trí thứ tự xuất hiện (insertion order)
+        deviceMap.set(canonicalId, {
+          ...dev,
+          deviceId: canonicalId
+        });
+        rawIdMap.set(canonicalId, dev.deviceId);
+      } else {
+        console.warn(
+          `[DeviceHealthService WARNING] deduplicateDevices phát hiện duplicate cho '${canonicalId}'. Đã giữ lại bản ghi ưu tiên.`
+        );
+      }
+    }
+
+    return Array.from(deviceMap.values());
+  }
+
   async getAllDevices(): Promise<DeviceStatus[]> {
     if (env.isDemoMode) {
       return [];
     }
     await this.evaluateAllDevices();
-    return prisma.deviceStatus.findMany({
+    const rawDevices = await prisma.deviceStatus.findMany({
       orderBy: { createdAt: 'asc' }
     });
+    return DeviceHealthService.deduplicateDevices(rawDevices);
   }
 
   async getDeviceById(idOrDeviceId: string): Promise<DeviceStatus | null> {
@@ -108,20 +166,47 @@ export class DeviceHealthService {
       return null;
     }
 
-    const device = await prisma.deviceStatus.findFirst({
-      where: {
-        OR: [{ id: idOrDeviceId }, { deviceId: idOrDeviceId }]
+    const normalizedTarget = normalizeDeviceId(idOrDeviceId);
+    let device: DeviceStatus | null = null;
+    if (normalizedTarget === CANONICAL_DEVICE_ID) {
+      // 1. Tìm bản ghi canonical 'raspberry-pi-5' trước (hoặc khớp exact database id)
+      device = await prisma.deviceStatus.findFirst({
+        where: {
+          OR: [
+            { id: idOrDeviceId },
+            { deviceId: CANONICAL_DEVICE_ID }
+          ]
+        }
+      });
+      // 2. Nếu không có bản ghi canonical mới tìm bản ghi legacy 'raspberry-pi-01'
+      if (!device) {
+        device = await prisma.deviceStatus.findUnique({
+          where: { deviceId: LEGACY_DEVICE_ID }
+        });
       }
-    });
+    } else {
+      device = await prisma.deviceStatus.findFirst({
+        where: {
+          OR: [
+            { id: idOrDeviceId },
+            { deviceId: normalizedTarget }
+          ]
+        }
+      });
+    }
     if (!device) return null;
 
-    const state = this.heartbeatStates.get(device.deviceId);
+    const state = this.heartbeatStates.get(normalizedTarget) || this.heartbeatStates.get(device.deviceId);
     const effectiveLastSeen = state?.lastHeartbeatTime || device.lastHeartbeat || device.lastSeen;
     const evaluatedStatus = computeDeviceStatus(effectiveLastSeen);
+    let resolvedDevice = device;
     if (evaluatedStatus !== device.status) {
-      return this.updateDeviceStatus(device, evaluatedStatus);
+      resolvedDevice = await this.updateDeviceStatus(device, evaluatedStatus);
     }
-    return device;
+    return {
+      ...resolvedDevice,
+      deviceId: normalizeDeviceId(resolvedDevice.deviceId)
+    };
   }
 
   /**
@@ -139,8 +224,13 @@ export class DeviceHealthService {
 
     // Thời điểm Backend thực sự nhận heartbeat (chống lệch giờ Pi)
     const receiveTimestamp = input.receiveTimeOverride ? new Date(input.receiveTimeOverride) : new Date();
+    const targetDeviceId = normalizeDeviceId(input.deviceId);
+    const normalizedInput: DeviceHeartbeatInput = {
+      ...input,
+      deviceId: targetDeviceId
+    };
 
-    let state = this.heartbeatStates.get(input.deviceId);
+    let state = this.heartbeatStates.get(targetDeviceId);
     if (!state) {
       state = {
         lastHeartbeatTime: receiveTimestamp,
@@ -149,7 +239,7 @@ export class DeviceHealthService {
         isWritingDb: false,
         pendingWrite: null
       };
-      this.heartbeatStates.set(input.deviceId, state);
+      this.heartbeatStates.set(targetDeviceId, state);
     }
 
     // Luôn cập nhật thời điểm nhận heartbeat mới nhất vào RAM theo giờ Backend
@@ -161,7 +251,7 @@ export class DeviceHealthService {
     const shouldWriteDb = isFirstWrite || isStateChanged || elapsedSinceLastDbWrite >= DeviceHealthService.DB_WRITE_THROTTLE_MS;
 
     if (shouldWriteDb) {
-      return this.executeDbUpsert(input, receiveTimestamp, state);
+      return this.executeDbUpsert(normalizedInput, receiveTimestamp, state);
     }
 
     // Đang trong khoảng throttle (< 15s): Bỏ qua ghi DB để bảo vệ cơ sở dữ liệu
@@ -173,12 +263,18 @@ export class DeviceHealthService {
    * Luôn sử dụng receive timestamp của Backend.
    */
   async recordHeartbeat(input: DeviceHeartbeatInput): Promise<DeviceStatus> {
+    const targetDeviceId = normalizeDeviceId(input.deviceId);
+    const normalizedInput: DeviceHeartbeatInput = {
+      ...input,
+      deviceId: targetDeviceId
+    };
+
     if (env.isDemoMode) {
       // Demo mock fallback
       return {
-        id: `demo-${input.deviceId}`,
-        deviceId: input.deviceId,
-        deviceName: input.deviceName ?? input.deviceId,
+        id: `demo-${targetDeviceId}`,
+        deviceId: targetDeviceId,
+        deviceName: input.deviceName ?? targetDeviceId,
         deviceType: input.deviceType ?? DeviceType.RASPBERRY_PI,
         status: DeviceStatusEnum.ONLINE,
         lastSeen: new Date(),
@@ -193,7 +289,7 @@ export class DeviceHealthService {
     }
 
     const receiveTimestamp = input.receiveTimeOverride ? new Date(input.receiveTimeOverride) : new Date();
-    let state = this.heartbeatStates.get(input.deviceId);
+    let state = this.heartbeatStates.get(targetDeviceId);
     if (!state) {
       state = {
         lastHeartbeatTime: receiveTimestamp,
@@ -202,11 +298,11 @@ export class DeviceHealthService {
         isWritingDb: false,
         pendingWrite: null
       };
-      this.heartbeatStates.set(input.deviceId, state);
+      this.heartbeatStates.set(targetDeviceId, state);
     }
     state.lastHeartbeatTime = receiveTimestamp;
 
-    return this.executeDbUpsert(input, receiveTimestamp, state);
+    return this.executeDbUpsert(normalizedInput, receiveTimestamp, state);
   }
 
   /**
@@ -271,34 +367,74 @@ export class DeviceHealthService {
         const previousStatus = state.lastKnownStatus;
         const wasOffline = previousStatus === DeviceStatusEnum.OFFLINE;
 
-        // Sử dụng Prisma atomic upsert theo unique deviceId (chống trùng lặp và race condition)
-        // Dùng receiveTimestamp của Backend làm thời điểm lastSeen và lastHeartbeat chuẩn
-        const device = await prisma.deviceStatus.upsert({
-          where: { deviceId: input.deviceId },
-          create: {
-            deviceId: input.deviceId,
-            deviceName: input.deviceName ?? input.deviceId,
-            deviceType: input.deviceType ?? DeviceType.RASPBERRY_PI,
-            status: DeviceStatusEnum.ONLINE,
-            lastSeen: receiveTimestamp,
-            lastHeartbeat: receiveTimestamp,
-            ipAddress: input.ipAddress ?? null,
-            uptime,
-            firmwareVersion: input.firmwareVersion ?? null,
-            metadata: metadataStr
-          },
-          update: {
-            status: DeviceStatusEnum.ONLINE,
-            lastSeen: receiveTimestamp,
-            lastHeartbeat: receiveTimestamp,
-            ...(input.deviceName ? { deviceName: input.deviceName } : {}),
-            ...(input.deviceType ? { deviceType: input.deviceType } : {}),
-            ...(input.ipAddress !== undefined ? { ipAddress: input.ipAddress } : {}),
-            ...(uptime !== null ? { uptime } : {}),
-            ...(input.firmwareVersion !== undefined ? { firmwareVersion: input.firmwareVersion } : {}),
-            ...(metadataStr !== null ? { metadata: metadataStr } : {})
+        const targetDeviceId = normalizeDeviceId(input.deviceId);
+
+        // Trong giai đoạn chuyển tiếp:
+        // 1. Tìm bản ghi canonical 'raspberry-pi-5' trước.
+        // 2. Nếu không tồn tại mới tìm legacy 'raspberry-pi-01'.
+        // 3. Nếu tìm thấy bản ghi thì cập nhật bằng primary key id của bản ghi đó.
+        // 4. Không tự động xóa hoặc hợp nhất bản ghi còn lại.
+        // 5. Nếu phát hiện đồng thời cả hai bản ghi, ghi nhận tình trạng duplicate để báo cáo trong Task 1B-B.
+        let existing: DeviceStatus | null = null;
+        if (targetDeviceId === CANONICAL_DEVICE_ID) {
+          const canonicalRecord = await prisma.deviceStatus.findUnique({
+            where: { deviceId: CANONICAL_DEVICE_ID }
+          });
+          const legacyRecord = await prisma.deviceStatus.findUnique({
+            where: { deviceId: LEGACY_DEVICE_ID }
+          });
+
+          if (canonicalRecord && legacyRecord) {
+            console.warn(
+              `[DeviceHealthService WARNING] Phát hiện tồn tại đồng thời 2 Device ID trong DB: canonical '${CANONICAL_DEVICE_ID}' (id: ${canonicalRecord.id}) và legacy '${LEGACY_DEVICE_ID}' (id: ${legacyRecord.id}). Ưu tiên cập nhật bản ghi canonical.`
+            );
           }
-        });
+
+          existing = canonicalRecord ?? legacyRecord;
+        } else {
+          existing = await prisma.deviceStatus.findUnique({
+            where: { deviceId: targetDeviceId }
+          });
+        }
+
+        let rawDevice: DeviceStatus;
+        if (existing) {
+          // Cập nhật đúng bản ghi duy nhất hiện có (theo database id), không tạo bản ghi mới
+          rawDevice = await prisma.deviceStatus.update({
+            where: { id: existing.id },
+            data: {
+              status: DeviceStatusEnum.ONLINE,
+              lastSeen: receiveTimestamp,
+              lastHeartbeat: receiveTimestamp,
+              ...(input.deviceName ? { deviceName: input.deviceName } : {}),
+              ...(input.deviceType ? { deviceType: input.deviceType } : {}),
+              ...(input.ipAddress !== undefined ? { ipAddress: input.ipAddress } : {}),
+              ...(uptime !== null ? { uptime } : {}),
+              ...(input.firmwareVersion !== undefined ? { firmwareVersion: input.firmwareVersion } : {}),
+              ...(metadataStr !== null ? { metadata: metadataStr } : {})
+            }
+          });
+        } else {
+          rawDevice = await prisma.deviceStatus.create({
+            data: {
+              deviceId: targetDeviceId,
+              deviceName: input.deviceName ?? targetDeviceId,
+              deviceType: input.deviceType ?? DeviceType.RASPBERRY_PI,
+              status: DeviceStatusEnum.ONLINE,
+              lastSeen: receiveTimestamp,
+              lastHeartbeat: receiveTimestamp,
+              ipAddress: input.ipAddress ?? null,
+              uptime,
+              firmwareVersion: input.firmwareVersion ?? null,
+              metadata: metadataStr
+            }
+          });
+        }
+
+        const device: DeviceStatus = {
+          ...rawDevice,
+          deviceId: normalizeDeviceId(rawDevice.deviceId)
+        };
 
         state.lastDbWriteTime = Date.now();
         state.lastKnownStatus = DeviceStatusEnum.ONLINE;
@@ -472,12 +608,16 @@ export class DeviceHealthService {
    * Tạo cảnh báo DEVICE_OFFLINE được gán nhãn mã thiết bị duy nhất [deviceId] để chống va chạm tên
    */
   private async createDeviceAlert(deviceName: string, deviceId: string): Promise<void> {
-    const deviceTag = `[${deviceId}]`;
+    const canonicalId = normalizeDeviceId(deviceId);
+    const deviceTag = `[${canonicalId}]`;
     const existing = await prisma.alert.findFirst({
       where: {
         type: AlertType.DEVICE_OFFLINE,
         isResolved: false,
-        message: { contains: deviceTag }
+        OR: [
+          { message: { contains: deviceTag } },
+          ...(canonicalId === CANONICAL_DEVICE_ID ? [{ message: { contains: `[${LEGACY_DEVICE_ID}]` } }] : [])
+        ]
       }
     });
 
@@ -486,7 +626,7 @@ export class DeviceHealthService {
         data: {
           type: AlertType.DEVICE_OFFLINE,
           severity: AlertSeverity.CRITICAL,
-          message: `Thiết bị ${deviceName} [${deviceId}] mất kết nối (không nhận dữ liệu trong ${DEVICE_HEALTH_CONFIG.OFFLINE_THRESHOLD_MS / 1000} giây).`
+          message: `Thiết bị ${deviceName} [${canonicalId}] mất kết nối (không nhận dữ liệu trong ${DEVICE_HEALTH_CONFIG.OFFLINE_THRESHOLD_MS / 1000} giây).`
         }
       });
       this.realtime?.emitAlert(alert);
@@ -497,14 +637,20 @@ export class DeviceHealthService {
    * Resolve chính xác cảnh báo của thiết bị dựa trên mã deviceId duy nhất, không giải quyết nhầm thiết bị khác
    */
   private async resolveDeviceAlert(deviceName: string, deviceId: string): Promise<void> {
-    const deviceTag = `[${deviceId}]`;
+    const canonicalId = normalizeDeviceId(deviceId);
     const alertsToResolve = await prisma.alert.findMany({
       where: {
         type: AlertType.DEVICE_OFFLINE,
         isResolved: false,
         OR: [
-          { message: { contains: deviceTag } },
-          { message: { contains: `(${deviceId})` } }
+          { message: { contains: `[${canonicalId}]` } },
+          { message: { contains: `(${canonicalId})` } },
+          ...(canonicalId === CANONICAL_DEVICE_ID
+            ? [
+                { message: { contains: `[${LEGACY_DEVICE_ID}]` } },
+                { message: { contains: `(${LEGACY_DEVICE_ID})` } }
+              ]
+            : [])
         ]
       }
     });

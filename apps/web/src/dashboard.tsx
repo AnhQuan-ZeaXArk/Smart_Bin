@@ -173,7 +173,7 @@ function mergeTelemetry(data: DashboardData, event: RealtimeTelemetry): Dashboar
 }
 
 export function DashboardPage() {
-  const { token } = useAuth();
+  const { token, systemMode } = useAuth();
   const { socket: realtime, connected } = useRealtime();
   const navigate = useNavigate();
   const [data, setData] = useState<DashboardData | null>(null);
@@ -401,9 +401,9 @@ export function DashboardPage() {
 
         <div className="section-sub-heading" style={{ margin: '18px 0 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <h3 style={{ margin: 0, fontSize: '15px', color: '#456257', textTransform: 'uppercase', letterSpacing: '0.6px', fontWeight: 700 }}>
-            Cảm biến & Thiết bị mô phỏng (Demo Simulation)
+            {systemMode === 'production' ? 'Phân hệ cảm biến & Thiết bị ngoại vi (IoT Peripherals)' : 'Cảm biến & Thiết bị mô phỏng (Demo Simulation)'}
           </h3>
-          <span style={{ fontSize: '12px', color: '#718078' }}>Dữ liệu sinh tự động cho chế độ demo</span>
+          <span style={{ fontSize: '12px', color: '#718078' }}>{systemMode === 'production' ? 'Dữ liệu giám sát từ cơ sở dữ liệu PostgreSQL' : 'Dữ liệu sinh tự động cho chế độ demo'}</span>
         </div>
 
         {/* Device KPI Summary Cards */}

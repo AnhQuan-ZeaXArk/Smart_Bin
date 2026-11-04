@@ -1,9 +1,12 @@
 import { createServer } from 'node:http';
 import { io as ClientSocket, type Socket as ClientSocketType } from 'socket.io-client';
+import jwt from 'jsonwebtoken';
 import { RealtimeGateway } from './realtime.gateway.js';
 import { REALTIME_EVENTS, type DeviceCommandPayload, type DeviceCommandStatusPayload } from './realtime.contract.js';
 import { realDeviceService, type RealDeviceStatus } from '../../demo/real-device.service.js';
 import { app } from '../../app.js';
+import { env } from '../../config/env.js';
+import { prisma } from '../../lib/prisma.js';
 
 function waitForEvent<T = unknown>(
   socket: ClientSocketType,
@@ -36,6 +39,10 @@ async function runDeviceRealtimeTests() {
   // Set test device ingest token in process.env
   const testToken = 'test-pi5-ingest-token-12345';
   process.env.DEVICE_INGEST_TOKEN = testToken;
+
+  const admin = await prisma.user.findFirst({ where: { role: { name: 'ADMIN' } } });
+  if (!admin) throw new Error('Admin user not found');
+  const validToken = jwt.sign({ sub: admin.id }, env.JWT_SECRET, { expiresIn: '1h' });
 
   const httpServer = createServer(app);
   const realtime = new RealtimeGateway(httpServer);
@@ -102,6 +109,7 @@ async function runDeviceRealtimeTests() {
     // Connect a Web client socket to listen for broadcasted telemetry
     const webSocket = await new Promise<ClientSocketType>((resolve, reject) => {
       const s = ClientSocket(socketUrl, {
+        auth: { token: validToken },
         transports: ['websocket'],
         reconnection: false
       });
@@ -183,7 +191,10 @@ async function runDeviceRealtimeTests() {
 
     const postRes = await fetch(`${socketUrl}/api/demo/device-command`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${validToken}`
+      },
       body: JSON.stringify({ deviceId: 'raspberry-pi-5', action: 'PING' })
     });
     const postBody = await postRes.json();
@@ -212,7 +223,10 @@ async function runDeviceRealtimeTests() {
 
     const ultrasonicRes = await fetch(`${socketUrl}/api/demo/device-command`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${validToken}`
+      },
       body: JSON.stringify({ deviceId: 'raspberry-pi-5', action: 'TRIGGER_ULTRASONIC' })
     });
     const ultrasonicBody = await ultrasonicRes.json();
@@ -235,7 +249,10 @@ async function runDeviceRealtimeTests() {
     console.log('Test 5: Unsafe commands (SYSTEM_REBOOT) are strictly rejected with 400 Bad Request');
     const badActionRes = await fetch(`${socketUrl}/api/demo/device-command`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${validToken}`
+      },
       body: JSON.stringify({ deviceId: 'raspberry-pi-5', action: 'SYSTEM_REBOOT' })
     });
 
@@ -280,7 +297,10 @@ async function runDeviceRealtimeTests() {
 
     const offlineCmdRes = await fetch(`${socketUrl}/api/demo/device-command`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${validToken}`
+      },
       body: JSON.stringify({ deviceId: 'raspberry-pi-5', action: 'PING' })
     });
     const offlineBody = await offlineCmdRes.json();

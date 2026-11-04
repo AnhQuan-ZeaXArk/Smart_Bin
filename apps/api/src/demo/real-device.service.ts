@@ -1,4 +1,5 @@
 import type { RealtimeGateway } from '../integrations/realtime/realtime.gateway.js';
+import { DEVICE_HEALTH_CONFIG } from '../config/device-health.config.js';
 import {
   REALTIME_EVENTS,
   type DeviceCommandAckPayload,
@@ -20,7 +21,7 @@ export interface HeartbeatPayload {
   sensors?: DeviceSensorsData | null;
 }
 
-export type RealDeviceStatusType = 'ONLINE' | 'STALE' | 'OFFLINE';
+export type RealDeviceStatusType = 'ONLINE' | 'WARNING' | 'OFFLINE' | 'STALE';
 
 export interface RealDeviceStatus {
   deviceId: string;
@@ -38,6 +39,8 @@ export interface RealDeviceStatus {
   isSocketConnected: boolean;
   sensors?: DeviceSensorsData | null;
   metadata?: {
+    onlineThresholdSeconds?: number;
+    warningThresholdSeconds?: number;
     staleThresholdSeconds: number;
     offlineThresholdSeconds: number;
     platform?: string;
@@ -68,16 +71,22 @@ export class RealDeviceService {
   private lastSentAt: string | null = null;
   private lastReceivedAt: string | null = null;
   private previousStatus: RealDeviceStatusType = 'OFFLINE';
+  private previousSocketConnected: boolean = false;
   private isSocketConnected: boolean = false;
   private sensors: DeviceSensorsData | null = null;
 
   // Active command pending registry
   private pendingCommands = new Map<string, PendingCommand>();
 
-  // Configurable thresholds for stale and offline detection
-  public readonly STALE_THRESHOLD_SECONDS = 45;
-  public readonly OFFLINE_THRESHOLD_SECONDS = 90;
-  private readonly CHECK_INTERVAL_MS = 10000;
+  // Đồng bộ cấu hình ngưỡng thời gian với DEVICE_HEALTH_CONFIG
+  public readonly ONLINE_THRESHOLD_MS = DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_MS;
+  public readonly WARNING_THRESHOLD_MS = DEVICE_HEALTH_CONFIG.WARNING_THRESHOLD_MS;
+  public readonly OFFLINE_THRESHOLD_MS = DEVICE_HEALTH_CONFIG.OFFLINE_THRESHOLD_MS;
+  public readonly ONLINE_THRESHOLD_SECONDS = DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_SECONDS;
+  public readonly WARNING_THRESHOLD_SECONDS = DEVICE_HEALTH_CONFIG.WARNING_THRESHOLD_SECONDS;
+  public readonly STALE_THRESHOLD_SECONDS = DEVICE_HEALTH_CONFIG.STALE_THRESHOLD_SECONDS;
+  public readonly OFFLINE_THRESHOLD_SECONDS = DEVICE_HEALTH_CONFIG.OFFLINE_THRESHOLD_SECONDS;
+  private readonly CHECK_INTERVAL_MS = DEVICE_HEALTH_CONFIG.CHECK_INTERVAL_MS;
 
   setRealtime(realtime: RealtimeGateway): void {
     this.realtime = realtime;
@@ -86,13 +95,17 @@ export class RealDeviceService {
   setSocketConnected(deviceId: string, connected: boolean): void {
     if (this.deviceId === deviceId || !this.deviceId) {
       this.isSocketConnected = connected;
-      if (connected) {
-        // If connecting via Socket.IO, mark device as seen immediately
-        const now = new Date();
-        this.lastHeartbeatDate = now;
-        this.lastReceivedAt = now.toISOString();
-      }
+      // QUY TẮC AN TOÀN: Kết nối Socket.IO thành công KHÔNG ĐƯỢC tự động đánh dấu ONLINE
+      // hoặc cập nhật lastHeartbeatDate/lastReceivedAt. Socket.IO Connected và Device ONLINE là 2 trạng thái độc lập.
       this.evaluateStatusChange();
+    }
+  }
+
+  setLastHeartbeatDateForTest(date: Date | null): void {
+    this.lastHeartbeatDate = date;
+    if (date) {
+      this.lastReceivedAt = date.toISOString();
+      this.heartbeatCount = Math.max(1, this.heartbeatCount);
     }
   }
 
@@ -146,17 +159,18 @@ export class RealDeviceService {
     return statusObj;
   }
 
-  getStatus(): RealDeviceStatus {
-    const now = Date.now();
+  getStatus(nowOverride?: number): RealDeviceStatus {
+    const now = nowOverride ?? Date.now();
     let computedStatus: RealDeviceStatusType = 'OFFLINE';
     let ageSeconds: number | null = null;
 
     if (this.lastHeartbeatDate) {
-      ageSeconds = Math.max(0, Math.floor((now - this.lastHeartbeatDate.getTime()) / 1000));
-      if (ageSeconds <= this.STALE_THRESHOLD_SECONDS) {
+      const elapsedMs = now - this.lastHeartbeatDate.getTime();
+      ageSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+      if (elapsedMs < DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_MS) {
         computedStatus = 'ONLINE';
-      } else if (ageSeconds <= this.OFFLINE_THRESHOLD_SECONDS) {
-        computedStatus = 'STALE';
+      } else if (elapsedMs < DEVICE_HEALTH_CONFIG.WARNING_THRESHOLD_MS) {
+        computedStatus = 'WARNING';
       } else {
         computedStatus = 'OFFLINE';
       }
@@ -178,18 +192,23 @@ export class RealDeviceService {
       isSocketConnected: this.isSocketConnected,
       sensors: this.sensors,
       metadata: {
-        staleThresholdSeconds: this.STALE_THRESHOLD_SECONDS,
-        offlineThresholdSeconds: this.OFFLINE_THRESHOLD_SECONDS,
+        onlineThresholdSeconds: DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_SECONDS,
+        warningThresholdSeconds: DEVICE_HEALTH_CONFIG.WARNING_THRESHOLD_SECONDS,
+        staleThresholdSeconds: DEVICE_HEALTH_CONFIG.STALE_THRESHOLD_SECONDS,
+        offlineThresholdSeconds: DEVICE_HEALTH_CONFIG.OFFLINE_THRESHOLD_SECONDS,
         platform: 'Raspberry Pi 5'
       }
     };
   }
 
   private evaluateStatusChange(): void {
-    if (!this.lastHeartbeatDate) return;
     const currentStatusObj = this.getStatus();
-    if (currentStatusObj.status !== this.previousStatus) {
+    const hasStatusChanged = currentStatusObj.status !== this.previousStatus;
+    const hasSocketChanged = currentStatusObj.isSocketConnected !== this.previousSocketConnected;
+
+    if (hasStatusChanged || hasSocketChanged) {
       this.previousStatus = currentStatusObj.status;
+      this.previousSocketConnected = currentStatusObj.isSocketConnected;
       if (this.realtime?.io) {
         this.realtime.io.emit(REALTIME_EVENTS.DEVICE_HEARTBEAT, currentStatusObj);
       }
@@ -333,6 +352,7 @@ export class RealDeviceService {
     this.lastSentAt = null;
     this.lastReceivedAt = null;
     this.previousStatus = 'OFFLINE';
+    this.previousSocketConnected = false;
     this.isSocketConnected = false;
     this.sensors = null;
     for (const [, pending] of this.pendingCommands) {

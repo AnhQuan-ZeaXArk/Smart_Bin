@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from './auth-context';
 import { useRealtime } from './realtime-store';
 import {
@@ -22,7 +22,12 @@ import {
   DEVICE_TYPE_LABELS,
   STATUS_LABELS,
   formatDateTime,
-  formatUptime
+  formatUptime,
+  parseTimestamp,
+  shouldDropIncoming,
+  CANONICAL_PI_DEVICE_ID,
+  normalizeDeviceId,
+  isRaspberryPiDevice
 } from './device-utils';
 
 import { apiUrl } from './api-config';
@@ -69,7 +74,7 @@ function getStatusBadge(status: DeviceStatusEnum) {
 }
 
 export function DeviceListPage() {
-  const { token } = useAuth();
+  const { token, systemMode } = useAuth();
   const { socket, connected } = useRealtime();
   const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,6 +91,133 @@ export function DeviceListPage() {
   const [typeFilter, setTypeFilter] = useState<'ALL' | DeviceType>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | DeviceStatusEnum>('ALL');
 
+  // Timestamp tracking per device using ref to avoid unsafe updater side-effects
+  const latestDeviceTimestampsRef = useRef<Map<string, number>>(new Map());
+
+  const getKnownTimestamp = useCallback((deviceId: string) => {
+    const map = latestDeviceTimestampsRef.current;
+    const norm = normalizeDeviceId(deviceId);
+    return map.get(norm) || 0;
+  }, []);
+
+  const updateKnownTimestamp = useCallback((deviceId: string, ts: number) => {
+    if (ts <= 0) return;
+    const map = latestDeviceTimestampsRef.current;
+    const norm = normalizeDeviceId(deviceId);
+    map.set(norm, Math.max(map.get(norm) || 0, ts));
+  }, []);
+
+  // Xử lý REST Race Condition: Cập nhật danh sách từ REST nhưng không ghi đè dữ liệu Socket mới hơn
+  const mergeDevicesFromRest = useCallback((incomingList: DeviceItem[]) => {
+    if (!Array.isArray(incomingList)) return;
+
+    // 1. Toàn bộ tính toán timestamp guard và mutation Ref thực hiện hoàn toàn BÊN NGOÀI state updaters
+    const acceptedDeviceMap = new Map<string, DeviceItem>();
+    for (const rawDev of incomingList) {
+      if (!rawDev || !rawDev.deviceId) continue;
+      const canonicalDeviceId = normalizeDeviceId(rawDev.deviceId);
+      const incomingDev: DeviceItem = {
+        ...rawDev,
+        deviceId: canonicalDeviceId
+      };
+
+      const currentTs = getKnownTimestamp(canonicalDeviceId);
+      const restTs = parseTimestamp(incomingDev.lastHeartbeat || incomingDev.lastSeen);
+
+      // Nếu REST data bị drop (do Socket đã nhận dữ liệu mới hơn, hoặc REST không có timestamp khi đã có timestamp)
+      if (shouldDropIncoming(currentTs, restTs)) {
+        continue;
+      }
+
+      // Gói tin hợp lệ được chấp nhận -> Cập nhật Ref TRƯỚC KHI gọi state setter
+      if (restTs > 0) {
+        updateKnownTimestamp(canonicalDeviceId, restTs);
+      }
+      acceptedDeviceMap.set(canonicalDeviceId, incomingDev);
+    }
+
+    // 2. Pure state updater cho setDevices: Tuyệt đối KHÔNG có side-effect hay mutation Ref bên trong
+    setDevices((prev) => {
+      if (prev.length === 0) {
+        // Chỉ lấy những thiết bị đã vượt qua timestamp guard (trong acceptedDeviceMap)
+        return Array.from(acceptedDeviceMap.values()).map((incomingDev) => {
+          const resolvedUptime = typeof incomingDev.uptime === 'number'
+            ? incomingDev.uptime
+            : typeof (incomingDev as any).uptimeSeconds === 'number'
+            ? (incomingDev as any).uptimeSeconds
+            : null;
+          return {
+            ...incomingDev,
+            uptime: resolvedUptime
+          };
+        });
+      }
+
+      const seen = new Set<string>();
+      const next: DeviceItem[] = [];
+
+      for (const existing of prev) {
+        const canonicalId = normalizeDeviceId(existing.deviceId);
+        if (seen.has(canonicalId)) continue;
+        seen.add(canonicalId);
+
+        const incomingDev = acceptedDeviceMap.get(canonicalId);
+        if (!incomingDev) {
+          next.push({
+            ...existing,
+            deviceId: canonicalId
+          });
+          continue;
+        }
+
+        const resolvedUptime = typeof incomingDev.uptime === 'number'
+          ? incomingDev.uptime
+          : typeof (incomingDev as any).uptimeSeconds === 'number'
+          ? (incomingDev as any).uptimeSeconds
+          : existing.uptime;
+
+        next.push({
+          ...existing,
+          ...incomingDev,
+          deviceId: canonicalId,
+          uptime: resolvedUptime
+        });
+      }
+
+      // Bổ sung các thiết bị mới xuất hiện trong acceptedDeviceMap mà chưa có trong prev
+      for (const [canonicalId, incomingDev] of acceptedDeviceMap.entries()) {
+        if (!seen.has(canonicalId)) {
+          seen.add(canonicalId);
+          const resolvedUptime = typeof incomingDev.uptime === 'number'
+            ? incomingDev.uptime
+            : typeof (incomingDev as any).uptimeSeconds === 'number'
+            ? (incomingDev as any).uptimeSeconds
+            : null;
+          next.push({
+            ...incomingDev,
+            deviceId: canonicalId,
+            uptime: resolvedUptime
+          });
+        }
+      }
+      return next;
+    });
+
+    // 3. Pure state updater cho setSelectedDevice: Tuyệt đối KHÔNG có side-effect bên trong
+    setSelectedDevice((curr) => {
+      if (!curr) return curr;
+      const canonicalId = normalizeDeviceId(curr.deviceId);
+      const incomingDev = acceptedDeviceMap.get(canonicalId);
+      if (!incomingDev) return curr;
+      const resolvedUptime = typeof incomingDev.uptime === 'number'
+        ? incomingDev.uptime
+        : typeof (incomingDev as any).uptimeSeconds === 'number'
+        ? (incomingDev as any).uptimeSeconds
+        : curr.uptime;
+      return { ...curr, ...incomingDev, deviceId: canonicalId, uptime: resolvedUptime };
+    });
+  }, [getKnownTimestamp, updateKnownTimestamp]);
+
   const fetchDevices = useCallback(async () => {
     setRefreshing(true);
     setRefreshTrigger((k) => k + 1);
@@ -97,7 +229,7 @@ export function DeviceListPage() {
         throw new Error('Không thể tải trạng thái thiết bị.');
       }
       const data = await res.json();
-      setDevices(data.devices || []);
+      mergeDevicesFromRest(data.devices || []);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không thể tải trạng thái thiết bị.');
@@ -105,7 +237,7 @@ export function DeviceListPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [token]);
+  }, [token, mergeDevicesFromRest]);
 
   useEffect(() => {
     let active = true;
@@ -117,7 +249,9 @@ export function DeviceListPage() {
         return res.json();
       })
       .then((data) => {
-        if (active) setDevices(data.devices || []);
+        if (active) {
+          mergeDevicesFromRest(data.devices || []);
+        }
       })
       .catch((err) => {
         if (active) setError(err instanceof Error ? err.message : 'Không thể tải trạng thái thiết bị.');
@@ -128,62 +262,187 @@ export function DeviceListPage() {
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [token, mergeDevicesFromRest]);
 
   // Realtime device updates use the AppShell connection.
   useEffect(() => {
     if (!socket) return;
 
     const onDeviceStatus = (updated: DeviceItem) => {
+      if (!updated || !updated.deviceId) return;
+      const canonicalDeviceId = normalizeDeviceId(updated.deviceId);
+      const incomingTs = parseTimestamp(updated.lastHeartbeat || updated.lastSeen);
+      const currentTs = getKnownTimestamp(canonicalDeviceId);
+
+      // Chống sự kiện cũ hoặc sự kiện không có timestamp khi đã có timestamp hợp lệ
+      if (shouldDropIncoming(currentTs, incomingTs)) {
+        return;
+      }
+      if (incomingTs > 0) {
+        updateKnownTimestamp(canonicalDeviceId, incomingTs);
+      }
+
+      const resolvedUptime = typeof updated.uptime === 'number'
+        ? updated.uptime
+        : typeof (updated as any).uptimeSeconds === 'number'
+        ? (updated as any).uptimeSeconds
+        : undefined;
+
       setDevices((prev) => {
         const index = prev.findIndex(
-          (d) => d.deviceId === updated.deviceId || d.id === updated.id
+          (d) => normalizeDeviceId(d.deviceId) === canonicalDeviceId || d.id === updated.id
         );
         if (index >= 0) {
+          const current = prev[index];
           const next = [...prev];
-          next[index] = { ...next[index], ...updated };
+          next[index] = {
+            ...current,
+            ...updated,
+            deviceId: canonicalDeviceId,
+            uptime: resolvedUptime !== undefined ? resolvedUptime : current.uptime
+          };
           return next;
         }
-        return [...prev, updated];
+        return [...prev, { ...updated, deviceId: canonicalDeviceId }];
       });
 
       setSelectedDevice((curr) => {
-        if (curr && (curr.deviceId === updated.deviceId || curr.id === updated.id)) {
-          return { ...curr, ...updated };
+        if (curr && (normalizeDeviceId(curr.deviceId) === canonicalDeviceId || curr.id === updated.id)) {
+          return {
+            ...curr,
+            ...updated,
+            deviceId: canonicalDeviceId,
+            uptime: resolvedUptime !== undefined ? resolvedUptime : curr.uptime
+          };
         }
         return curr;
       });
 
       setDeviceDetail((curr) => {
-        if (curr && (curr.deviceId === updated.deviceId)) {
-          return { ...curr, ...updated };
+        if (curr && normalizeDeviceId(curr.deviceId) === canonicalDeviceId) {
+          return {
+            ...curr,
+            ...updated,
+            deviceId: canonicalDeviceId,
+            uptime: resolvedUptime !== undefined ? resolvedUptime : curr.uptime
+          };
         }
         return curr;
       });
     };
+
+    const onDeviceHeartbeat = (hb: any) => {
+      if (!hb || !hb.deviceId) return;
+      const canonicalDeviceId = normalizeDeviceId(hb.deviceId);
+      const incomingTs = parseTimestamp(hb.lastHeartbeat || hb.receivedAt || hb.sentAt);
+      const currentTs = getKnownTimestamp(canonicalDeviceId);
+
+      // Chống sự kiện cũ hoặc sự kiện không có timestamp khi đã có timestamp hợp lệ
+      if (shouldDropIncoming(currentTs, incomingTs)) {
+        return;
+      }
+      if (incomingTs > 0) {
+        updateKnownTimestamp(canonicalDeviceId, incomingTs);
+      }
+
+      const resolvedUptime = typeof hb.uptimeSeconds === 'number'
+        ? hb.uptimeSeconds
+        : typeof hb.uptime === 'number'
+        ? hb.uptime
+        : undefined;
+
+      setDevices((prev) => {
+        const index = prev.findIndex(
+          (d) =>
+            normalizeDeviceId(d.deviceId) === canonicalDeviceId ||
+            (canonicalDeviceId === CANONICAL_PI_DEVICE_ID && isRaspberryPiDevice(d.deviceId, d.deviceType))
+        );
+        if (index >= 0) {
+          const current = prev[index];
+          const next = [...prev];
+          next[index] = {
+            ...current,
+            deviceId: canonicalDeviceId,
+            status: hb.status || current.status,
+            lastHeartbeat: hb.lastHeartbeat || current.lastHeartbeat,
+            lastSeen: hb.lastHeartbeat || current.lastSeen,
+            uptime: resolvedUptime !== undefined ? resolvedUptime : current.uptime
+          };
+          return next;
+        }
+        return prev;
+      });
+
+      setSelectedDevice((curr) => {
+        if (
+          curr &&
+          (normalizeDeviceId(curr.deviceId) === canonicalDeviceId ||
+            (canonicalDeviceId === CANONICAL_PI_DEVICE_ID && isRaspberryPiDevice(curr.deviceId, curr.deviceType)))
+        ) {
+          return {
+            ...curr,
+            deviceId: canonicalDeviceId,
+            status: hb.status || curr.status,
+            lastHeartbeat: hb.lastHeartbeat || curr.lastHeartbeat,
+            uptime: resolvedUptime !== undefined ? resolvedUptime : curr.uptime
+          };
+        }
+        return curr;
+      });
+
+      setDeviceDetail((curr) => {
+        if (
+          curr &&
+          (normalizeDeviceId(curr.deviceId) === canonicalDeviceId ||
+            (canonicalDeviceId === CANONICAL_PI_DEVICE_ID && isRaspberryPiDevice(curr.deviceId, curr.deviceType)))
+        ) {
+          return {
+            ...curr,
+            deviceId: canonicalDeviceId,
+            status: hb.status || curr.status,
+            lastHeartbeat: hb.lastHeartbeat || curr.lastHeartbeat,
+            uptime: resolvedUptime !== undefined ? resolvedUptime : curr.uptime
+          };
+        }
+        return curr;
+      });
+    };
+
     socket.on('device:status', onDeviceStatus);
+    socket.on('device:heartbeat', onDeviceHeartbeat);
 
     return () => {
       socket.off('device:status', onDeviceStatus);
+      socket.off('device:heartbeat', onDeviceHeartbeat);
     };
-  }, [socket]);
+  }, [socket, getKnownTimestamp, updateKnownTimestamp]);
 
   // Open detail modal and fetch health endpoint
   const openDetail = async (device: DeviceItem) => {
+    const canonicalDeviceId = normalizeDeviceId(device.deviceId);
     setDetailClosing(false);
-    setSelectedDevice(device);
+    setSelectedDevice({ ...device, deviceId: canonicalDeviceId });
     setDetailLoading(true);
     setDeviceDetail(null);
     try {
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      const res = await fetch(`${apiUrl}/api/devices/${device.deviceId}/health`, { headers });
+      const res = await fetch(`${apiUrl}/api/devices/${canonicalDeviceId}/health`, { headers });
       if (res.ok) {
         const data = await res.json();
-        setDeviceDetail(data);
+        const detailCanonicalId = normalizeDeviceId(data.deviceId);
+        const detailTs = parseTimestamp(data.lastHeartbeat || data.lastSeen);
+        const currentTs = getKnownTimestamp(detailCanonicalId);
+        if (!shouldDropIncoming(currentTs, detailTs)) {
+          if (detailTs > 0) updateKnownTimestamp(detailCanonicalId, detailTs);
+          setDeviceDetail({
+            ...data,
+            deviceId: detailCanonicalId
+          });
+        }
       } else {
         setDeviceDetail({
-          deviceId: device.deviceId,
+          deviceId: canonicalDeviceId,
           deviceName: device.deviceName,
           deviceType: device.deviceType,
           status: device.status,
@@ -197,7 +456,7 @@ export function DeviceListPage() {
       }
     } catch {
       setDeviceDetail({
-        deviceId: device.deviceId,
+        deviceId: canonicalDeviceId,
         deviceName: device.deviceName,
         deviceType: device.deviceType,
         status: device.status,
@@ -303,9 +562,9 @@ export function DeviceListPage() {
 
       <div className="section-sub-heading" style={{ margin: '20px 0 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h3 style={{ margin: 0, fontSize: '15px', color: '#456257', textTransform: 'uppercase', letterSpacing: '0.6px', fontWeight: 700 }}>
-          Cảm biến & Thiết bị mô phỏng (Demo Simulation)
+          {systemMode === 'production' ? 'Danh sách thiết bị & Cảm biến ngoại vi (IoT Peripherals)' : 'Cảm biến & Thiết bị mô phỏng (Demo Simulation)'}
         </h3>
-        <span style={{ fontSize: '12px', color: '#718078' }}>Dữ liệu sinh tự động cho chế độ demo</span>
+        <span style={{ fontSize: '12px', color: '#718078' }}>{systemMode === 'production' ? 'Dữ liệu thiết bị đăng ký trong hệ thống' : 'Dữ liệu sinh tự động cho chế độ demo'}</span>
       </div>
 
       {/* Summary KPI Grid */}

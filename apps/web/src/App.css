@@ -1466,6 +1466,7 @@ button:disabled { cursor: not-allowed; }
   border: 1px solid #a7f3d0;
 }
 
+.badge-real-warning,
 .badge-real-stale {
   background: #fffbeb;
   color: #92400e;

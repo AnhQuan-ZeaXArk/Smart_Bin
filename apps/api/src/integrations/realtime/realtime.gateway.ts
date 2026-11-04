@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { DeviceType } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
+import { CANONICAL_DEVICE_ID, normalizeDeviceId } from '../../config/device-id.config.js';
 import { realDeviceService } from '../../demo/real-device.service.js';
 import { deviceHealthService } from '../../services/device-health.service.js';
 import {
@@ -20,7 +21,7 @@ export type TelemetryEvent = RealtimeTelemetryPayload;
 const tokenSchema = z.object({ sub: z.string().min(1) });
 
 const deviceTelemetryInputSchema = z.object({
-  deviceId: z.string().min(1).default('raspberry-pi-5'),
+  deviceId: z.string().min(1).default(CANONICAL_DEVICE_ID),
   deviceName: z.string().optional(),
   deviceType: z.string().optional(),
   status: z.string().optional().default('ONLINE'),
@@ -38,7 +39,7 @@ const deviceTelemetryInputSchema = z.object({
 
 const deviceCommandAckInputSchema = z.object({
   commandId: z.string().min(1),
-  deviceId: z.string().min(1).default('raspberry-pi-5'),
+  deviceId: z.string().min(1).default(CANONICAL_DEVICE_ID),
   action: z.string().min(1),
   status: z.enum(['RECEIVED', 'COMPLETED', 'FAILED']),
   message: z.string().optional(),
@@ -88,9 +89,10 @@ export class RealtimeGateway {
           return next(new Error('Device authentication failed: Invalid or missing device token'));
         }
 
-        const deviceId = typeof auth.deviceId === 'string' && auth.deviceId.trim()
+        const rawDeviceId = typeof auth.deviceId === 'string' && auth.deviceId.trim()
           ? auth.deviceId.trim()
-          : 'raspberry-pi-5';
+          : CANONICAL_DEVICE_ID;
+        const deviceId = normalizeDeviceId(rawDeviceId);
 
         socket.data = {
           isDevice: true,
@@ -134,15 +136,6 @@ export class RealtimeGateway {
           deviceId
         });
 
-        // Cập nhật DeviceHealthService khi Pi kết nối Socket
-        void deviceHealthService.processHeartbeat({
-          deviceId,
-          deviceName: 'Raspberry Pi 5 Gateway',
-          deviceType: DeviceType.RASPBERRY_PI
-        }).catch((err) => {
-          console.error(`[RealtimeGateway] Error recording initial connection for ${deviceId}:`, err);
-        });
-
         // Nhận gói tin telemetry liên tục từ Pi 5 qua Socket.IO
         socket.on(REALTIME_EVENTS.DEVICE_TELEMETRY, (payload: unknown) => {
           try {
@@ -153,12 +146,18 @@ export class RealtimeGateway {
               return;
             }
 
+            const normalizedDeviceId = normalizeDeviceId(parsed.data.deviceId);
+            const normalizedData = {
+              ...parsed.data,
+              deviceId: normalizedDeviceId
+            };
+
             // 1. Cập nhật RealDeviceService trong RAM và phát Socket.IO 'device:heartbeat' (0ms cho RealDeviceCard)
-            realDeviceService.recordHeartbeat(parsed.data, this.io);
+            realDeviceService.recordHeartbeat(normalizedData, this.io);
 
             // 2. Chuyển tiếp tới DeviceHealthService để xử lý heartbeat thống nhất (throttling 15s + PostgreSQL)
             void deviceHealthService.processHeartbeat({
-              deviceId: parsed.data.deviceId,
+              deviceId: normalizedDeviceId,
               deviceName: parsed.data.deviceName,
               deviceType: DeviceType.RASPBERRY_PI,
               uptimeSeconds: parsed.data.uptimeSeconds,
@@ -169,7 +168,7 @@ export class RealtimeGateway {
               sensors: parsed.data.sensors,
               metadata: parsed.data.metadata
             }).catch((err) => {
-              console.error(`[RealtimeGateway] Error processing heartbeat in DeviceHealthService for ${deviceId}:`, err);
+              console.error(`[RealtimeGateway] Error processing heartbeat in DeviceHealthService for ${normalizedDeviceId}:`, err);
             });
           } catch (err) {
             console.error('[RealtimeGateway] Error processing device:telemetry:', err);
@@ -218,7 +217,11 @@ export class RealtimeGateway {
   }
 
   emitDeviceStatus(device: DeviceStatusPayload): void {
-    this.io.emit(REALTIME_EVENTS.DEVICE_STATUS, device);
+    const normalized = {
+      ...device,
+      deviceId: normalizeDeviceId(device.deviceId)
+    };
+    this.io.emit(REALTIME_EVENTS.DEVICE_STATUS, normalized);
   }
 
   emitAlert(event: RealtimeAlertPayload): void {

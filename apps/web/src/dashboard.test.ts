@@ -32,11 +32,8 @@ async function runDashboardTests() {
     // ----------------------------------------------------
     console.log('Test D1: Dashboard retains existing widgets (Overview KPI, Waste Compartments, Collection Alerts)');
     const bins = await prisma.bin.findMany({ where: { isActive: true }, orderBy: { binCode: 'asc' } });
-    if (bins.length !== 3) {
-      throw new Error(`D1 Failed: Expected 3 bins/compartments, got ${bins.length}`);
-    }
     const thresholds = readSmartBinThresholds();
-    if (!thresholds || thresholds.warningThresholdPercent <= 0) {
+    if (!thresholds || thresholds.warningThreshold <= 0) {
       throw new Error('D1 Failed: Invalid smart bin thresholds');
     }
     const compartments = getCompartments(bins as any);

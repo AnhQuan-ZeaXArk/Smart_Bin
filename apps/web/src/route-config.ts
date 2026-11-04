@@ -9,5 +9,6 @@ export const appRoutes: AppRoute[] = [
   { path: '/sensor-history', label: 'Lịch sử cảm biến', roles: ['ADMIN', 'SUPERVISOR', 'WORKER'] },
   { path: '/collections', label: 'Lịch sử thu gom', roles: ['ADMIN', 'SUPERVISOR', 'WORKER'] },
   { path: '/alerts', label: 'Cảnh báo', roles: ['ADMIN', 'SUPERVISOR', 'WORKER'] },
-  { path: '/settings', label: 'Cài đặt', roles: ['ADMIN', 'SUPERVISOR', 'WORKER'] }
+  { path: '/settings', label: 'Cài đặt', roles: ['ADMIN', 'SUPERVISOR', 'WORKER'] },
+  { path: '/users', label: 'Người dùng', roles: ['ADMIN'] }
 ];

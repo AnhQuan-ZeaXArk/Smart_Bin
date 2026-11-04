@@ -10,6 +10,7 @@ import {
   type DemoSensorReading,
   type DemoCollectionRecord
 } from './demo-data.js';
+import { normalizeDeviceId, CANONICAL_DEVICE_ID } from '../config/device-id.config.js';
 
 export interface BinQueryFilters {
   search?: string;
@@ -62,8 +63,12 @@ export class DemoService {
   }
 
   getDeviceById(idOrDeviceId: string): DemoDevice | null {
+    const normalizedTarget = normalizeDeviceId(idOrDeviceId);
     const found = DEMO_DEVICES.find(
-      (d) => d.id === idOrDeviceId || d.deviceId === idOrDeviceId
+      (d) =>
+        d.id === idOrDeviceId ||
+        d.deviceId === idOrDeviceId ||
+        (normalizedTarget === CANONICAL_DEVICE_ID && d.deviceId === CANONICAL_DEVICE_ID)
     );
     return found ?? null;
   }

@@ -48,6 +48,64 @@ export const STATUS_LABELS: Record<DeviceStatusEnum, string> = {
   OFFLINE: 'Mất kết nối'
 };
 
+export const CANONICAL_PI_DEVICE_ID = 'raspberry-pi-5';
+export const LEGACY_PI_DEVICE_ID = 'raspberry-pi-01';
+
+/**
+ * Chuẩn hóa Device ID về ID canonical ('raspberry-pi-5').
+ * Nếu ID là 'raspberry-pi-01' hoặc 'raspberry-pi-5', luôn trả về 'raspberry-pi-5'.
+ * Các thiết bị khác ('ultrasonic-01', 'camera-01', 'mqtt-broker-01', ...) được giữ nguyên.
+ */
+export function normalizeDeviceId(deviceId: string | null | undefined): string {
+  if (!deviceId) return '';
+  const trimmed = deviceId.trim();
+  if (trimmed === LEGACY_PI_DEVICE_ID || trimmed === CANONICAL_PI_DEVICE_ID) {
+    return CANONICAL_PI_DEVICE_ID;
+  }
+  return trimmed;
+}
+
+/**
+ * Kiểm tra xem một Device ID hoặc type có thuộc về thiết bị cổng Raspberry Pi 5 hay không.
+ */
+export function isRaspberryPiDevice(deviceId: string | null | undefined, deviceType?: string | null): boolean {
+  if (deviceType === 'RASPBERRY_PI') return true;
+  if (!deviceId) return false;
+  return normalizeDeviceId(deviceId) === CANONICAL_PI_DEVICE_ID;
+}
+
+export function parseTimestamp(value: string | Date | null | undefined): number {
+  if (!value) return 0;
+  try {
+    const d = typeof value === 'string' ? new Date(value) : value;
+    const time = d.getTime();
+    return isNaN(time) ? 0 : time;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Timestamp guard quyết định xem một gói tin mới (từ Socket hoặc REST) có bị loại bỏ hay không.
+ *
+ * Quy tắc:
+ * 1. Nếu state hiện tại chưa có timestamp hợp lệ (currentTs <= 0):
+ *    -> Tiếp nhận gói tin đầu tiên (dù có hay không có timestamp) để khởi tạo giao diện.
+ * 2. Nếu state hiện tại đã có timestamp hợp lệ (currentTs > 0):
+ *    -> Nếu gói tin mới không có timestamp hợp lệ (incomingTs <= 0): BỎ QUA (không cho phép ghi đè dữ liệu mới hơn).
+ *    -> Nếu gói tin mới có timestamp nhỏ hơn timestamp hiện tại (incomingTs < currentTs): BỎ QUA (sự kiện trễ đến muộn).
+ *    -> Nếu incomingTs >= currentTs: TIẾP NHẬN.
+ */
+export function shouldDropIncoming(currentTs: number, incomingTs: number): boolean {
+  if (currentTs <= 0) {
+    return false;
+  }
+  if (incomingTs <= 0 || incomingTs < currentTs) {
+    return true;
+  }
+  return false;
+}
+
 export function formatDateTime(value: string | Date | null | undefined): string {
   if (!value) return 'Chưa có dữ liệu';
   try {

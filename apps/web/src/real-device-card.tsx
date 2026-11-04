@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useRealtime } from './realtime-store';
+import { useAuth } from './auth-context';
 import { apiUrl } from './api-config';
 import {
   IconCpu,
@@ -11,7 +12,15 @@ import {
   IconRadio,
   IconActivity
 } from './icons';
-import { formatDateTime, formatUptime } from './device-utils';
+import {
+  type DeviceStatusEnum,
+  formatDateTime,
+  formatUptime,
+  parseTimestamp,
+  shouldDropIncoming,
+  CANONICAL_PI_DEVICE_ID,
+  isRaspberryPiDevice
+} from './device-utils';
 
 export interface DeviceSensorsData {
   distanceCm?: number | null;
@@ -23,7 +32,7 @@ export interface RealDeviceData {
   deviceName: string;
   deviceType: string;
   isReal: boolean;
-  status: 'ONLINE' | 'STALE' | 'OFFLINE';
+  status: DeviceStatusEnum;
   uptimeSeconds: number | null;
   cpuTempC: number | null;
   lastHeartbeat: string | null;
@@ -31,12 +40,16 @@ export interface RealDeviceData {
   sentAt: string | null;
   heartbeatCount: number;
   ageSeconds: number | null;
+  firmwareVersion?: string | null;
+  ipAddress?: string | null;
   isSocketConnected?: boolean;
   sensors?: DeviceSensorsData | null;
   metadata?: {
-    staleThresholdSeconds: number;
-    offlineThresholdSeconds: number;
-    platform: string;
+    onlineThresholdSeconds?: number;
+    warningThresholdSeconds?: number;
+    offlineThresholdSeconds?: number;
+    staleThresholdSeconds?: number;
+    platform?: string;
   };
 }
 
@@ -59,6 +72,8 @@ interface RealDeviceCardProps {
 
 export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCardProps) {
   const { socket, connected: realtimeConnected } = useRealtime();
+  const { token, user, systemMode } = useAuth();
+  const isWorker = systemMode !== 'demo' && user?.role === 'WORKER';
   const [data, setData] = useState<RealDeviceData | null>(null);
   const [receivedAtLocalMs, setReceivedAtLocalMs] = useState<number>(() => Date.now());
   const [loading, setLoading] = useState(true);
@@ -67,6 +82,9 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
   const [pulse, setPulse] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+
+  // Timestamp guard using ref to avoid unsafe state updater side-effects
+  const latestHeartbeatTsRef = useRef<number>(0);
 
   // Trạng thái thực thi lệnh điều khiển hai chiều
   const [commandState, setCommandState] = useState<CommandExecutionState>({
@@ -100,11 +118,45 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
         return res.json();
       })
       .then((json) => {
-        if (active && json.success && json.data) {
-          setData(json.data);
-          setReceivedAtLocalMs(Date.now());
-          setError(null);
+        if (!active || !json.success || !json.data) return;
+        const restTs = parseTimestamp(json.data.lastHeartbeat || json.data.receivedAt);
+        const currentTs = latestHeartbeatTsRef.current;
+
+        // Xử lý REST Race Condition: Nếu Socket đã nhận dữ liệu mới hơn, bỏ qua REST data cũ
+        if (shouldDropIncoming(currentTs, restTs)) {
+          return;
         }
+
+        if (restTs > 0) {
+          latestHeartbeatTsRef.current = Math.max(currentTs, restTs);
+        }
+
+        setData((prev) => {
+          if (!prev) return json.data;
+          const newUptime = typeof json.data.uptimeSeconds === 'number'
+            ? json.data.uptimeSeconds
+            : typeof (json.data as any).uptime === 'number'
+            ? (json.data as any).uptime
+            : prev.uptimeSeconds;
+          const newCpu = typeof json.data.cpuTempC === 'number'
+            ? json.data.cpuTempC
+            : prev.cpuTempC;
+          const newSensors = json.data.sensors !== undefined && json.data.sensors !== null
+            ? json.data.sensors
+            : prev.sensors;
+
+          return {
+            ...prev,
+            ...json.data,
+            uptimeSeconds: newUptime,
+            cpuTempC: newCpu,
+            sensors: newSensors,
+            firmwareVersion: json.data.firmwareVersion ?? prev.firmwareVersion,
+            ipAddress: json.data.ipAddress ?? prev.ipAddress
+          };
+        });
+        setReceivedAtLocalMs(Date.now());
+        setError(null);
       })
       .catch((err) => {
         if (active) setError(err instanceof Error ? err.message : 'Lỗi kết nối API thiết bị');
@@ -136,11 +188,45 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
         return res.json();
       })
       .then((json) => {
-        if (json.success && json.data) {
-          setData(json.data);
-          setReceivedAtLocalMs(Date.now());
-          setError(null);
+        if (!json.success || !json.data) return;
+        const restTs = parseTimestamp(json.data.lastHeartbeat || json.data.receivedAt);
+        const currentTs = latestHeartbeatTsRef.current;
+
+        // Xử lý REST Race Condition: Nếu Socket đã nhận dữ liệu mới hơn, bỏ qua REST data cũ
+        if (shouldDropIncoming(currentTs, restTs)) {
+          return;
         }
+
+        if (restTs > 0) {
+          latestHeartbeatTsRef.current = Math.max(currentTs, restTs);
+        }
+
+        setData((prev) => {
+          if (!prev) return json.data;
+          const newUptime = typeof json.data.uptimeSeconds === 'number'
+            ? json.data.uptimeSeconds
+            : typeof (json.data as any).uptime === 'number'
+            ? (json.data as any).uptime
+            : prev.uptimeSeconds;
+          const newCpu = typeof json.data.cpuTempC === 'number'
+            ? json.data.cpuTempC
+            : prev.cpuTempC;
+          const newSensors = json.data.sensors !== undefined && json.data.sensors !== null
+            ? json.data.sensors
+            : prev.sensors;
+
+          return {
+            ...prev,
+            ...json.data,
+            uptimeSeconds: newUptime,
+            cpuTempC: newCpu,
+            sensors: newSensors,
+            firmwareVersion: json.data.firmwareVersion ?? prev.firmwareVersion,
+            ipAddress: json.data.ipAddress ?? prev.ipAddress
+          };
+        });
+        setReceivedAtLocalMs(Date.now());
+        setError(null);
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : 'Lỗi kết nối API thiết bị');
@@ -155,7 +241,45 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
     if (!socket) return;
 
     const handleHeartbeat = (payload: RealDeviceData) => {
-      setData(payload);
+      if (!payload) return;
+      if (!isRaspberryPiDevice(payload.deviceId, (payload as any).deviceType)) return;
+      const incomingTs = parseTimestamp(payload.lastHeartbeat || payload.receivedAt || payload.sentAt);
+      const currentTs = latestHeartbeatTsRef.current;
+
+      // Chống sự kiện cũ hoặc sự kiện không có timestamp khi đã có timestamp hợp lệ
+      if (shouldDropIncoming(currentTs, incomingTs)) {
+        return;
+      }
+      if (incomingTs > 0) {
+        latestHeartbeatTsRef.current = Math.max(currentTs, incomingTs);
+      }
+
+      setData((prev) => {
+        if (!prev) return { ...payload, deviceId: CANONICAL_PI_DEVICE_ID };
+        const newUptime = typeof payload.uptimeSeconds === 'number'
+          ? payload.uptimeSeconds
+          : typeof (payload as any).uptime === 'number'
+          ? (payload as any).uptime
+          : prev.uptimeSeconds;
+        const newCpu = typeof payload.cpuTempC === 'number'
+          ? payload.cpuTempC
+          : prev.cpuTempC;
+        const newSensors = payload.sensors !== undefined && payload.sensors !== null
+          ? payload.sensors
+          : prev.sensors;
+
+        return {
+          ...prev,
+          ...payload,
+          deviceId: CANONICAL_PI_DEVICE_ID,
+          uptimeSeconds: newUptime,
+          cpuTempC: newCpu,
+          sensors: newSensors,
+          firmwareVersion: payload.firmwareVersion ?? prev.firmwareVersion,
+          ipAddress: payload.ipAddress ?? prev.ipAddress
+        };
+      });
+
       setReceivedAtLocalMs(Date.now());
       setError(null);
       // Trigger heartbeat animation pulse
@@ -184,41 +308,71 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
       handleManualRefresh();
     };
 
+    const handleDeviceStatus = (payload: any) => {
+      if (!payload) return;
+      if (!isRaspberryPiDevice(payload.deviceId, payload.deviceType)) return;
+
+      const incomingTs = parseTimestamp(payload.lastHeartbeat || payload.lastSeen);
+      const currentTs = latestHeartbeatTsRef.current;
+
+      // Chống sự kiện cũ hoặc sự kiện không có timestamp khi đã có timestamp hợp lệ
+      if (shouldDropIncoming(currentTs, incomingTs)) {
+        return;
+      }
+      if (incomingTs > 0) {
+        latestHeartbeatTsRef.current = Math.max(currentTs, incomingTs);
+      }
+
+      setData((prev) => {
+        if (!prev) return prev;
+        const newUptime = typeof payload.uptimeSeconds === 'number'
+          ? payload.uptimeSeconds
+          : typeof payload.uptime === 'number'
+          ? payload.uptime
+          : prev.uptimeSeconds;
+        return {
+          ...prev,
+          deviceId: CANONICAL_PI_DEVICE_ID,
+          status: payload.status || prev.status,
+          lastHeartbeat: payload.lastHeartbeat || prev.lastHeartbeat,
+          uptimeSeconds: newUptime,
+          firmwareVersion: payload.firmwareVersion || prev.firmwareVersion,
+          ipAddress: payload.ipAddress || prev.ipAddress
+        };
+      });
+    };
+
     socket.on('device:heartbeat', handleHeartbeat);
+    socket.on('device:status', handleDeviceStatus);
     socket.on('device:command:status', handleCommandStatus);
     socket.on('connect', handleReconnect);
 
     return () => {
       socket.off('device:heartbeat', handleHeartbeat);
+      socket.off('device:status', handleDeviceStatus);
       socket.off('device:command:status', handleCommandStatus);
       socket.off('connect', handleReconnect);
     };
   }, [socket, handleManualRefresh]);
 
-  // Calculate live age and real status eliminating client-server clock skew
+  // Tính thời gian đã trôi qua từ lần heartbeat gần nhất (để hiển thị Last Heartbeat Age)
+  // Backend là nguồn trạng thái chuẩn duy nhất (data.status: ONLINE / WARNING / OFFLINE)
   const { liveAgeSeconds, liveStatus } = useMemo(() => {
     if (!data || !data.lastHeartbeat || data.heartbeatCount === 0) {
-      return { liveAgeSeconds: null, liveStatus: 'OFFLINE' as const };
+      return { liveAgeSeconds: null, liveStatus: 'OFFLINE' as DeviceStatusEnum };
     }
 
-    // Elapsed seconds on client browser since this telemetry packet arrived
+    // Elapsed seconds trên trình duyệt kể từ gói telemetry gần nhất
     const elapsedSinceReceive = Math.max(0, Math.floor((now - receivedAtLocalMs) / 1000));
 
-    // Base age reported by server at delivery time + client elapsed seconds
+    // Base age do Backend báo cáo tại thời điểm nhận + elapsed seconds trên client
     const serverBaseAge = typeof data.ageSeconds === 'number' && !isNaN(data.ageSeconds) ? data.ageSeconds : 0;
     const effectiveAge = serverBaseAge + elapsedSinceReceive;
 
-    const staleLimit = data.metadata?.staleThresholdSeconds ?? 45;
-    const offlineLimit = data.metadata?.offlineThresholdSeconds ?? 90;
+    // Sử dụng trực tiếp status do Backend cung cấp, không tự tính lại bằng timeout trên Frontend
+    const currentStatus: DeviceStatusEnum = data.status || 'OFFLINE';
 
-    let computedStatus: 'ONLINE' | 'STALE' | 'OFFLINE' = 'ONLINE';
-    if (effectiveAge >= offlineLimit) {
-      computedStatus = 'OFFLINE';
-    } else if (effectiveAge >= staleLimit) {
-      computedStatus = 'STALE';
-    }
-
-    return { liveAgeSeconds: effectiveAge, liveStatus: computedStatus };
+    return { liveAgeSeconds: effectiveAge, liveStatus: currentStatus };
   }, [data, receivedAtLocalMs, now]);
 
   function renderAgeText(seconds: number | null) {
@@ -236,6 +390,16 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
   const handleSendPing = async () => {
     if (liveStatus === 'OFFLINE' || commandState.status === 'PENDING') return;
 
+    if (isWorker) {
+      setCommandState({
+        status: 'FAILED',
+        action: 'PING',
+        message: 'Từ chối quyền (403): Chỉ Quản trị viên và Giám sát viên mới có quyền gửi lệnh tới thiết bị.',
+        updatedAt: Date.now()
+      });
+      return;
+    }
+
     setCommandState({
       status: 'PENDING',
       action: 'PING',
@@ -244,23 +408,34 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
     });
 
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const res = await fetch(`${apiUrl}/api/demo/device-command`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers,
         body: JSON.stringify({
-          deviceId: data?.deviceId || 'raspberry-pi-5',
+          deviceId: CANONICAL_PI_DEVICE_ID,
           action: 'PING'
         })
       });
 
       const json = await res.json();
       if (!res.ok) {
+        let msg = json.message || 'Lệnh PING thất bại';
+        if (res.status === 401) {
+          msg = 'Phiên làm việc hết hạn hoặc chưa đăng nhập (401). Vui lòng đăng nhập lại.';
+        } else if (res.status === 403) {
+          msg = 'Từ chối quyền (403): Chỉ Quản trị viên và Giám sát viên mới có quyền gửi lệnh.';
+        }
         setCommandState({
           status: json.error === 'COMMAND_TIMEOUT' ? 'TIMEOUT' : 'FAILED',
           action: 'PING',
-          message: json.message || 'Lệnh PING thất bại',
+          message: msg,
           error: json.error,
           updatedAt: Date.now()
         });
@@ -290,6 +465,16 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
   const handleTriggerUltrasonic = async () => {
     if (liveStatus === 'OFFLINE' || commandState.status === 'PENDING') return;
 
+    if (isWorker) {
+      setCommandState({
+        status: 'FAILED',
+        action: 'TRIGGER_ULTRASONIC',
+        message: 'Từ chối quyền (403): Chỉ Quản trị viên và Giám sát viên mới có quyền gửi lệnh tới thiết bị.',
+        updatedAt: Date.now()
+      });
+      return;
+    }
+
     setCommandState({
       status: 'PENDING',
       action: 'TRIGGER_ULTRASONIC',
@@ -298,23 +483,34 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
     });
 
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const res = await fetch(`${apiUrl}/api/demo/device-command`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers,
         body: JSON.stringify({
-          deviceId: data?.deviceId || 'raspberry-pi-5',
+          deviceId: CANONICAL_PI_DEVICE_ID,
           action: 'TRIGGER_ULTRASONIC'
         })
       });
 
       const json = await res.json();
       if (!res.ok) {
+        let msg = json.message || 'Cảm biến chưa sẵn sàng hoặc chưa kết nối chân GPIO vật lý.';
+        if (res.status === 401) {
+          msg = 'Phiên làm việc hết hạn hoặc chưa đăng nhập (401). Vui lòng đăng nhập lại.';
+        } else if (res.status === 403) {
+          msg = 'Từ chối quyền (403): Chỉ Quản trị viên và Giám sát viên mới có quyền gửi lệnh.';
+        }
         setCommandState({
           status: json.error === 'COMMAND_TIMEOUT' ? 'TIMEOUT' : 'FAILED',
           action: 'TRIGGER_ULTRASONIC',
-          message: json.message || 'Cảm biến chưa sẵn sàng hoặc chưa kết nối chân GPIO vật lý.',
+          message: msg,
           error: json.error,
           updatedAt: Date.now()
         });
@@ -344,20 +540,20 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
         return (
           <span className="badge-real-device badge-real-online">
             <span className="live-ping-dot" />
-            <IconCheckCircle /> ONLINE (Hoạt động)
+            <IconCheckCircle /> ONLINE (Đang hoạt động)
           </span>
         );
-      case 'STALE':
+      case 'WARNING':
         return (
-          <span className="badge-real-device badge-real-stale">
-            <IconAlertTriangle /> STALE (&gt;45s chưa có nhịp)
+          <span className="badge-real-device badge-real-warning">
+            <IconAlertTriangle /> WARNING (Cần kiểm tra)
           </span>
         );
       case 'OFFLINE':
       default:
         return (
           <span className="badge-real-device badge-real-offline">
-            <IconXCircle /> OFFLINE (Chưa kết nối)
+            <IconXCircle /> OFFLINE (Mất kết nối)
           </span>
         );
     }
@@ -435,9 +631,9 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
                 <span className="metric-hint">
                   {liveStatus === 'ONLINE'
                     ? 'Nhận nhịp tín hiệu đều đặn từ Pi 5'
-                    : liveStatus === 'STALE'
-                    ? 'Tín hiệu bị trễ (> 45 giây)'
-                    : 'Chưa phát hiện nhịp tín hiệu gần đây'}
+                    : liveStatus === 'WARNING'
+                    ? 'Tín hiệu bị trễ (quá ngưỡng 15 giây)'
+                    : 'Chưa phát hiện nhịp tín hiệu gần đây (> 30 giây)'}
                 </span>
               </div>
 
@@ -561,8 +757,8 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
                   type="button"
                   className={`button-control-action button-ping ${commandState.status === 'PENDING' && commandState.action === 'PING' ? 'is-loading' : ''}`}
                   onClick={handleSendPing}
-                  disabled={liveStatus === 'OFFLINE' || commandState.status === 'PENDING'}
-                  title={liveStatus === 'OFFLINE' ? 'Không thể PING khi Pi đang OFFLINE' : 'Gửi lệnh PING kiểm tra kết nối hai chiều tới Pi 5'}
+                  disabled={liveStatus === 'OFFLINE' || commandState.status === 'PENDING' || isWorker}
+                  title={isWorker ? 'Yêu cầu quyền Quản trị viên hoặc Giám sát viên' : liveStatus === 'OFFLINE' ? 'Không thể PING khi Pi đang OFFLINE' : 'Gửi lệnh PING kiểm tra kết nối hai chiều tới Pi 5'}
                 >
                   {commandState.status === 'PENDING' && commandState.action === 'PING' ? (
                     <>
@@ -582,8 +778,8 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
                   type="button"
                   className={`button-control-action button-ultrasonic ${commandState.status === 'PENDING' && commandState.action === 'TRIGGER_ULTRASONIC' ? 'is-loading' : ''}`}
                   onClick={handleTriggerUltrasonic}
-                  disabled={liveStatus === 'OFFLINE' || commandState.status === 'PENDING'}
-                  title={liveStatus === 'OFFLINE' ? 'Không thể đo khi Pi đang OFFLINE' : 'Yêu cầu Pi 5 kích hoạt đọc cảm biến siêu âm'}
+                  disabled={liveStatus === 'OFFLINE' || commandState.status === 'PENDING' || isWorker}
+                  title={isWorker ? 'Yêu cầu quyền Quản trị viên hoặc Giám sát viên' : liveStatus === 'OFFLINE' ? 'Không thể đo khi Pi đang OFFLINE' : 'Yêu cầu Pi 5 kích hoạt đọc cảm biến siêu âm'}
                 >
                   {commandState.status === 'PENDING' && commandState.action === 'TRIGGER_ULTRASONIC' ? (
                     <>

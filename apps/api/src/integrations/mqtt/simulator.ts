@@ -46,7 +46,7 @@ function publishCycle(): void {
     {
       topic: mqttTopics.systemHeartbeat,
       payload: {
-        deviceId: 'raspberry-pi-01',
+        deviceId: 'raspberry-pi-5',
         deviceName: 'Raspberry Pi 5 Gateway',
         deviceType: 'RASPBERRY_PI',
         status: 'ONLINE',

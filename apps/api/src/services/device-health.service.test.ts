@@ -38,7 +38,8 @@ async function runTests() {
   const updated = await service.recordHeartbeat({
     deviceId: testDeviceId,
     uptime: 125,
-    timestamp: later.toISOString()
+    timestamp: later.toISOString(),
+    receiveTimeOverride: later
   });
 
   if (updated.lastSeen.getTime() !== later.getTime() || updated.uptime !== 125) {
@@ -55,9 +56,11 @@ async function runTests() {
   }
 
   // Update DB device to 20s ago and evaluate
+  const a3State = service.getHeartbeatState(testDeviceId);
+  if (a3State) a3State.lastHeartbeatTime = warningTime;
   await prisma.deviceStatus.update({
     where: { deviceId: testDeviceId },
-    data: { lastSeen: warningTime, status: DeviceStatusEnum.ONLINE }
+    data: { lastSeen: warningTime, lastHeartbeat: warningTime, status: DeviceStatusEnum.ONLINE }
   });
   await service.evaluateAllDevices();
   const warningDevice = await prisma.deviceStatus.findUniqueOrThrow({ where: { deviceId: testDeviceId } });
@@ -75,9 +78,11 @@ async function runTests() {
   }
 
   // Update DB device to 35s ago and evaluate
+  const a4State = service.getHeartbeatState(testDeviceId);
+  if (a4State) a4State.lastHeartbeatTime = offlineTime;
   await prisma.deviceStatus.update({
     where: { deviceId: testDeviceId },
-    data: { lastSeen: offlineTime }
+    data: { lastSeen: offlineTime, lastHeartbeat: offlineTime }
   });
   await service.evaluateAllDevices();
   const offlineDevice = await prisma.deviceStatus.findUniqueOrThrow({ where: { deviceId: testDeviceId } });

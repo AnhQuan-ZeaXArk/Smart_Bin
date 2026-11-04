@@ -3,8 +3,11 @@ import { env } from '../config/env.js';
 
 function createPrismaClient(): PrismaClient {
   if (env.isDemoMode) {
-    return new Proxy({}, {
-      get: (_target, prop) => {
+    return new Proxy({} as any, {
+      get: (target, prop) => {
+        if (prop in target) {
+          return (target as any)[prop];
+        }
         if (prop === '$connect' || prop === '$disconnect') {
           return async () => {};
         }

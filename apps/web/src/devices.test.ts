@@ -106,7 +106,7 @@ async function runFrontendTests() {
       });
     });
 
-    if (receivedPayload.deviceId !== 'raspberry-pi-01' || receivedPayload.uptime !== 9999) {
+    if (receivedPayload.deviceId !== 'raspberry-pi-5' || receivedPayload.uptime !== 9999) {
       throw new Error(`F5 Failed: Payload mismatch: ${JSON.stringify(receivedPayload)}`);
     }
     console.log('  -> PASS: Client received device:status with updated fields\n');
