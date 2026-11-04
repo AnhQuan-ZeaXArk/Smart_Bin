@@ -1,8 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { requireAuth, requireRole } from '../middleware/auth.js';
-import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { getFillCategory } from './bin.routes.js';
 
 import { env } from '../config/env.js';
@@ -12,7 +10,7 @@ const router = Router();
 const dateQuery = z.string().datetime({ offset: true }).optional();
 const historyQuery = z.object({ binCode: z.string().optional(), from: dateQuery, to: dateQuery, fillMin: z.coerce.number().min(0).max(100).optional(), fillMax: z.coerce.number().min(0).max(100).optional() });
 
-router.get('/summary', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async (_request: AuthenticatedRequest, response, next) => {
+router.get('/summary', async (_request, response, next) => {
   try {
     if (env.isDemoMode) {
       return response.json(demoService.getDashboardSummary());
@@ -44,7 +42,7 @@ router.get('/summary', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER')
   }
 });
 
-router.get('/sensor-readings', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async (request, response, next) => {
+router.get('/sensor-readings', async (request, response, next) => {
   try {
     const query = historyQuery.parse(request.query);
 
@@ -68,7 +66,7 @@ router.get('/sensor-readings', requireAuth, requireRole('ADMIN', 'SUPERVISOR', '
   }
 });
 
-router.get('/alerts', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async (_request, response, next) => {
+router.get('/alerts', async (_request, response, next) => {
   try {
     if (env.isDemoMode) {
       return response.json({ alerts: demoService.getAllAlerts() });

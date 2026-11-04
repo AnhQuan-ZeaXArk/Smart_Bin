@@ -241,13 +241,13 @@ async function runApiTests() {
     const workerToken = workerLogin.data.token;
     console.log('  -> Logged in successfully: Admin, Supervisor, Worker\n');
 
-    // Test A10: Không có JWT khi gọi GET /api/devices -> 401
-    console.log('Test A10: GET /api/devices without token -> 401 Unauthorized');
+    // Test A10: Public Read-Only: GET /api/devices without token -> 200 OK
+    console.log('Test A10: Public Read-Only: GET /api/devices without token -> 200 OK');
     const noAuth = await request(server, 'GET', '/api/devices');
-    if (noAuth.status !== 401) {
-      throw new Error(`A10 Failed: Expected 401, got ${noAuth.status}`);
+    if (noAuth.status !== 200 || !Array.isArray(noAuth.data?.devices)) {
+      throw new Error(`A10 Failed: Expected 200 with devices array, got ${noAuth.status}`);
     }
-    console.log('  -> PASS: 401 Unauthorized received\n');
+    console.log('  -> PASS: GET /api/devices accessible publicly without token\n');
 
     // Test A1: GET /api/devices with Admin token -> 200, returns 4 devices
     console.log('Test A1: GET /api/devices -> 200 with 4 devices');

@@ -109,7 +109,7 @@ function validationError(response: Response, message: string) {
   });
 }
 
-router.get('/', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async (_request, response, next) => {
+router.get('/', async (_request, response, next) => {
   try {
     if (env.isDemoMode) {
       return response.json({ devices: demoService.getAllDevices() });
@@ -175,7 +175,7 @@ router.post(
 
 router.post('/command', requireAuth, requireRole('ADMIN', 'SUPERVISOR'), handleDeviceCommand);
 
-router.get('/:id', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async (request, response, next) => {
+router.get('/:id', async (request, response, next) => {
   try {
     const id = request.params.id;
     if (!id || typeof id !== 'string') return notFound(response);
@@ -206,7 +206,7 @@ router.get('/:id', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), as
   }
 });
 
-router.get('/:id/health', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async (request, response, next) => {
+router.get('/:id/health', async (request, response, next) => {
   try {
     const id = request.params.id;
     if (!id || typeof id !== 'string') return notFound(response);

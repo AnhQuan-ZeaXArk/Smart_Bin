@@ -101,24 +101,36 @@ export class RealtimeGateway {
         return next();
       }
 
-      // 2. Phân luồng xác thực người dùng (Web / Mobile)
+      // 2. Phân luồng máy khách Web / Mobile (Hỗ trợ người dùng đăng nhập & khách xem công khai)
       if (env.isDemoMode) {
         socket.data.userId = 'demo-operator';
         socket.data.isDevice = false;
         return next();
       }
 
+      const token = typeof auth.token === 'string' ? auth.token.trim() : undefined;
+      if (!token) {
+        // Khách xem công khai: Cho phép kết nối nhận realtime broadcast (heartbeat, telemetry, alert)
+        socket.data.userId = 'public-viewer';
+        socket.data.isDevice = false;
+        return next();
+      }
+
       try {
-        const token = auth.token as string | undefined;
-        if (!token) return next(new Error('Authentication required'));
         const payload = tokenSchema.parse(jwt.verify(token, env.JWT_SECRET));
         const user = await prisma.user.findUnique({ where: { id: payload.sub } });
-        if (!user?.isActive) return next(new Error('User is inactive or not found'));
-        socket.data.userId = user.id;
+        if (user?.isActive) {
+          socket.data.userId = user.id;
+        } else {
+          socket.data.userId = 'public-viewer';
+        }
         socket.data.isDevice = false;
         return next();
       } catch {
-        return next(new Error('Invalid or expired token'));
+        // Token không hợp lệ hoặc hết hạn: Chuyển xuống quyền public-viewer để Dashboard vẫn nhận telemetry
+        socket.data.userId = 'public-viewer';
+        socket.data.isDevice = false;
+        return next();
       }
     });
 

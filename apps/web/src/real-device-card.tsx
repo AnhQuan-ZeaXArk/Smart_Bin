@@ -73,7 +73,7 @@ interface RealDeviceCardProps {
 export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCardProps) {
   const { socket, connected: realtimeConnected } = useRealtime();
   const { token, user, systemMode } = useAuth();
-  const isWorker = systemMode !== 'demo' && user?.role === 'WORKER';
+  const canExecuteCommands = systemMode === 'demo' || user?.role === 'ADMIN' || user?.role === 'SUPERVISOR';
   const [data, setData] = useState<RealDeviceData | null>(null);
   const [receivedAtLocalMs, setReceivedAtLocalMs] = useState<number>(() => Date.now());
   const [loading, setLoading] = useState(true);
@@ -390,11 +390,11 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
   const handleSendPing = async () => {
     if (liveStatus === 'OFFLINE' || commandState.status === 'PENDING') return;
 
-    if (isWorker) {
+    if (!canExecuteCommands) {
       setCommandState({
         status: 'FAILED',
         action: 'PING',
-        message: 'Từ chối quyền (403): Chỉ Quản trị viên và Giám sát viên mới có quyền gửi lệnh tới thiết bị.',
+        message: 'Từ chối quyền: Cần đăng nhập tài khoản Quản trị viên hoặc Giám sát viên để gửi lệnh điều khiển tới thiết bị.',
         updatedAt: Date.now()
       });
       return;
@@ -465,11 +465,11 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
   const handleTriggerUltrasonic = async () => {
     if (liveStatus === 'OFFLINE' || commandState.status === 'PENDING') return;
 
-    if (isWorker) {
+    if (!canExecuteCommands) {
       setCommandState({
         status: 'FAILED',
         action: 'TRIGGER_ULTRASONIC',
-        message: 'Từ chối quyền (403): Chỉ Quản trị viên và Giám sát viên mới có quyền gửi lệnh tới thiết bị.',
+        message: 'Từ chối quyền: Cần đăng nhập tài khoản Quản trị viên hoặc Giám sát viên để gửi lệnh tới thiết bị.',
         updatedAt: Date.now()
       });
       return;
@@ -757,8 +757,8 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
                   type="button"
                   className={`button-control-action button-ping ${commandState.status === 'PENDING' && commandState.action === 'PING' ? 'is-loading' : ''}`}
                   onClick={handleSendPing}
-                  disabled={liveStatus === 'OFFLINE' || commandState.status === 'PENDING' || isWorker}
-                  title={isWorker ? 'Yêu cầu quyền Quản trị viên hoặc Giám sát viên' : liveStatus === 'OFFLINE' ? 'Không thể PING khi Pi đang OFFLINE' : 'Gửi lệnh PING kiểm tra kết nối hai chiều tới Pi 5'}
+                  disabled={liveStatus === 'OFFLINE' || commandState.status === 'PENDING' || !canExecuteCommands}
+                  title={!canExecuteCommands ? 'Yêu cầu quyền Quản trị viên hoặc Giám sát viên để gửi lệnh' : liveStatus === 'OFFLINE' ? 'Không thể PING khi Pi đang OFFLINE' : 'Gửi lệnh PING kiểm tra kết nối hai chiều tới Pi 5'}
                 >
                   {commandState.status === 'PENDING' && commandState.action === 'PING' ? (
                     <>
@@ -778,8 +778,8 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
                   type="button"
                   className={`button-control-action button-ultrasonic ${commandState.status === 'PENDING' && commandState.action === 'TRIGGER_ULTRASONIC' ? 'is-loading' : ''}`}
                   onClick={handleTriggerUltrasonic}
-                  disabled={liveStatus === 'OFFLINE' || commandState.status === 'PENDING' || isWorker}
-                  title={isWorker ? 'Yêu cầu quyền Quản trị viên hoặc Giám sát viên' : liveStatus === 'OFFLINE' ? 'Không thể đo khi Pi đang OFFLINE' : 'Yêu cầu Pi 5 kích hoạt đọc cảm biến siêu âm'}
+                  disabled={liveStatus === 'OFFLINE' || commandState.status === 'PENDING' || !canExecuteCommands}
+                  title={!canExecuteCommands ? 'Yêu cầu quyền Quản trị viên hoặc Giám sát viên để gửi lệnh' : liveStatus === 'OFFLINE' ? 'Không thể đo khi Pi đang OFFLINE' : 'Yêu cầu Pi 5 kích hoạt đọc cảm biến siêu âm'}
                 >
                   {commandState.status === 'PENDING' && commandState.action === 'TRIGGER_ULTRASONIC' ? (
                     <>

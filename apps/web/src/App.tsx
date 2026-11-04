@@ -81,14 +81,13 @@ function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
 
-  // Lọc danh sách route hiển thị theo vai trò (RBAC) và chế độ hệ thống
+  // Danh sách route hiển thị trên navigation:
+  // Tất cả các trang Dashboard đều công khai; trang Quản lý người dùng chỉ hiển thị cho ADMIN
   const visibleRoutes = appRoutes.filter((route) => {
-    if (systemMode === 'demo') {
-      // Trong Demo Mode: Ẩn quản lý người dùng vì Demo service không hỗ trợ user CRUD
-      return route.path !== '/users';
+    if (route.path === '/users') {
+      return user?.role === 'ADMIN';
     }
-    if (!user) return false;
-    return route.roles.includes(user.role);
+    return true;
   });
 
   const currentRoute = [...visibleRoutes].sort((a, b) => b.path.length - a.path.length).find((route) => location.pathname.startsWith(route.path));
@@ -104,9 +103,9 @@ function AppShell() {
     '/users': <IconUsers />
   };
 
-  const userDisplayName = user?.displayName || user?.username || (systemMode === 'demo' ? 'SmartBin Demo' : 'Người dùng');
-  const roleLabel = getRoleLabel(user?.role, systemMode);
-  const initials = getUserInitials(userDisplayName);
+  const userDisplayName = user?.displayName || user?.username || (systemMode === 'demo' ? 'SmartBin Demo' : 'Khách xem');
+  const roleLabel = user ? getRoleLabel(user.role, systemMode) : 'Xem công khai';
+  const initials = user ? getUserInitials(userDisplayName) : 'SB';
 
   return (
     <RealtimeProvider token={token}>
@@ -138,21 +137,21 @@ function AppShell() {
           <ErrorBoundary key={location.pathname}>
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-            <Route path="/bins" element={<ProtectedRoute><BinListPage /></ProtectedRoute>} />
-            <Route path="/bins/:id" element={<ProtectedRoute><BinDetailPage /></ProtectedRoute>} />
-            <Route path="/devices" element={<ProtectedRoute><DeviceListPage /></ProtectedRoute>} />
-            <Route path="/sensor-history" element={<ProtectedRoute><SensorHistoryPage /></ProtectedRoute>} />
-            <Route path="/alerts" element={<ProtectedRoute><AlertsPage /></ProtectedRoute>} />
-            <Route path="/collections" element={<ProtectedRoute><CollectionsPage /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute roles={['ADMIN', 'SUPERVISOR', 'WORKER']}><SettingsPage /></ProtectedRoute>} />
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/bins" element={<BinListPage />} />
+            <Route path="/bins/:id" element={<BinDetailPage />} />
+            <Route path="/devices" element={<DeviceListPage />} />
+            <Route path="/sensor-history" element={<SensorHistoryPage />} />
+            <Route path="/alerts" element={<AlertsPage />} />
+            <Route path="/collections" element={<CollectionsPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="/users" element={<ProtectedRoute roles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
-            <Route path="/login" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/login" element={<LoginPage />} />
 
             {appRoutes
               .filter((route) => !['/dashboard', '/bins', '/devices', '/sensor-history', '/alerts', '/collections', '/settings', '/users'].includes(route.path))
               .map((route) => (
-                <Route key={route.path} path={route.path} element={<ProtectedRoute><PagePlaceholder title={route.label} /></ProtectedRoute>} />
+                <Route key={route.path} path={route.path} element={<PagePlaceholder title={route.label} />} />
               ))}
           </Routes>
           </ErrorBoundary>

@@ -59,7 +59,7 @@ function parseId(value: unknown) {
   return result.success ? result.data : null;
 }
 
-router.get('/', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async (request, response, next) => {
+router.get('/', async (request, response, next) => {
   try {
     const queryResult = querySchema.safeParse(request.query);
     if (!queryResult.success) return validationError(response, 'Invalid bin filters');
@@ -78,7 +78,7 @@ router.get('/', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async
   }
 });
 
-router.get('/:id', requireAuth, requireRole('ADMIN', 'SUPERVISOR', 'WORKER'), async (request, response, next) => {
+router.get('/:id', async (request, response, next) => {
   try {
     const id = parseId(request.params.id);
     if (!id) return notFound(response);

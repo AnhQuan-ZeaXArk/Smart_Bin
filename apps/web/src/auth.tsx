@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { AuthContext, useAuth, type RoleName, type SessionUser, type SystemMode } from './auth-context';
 import { apiUrl } from './api-config';
 import { IconAlertTriangle, IconEye, IconEyeOff, IconLock, IconRefresh, IconShield } from './icons';
@@ -405,6 +405,22 @@ export function LoginPage() {
               </button>
             </div>
           )}
+
+          <div style={{ marginTop: '16px', textAlign: 'center' }}>
+            <Link
+              to="/dashboard"
+              style={{
+                fontSize: '12px',
+                color: '#28d5a0',
+                textDecoration: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              ← Về trang tổng quan công khai
+            </Link>
+          </div>
         </div>
       </div>
     </main>
@@ -468,13 +484,19 @@ export function ProtectedRoute({
     return <>{children}</>;
   }
 
-  // Trường hợp B - Production Mode: Bắt buộc xác thực tài khoản thực
+  // Trường hợp B - Production Mode:
+  // Nếu route KHÔNG yêu cầu role hạn chế -> Cho phép truy cập công khai không cần đăng nhập
+  if (!roles || roles.length === 0) {
+    return <>{children}</>;
+  }
+
+  // Đối với các route yêu cầu vai trò quản trị (ví dụ: ADMIN cho /users):
   if (!token || !user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   // Kiểm tra phân quyền RBAC
-  if (roles && roles.length > 0 && !roles.includes(user.role)) {
+  if (!roles.includes(user.role)) {
     return <Navigate to="/forbidden" replace />;
   }
 
