@@ -129,7 +129,7 @@ export const DEMO_BINS: DemoBin[] = [
 export const DEMO_DEVICES: DemoDevice[] = [
   {
     id: 'dev-rpi-01',
-    deviceId: 'raspberry-pi-01',
+    deviceId: 'raspberry-pi-5',
     deviceName: 'Raspberry Pi 5 Gateway',
     deviceType: 'RASPBERRY_PI',
     status: 'ONLINE',

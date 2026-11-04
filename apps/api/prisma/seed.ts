@@ -44,7 +44,7 @@ async function main() {
   await prisma.deviceStatus.createMany({
     data: [
       {
-        deviceId: 'raspberry-pi-01',
+        deviceId: 'raspberry-pi-5',
         deviceName: 'Raspberry Pi 5 Gateway',
         deviceType: DeviceType.RASPBERRY_PI,
         status: DeviceStatusEnum.ONLINE,

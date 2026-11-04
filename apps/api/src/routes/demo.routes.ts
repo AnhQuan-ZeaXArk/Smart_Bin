@@ -1,21 +1,27 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
+import { DeviceType } from '@prisma/client';
 import { env } from '../config/env.js';
 import { realDeviceService } from '../demo/real-device.service.js';
+import { deviceHealthService } from '../services/device-health.service.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 
 const router = Router();
 
 const deviceHeartbeatSchema = z.object({
   deviceId: z.string().min(1, 'deviceId không được để trống'),
+  deviceName: z.string().optional(),
   status: z.string().optional().default('ONLINE'),
   uptimeSeconds: z.coerce.number().nonnegative('uptimeSeconds phải là số không âm'),
   cpuTempC: z.coerce.number().optional().nullable(),
+  firmwareVersion: z.string().optional().nullable(),
+  ipAddress: z.string().optional().nullable(),
   sentAt: z.string().optional(),
   sensors: z.object({
     distanceCm: z.coerce.number().optional().nullable(),
     fillLevel: z.coerce.number().optional().nullable()
-  }).optional().nullable()
+  }).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional().nullable()
 });
 
 const deviceCommandSchema = z.object({
@@ -61,7 +67,7 @@ function authenticateDeviceToken(req: Request, res: Response, next: NextFunction
 
 /**
  * POST /api/demo/device-heartbeat
- * Endpoint nhận heartbeat từ Raspberry Pi 5 thật (tương thích ngược)
+ * Endpoint nhận heartbeat từ Raspberry Pi 5 thật (tương thích ngược & HTTP fallback)
  */
 router.post('/device-heartbeat', authenticateDeviceToken, (req: Request, res: Response) => {
   const parseResult = deviceHeartbeatSchema.safeParse(req.body);
@@ -76,7 +82,24 @@ router.post('/device-heartbeat', authenticateDeviceToken, (req: Request, res: Re
   }
 
   const io = req.app.get('io');
+  // 1. Cập nhật RealDeviceService trong RAM và phát Socket.IO 'device:heartbeat' (0ms)
   const recordedStatus = realDeviceService.recordHeartbeat(parseResult.data, io);
+
+  // 2. Chuyển tiếp tới DeviceHealthService để xử lý logic heartbeat thống nhất (throttling 15s + PostgreSQL)
+  void deviceHealthService.processHeartbeat({
+    deviceId: parseResult.data.deviceId,
+    deviceName: parseResult.data.deviceName,
+    deviceType: DeviceType.RASPBERRY_PI,
+    uptimeSeconds: parseResult.data.uptimeSeconds,
+    cpuTempC: parseResult.data.cpuTempC,
+    firmwareVersion: parseResult.data.firmwareVersion,
+    ipAddress: parseResult.data.ipAddress,
+    sentAt: parseResult.data.sentAt,
+    sensors: parseResult.data.sensors,
+    metadata: parseResult.data.metadata
+  }).catch((err) => {
+    console.error(`[DemoRoutes] Error processing HTTP heartbeat in DeviceHealthService:`, err);
+  });
 
   return res.status(200).json({
     success: true,
@@ -169,4 +192,3 @@ router.post(
 );
 
 export default router;
-

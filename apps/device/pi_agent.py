@@ -45,6 +45,8 @@ logger = logging.getLogger('SmartBin-Pi5')
 # Cấu hình thông số từ biến môi trường
 SERVER_URL = os.getenv('SERVER_URL', 'https://smartbin-api-e08b.onrender.com').rstrip('/')
 DEVICE_ID = os.getenv('DEVICE_ID', 'raspberry-pi-5').strip()
+DEVICE_NAME = os.getenv('DEVICE_NAME', 'Raspberry Pi 5 Gateway').strip()
+FIRMWARE_VERSION = os.getenv('FIRMWARE_VERSION', '1.0.0').strip()
 DEVICE_INGEST_TOKEN = os.getenv('DEVICE_INGEST_TOKEN', '').strip()
 TELEMETRY_INTERVAL = max(5, min(60, int(os.getenv('TELEMETRY_INTERVAL', '5'))))
 
@@ -86,6 +88,20 @@ def get_cpu_temp_c() -> float | None:
     except Exception as e:
         logger.debug("Không thể đọc /sys/class/thermal/thermal_zone0/temp: %s", e)
     return None
+
+
+def get_local_ip() -> str | None:
+    """Lấy địa chỉ IP mạng nội bộ của Raspberry Pi 5 (không hardcode)."""
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return None
 
 
 def read_ultrasonic_sensor() -> dict | None:
@@ -232,13 +248,18 @@ def send_telemetry():
     """Thu thập và gửi gói tin Telemetry lên Backend."""
     uptime = get_uptime_seconds()
     cpu_temp = get_cpu_temp_c()
+    local_ip = get_local_ip()
     sent_at = datetime.now(timezone.utc).isoformat()
 
     telemetry_payload = {
         'deviceId': DEVICE_ID,
+        'deviceName': DEVICE_NAME,
+        'deviceType': 'RASPBERRY_PI',
         'status': 'ONLINE',
         'uptimeSeconds': uptime,
         'cpuTempC': cpu_temp,
+        'firmwareVersion': FIRMWARE_VERSION,
+        'ipAddress': local_ip,
         'sentAt': sent_at,
         'sensors': None  # Sẽ bổ sung khi có cảm biến thực tế
     }

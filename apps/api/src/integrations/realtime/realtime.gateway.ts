@@ -2,9 +2,11 @@ import { Server } from 'socket.io';
 import type { Server as NodeHttpServer } from 'node:http';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
+import { DeviceType } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { realDeviceService } from '../../demo/real-device.service.js';
+import { deviceHealthService } from '../../services/device-health.service.js';
 import {
   REALTIME_EVENTS,
   type DeviceStatusPayload,
@@ -19,14 +21,19 @@ const tokenSchema = z.object({ sub: z.string().min(1) });
 
 const deviceTelemetryInputSchema = z.object({
   deviceId: z.string().min(1).default('raspberry-pi-5'),
+  deviceName: z.string().optional(),
+  deviceType: z.string().optional(),
   status: z.string().optional().default('ONLINE'),
   uptimeSeconds: z.coerce.number().nonnegative(),
   cpuTempC: z.coerce.number().optional().nullable(),
+  firmwareVersion: z.string().optional().nullable(),
+  ipAddress: z.string().optional().nullable(),
   sentAt: z.string().optional(),
   sensors: z.object({
     distanceCm: z.coerce.number().optional().nullable(),
     fillLevel: z.coerce.number().optional().nullable()
-  }).optional().nullable()
+  }).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional().nullable()
 });
 
 const deviceCommandAckInputSchema = z.object({
@@ -127,6 +134,15 @@ export class RealtimeGateway {
           deviceId
         });
 
+        // Cập nhật DeviceHealthService khi Pi kết nối Socket
+        void deviceHealthService.processHeartbeat({
+          deviceId,
+          deviceName: 'Raspberry Pi 5 Gateway',
+          deviceType: DeviceType.RASPBERRY_PI
+        }).catch((err) => {
+          console.error(`[RealtimeGateway] Error recording initial connection for ${deviceId}:`, err);
+        });
+
         // Nhận gói tin telemetry liên tục từ Pi 5 qua Socket.IO
         socket.on(REALTIME_EVENTS.DEVICE_TELEMETRY, (payload: unknown) => {
           try {
@@ -136,7 +152,25 @@ export class RealtimeGateway {
               console.warn(`[RealtimeGateway] Invalid device:telemetry packet from ${deviceId}: ${issues}`);
               return;
             }
+
+            // 1. Cập nhật RealDeviceService trong RAM và phát Socket.IO 'device:heartbeat' (0ms cho RealDeviceCard)
             realDeviceService.recordHeartbeat(parsed.data, this.io);
+
+            // 2. Chuyển tiếp tới DeviceHealthService để xử lý heartbeat thống nhất (throttling 15s + PostgreSQL)
+            void deviceHealthService.processHeartbeat({
+              deviceId: parsed.data.deviceId,
+              deviceName: parsed.data.deviceName,
+              deviceType: DeviceType.RASPBERRY_PI,
+              uptimeSeconds: parsed.data.uptimeSeconds,
+              cpuTempC: parsed.data.cpuTempC,
+              firmwareVersion: parsed.data.firmwareVersion,
+              ipAddress: parsed.data.ipAddress,
+              sentAt: parsed.data.sentAt,
+              sensors: parsed.data.sensors,
+              metadata: parsed.data.metadata
+            }).catch((err) => {
+              console.error(`[RealtimeGateway] Error processing heartbeat in DeviceHealthService for ${deviceId}:`, err);
+            });
           } catch (err) {
             console.error('[RealtimeGateway] Error processing device:telemetry:', err);
           }
@@ -159,6 +193,7 @@ export class RealtimeGateway {
 
         socket.on('disconnect', (reason) => {
           console.log(`[RealtimeGateway] Device disconnected: ${deviceId} (${reason})`);
+          // Cập nhật trạng thái socket trong RAM (Rule 3.1: Không tự chuyển OFFLINE khi socket disconnect)
           realDeviceService.setSocketConnected(deviceId, false);
         });
       } else {
