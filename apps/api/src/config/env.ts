@@ -58,9 +58,9 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().optional(),
   API_PORT: z.coerce.number().int().positive().default(4000),
-  FRONTEND_URL: z.string().url().default('https://smartbin-web.onrender.com'),
+  FRONTEND_URL: z.string().trim().url().or(z.literal('')).transform((val) => val || undefined).default('https://smartbin-web.onrender.com'),
   CORS_ORIGIN: z.string().optional(),
-  WEB_ORIGIN: z.string().url().default('https://smartbin-web.onrender.com'),
+  WEB_ORIGIN: z.string().trim().url().or(z.literal('')).transform((val) => val || undefined).default('https://smartbin-web.onrender.com'),
   DEMO_MODE: z.boolean().default(computedDemoMode),
   DATABASE_URL: computedDemoMode
     ? z.string().optional().default('')
@@ -76,7 +76,7 @@ const envSchema = z.object({
         'JWT_SECRET cannot use the default Demo secret in Production Mode'
       ),
   JWT_EXPIRES_IN: z.string().default('1d'),
-  MQTT_BROKER_URL: z.string().url().optional(),
+  MQTT_BROKER_URL: z.string().trim().url().or(z.literal('')).transform((val) => val || undefined).optional(),
   MQTT_USERNAME: z.string().optional(),
   MQTT_PASSWORD: z.string().optional(),
   MQTT_CLIENT_ID: z.string().min(1).default('smartbin-backend'),

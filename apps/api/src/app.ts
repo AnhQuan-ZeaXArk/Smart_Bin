@@ -2,6 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
 import { env } from './config/env.js';
+import { isDatabaseReady } from './lib/prisma.js';
 import authRoutes from './routes/auth.routes.js';
 import protectedRoutes from './routes/protected.routes.js';
 import binRoutes from './routes/bin.routes.js';
@@ -36,7 +37,39 @@ const corsOptions: cors.CorsOptions = {
 app.use(cors(corsOptions));
 
 app.use(express.json());
-app.get('/health', (_request, response) => response.json({ status: 'ok', service: 'smartbin-api', mode: env.isDemoMode ? 'demo' : 'production' }));
+
+// Liveness Endpoint (Render Health Check & Process Monitoring)
+app.get('/health', (_request, response) => {
+  const ready = isDatabaseReady();
+  return response.status(200).json({
+    status: 'ok',
+    service: 'smartbin-api',
+    mode: env.isDemoMode ? 'demo' : 'production',
+    database: env.isDemoMode ? 'not_applicable' : (ready ? 'connected' : 'connecting'),
+    ready
+  });
+});
+
+// Readiness Endpoint (Traffic Dispatch & Database Verification Probe)
+app.get('/health/ready', (_request, response) => {
+  const ready = isDatabaseReady();
+  if (!ready) {
+    return response.status(503).json({
+      ready: false,
+      service: 'smartbin-api',
+      mode: env.isDemoMode ? 'demo' : 'production',
+      database: 'connecting',
+      message: 'Database connection is in progress or not verified'
+    });
+  }
+  return response.status(200).json({
+    ready: true,
+    service: 'smartbin-api',
+    mode: env.isDemoMode ? 'demo' : 'production',
+    database: env.isDemoMode ? 'not_applicable' : 'connected'
+  });
+});
+
 app.use('/api/demo', demoRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/bins', binRoutes);
