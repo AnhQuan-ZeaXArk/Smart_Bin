@@ -1750,3 +1750,305 @@ button:disabled { cursor: not-allowed; }
   white-space: nowrap;
 }
 
+
+/* ==========================================================================
+   TASK 1F: Subsystems, AI YOLO Detection & 3-Compartment Fill Monitoring
+   ========================================================================== */
+
+/* Subsystems Strip */
+.real-subsystems-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  background: #f4f8f4;
+  border: 1px solid #dbe6db;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.real-subsystems-title {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #4b6357;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+}
+
+.subsystem-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.subsystem-pill.is-ok {
+  background: #ecfdf5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+
+.subsystem-pill.is-warning {
+  background: #fffbeb;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+.subsystem-pill.is-error {
+  background: #fef2f2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+
+.subsystem-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.subsystem-pill.is-ok .subsystem-dot {
+  background: #10b981;
+  box-shadow: 0 0 4px #10b981;
+}
+
+.subsystem-pill.is-warning .subsystem-dot {
+  background: #f59e0b;
+}
+
+.subsystem-pill.is-error .subsystem-dot {
+  background: #ef4444;
+}
+
+/* AI Detection Panel */
+.real-device-ai-panel {
+  background: #fbfdfa;
+  border: 1px solid #dbe6db;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.real-device-ai-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.real-device-ai-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #183c32;
+}
+
+.ai-detection-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #ffffff;
+  border: 1px solid #e5ede4;
+  border-radius: 8px;
+}
+
+.ai-class-badge-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ai-class-tag {
+  font-size: 14px;
+  font-weight: 800;
+  padding: 5px 12px;
+  border-radius: 6px;
+  letter-spacing: 0.3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-class-tag.tag-organic {
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #10b981;
+}
+
+.ai-class-tag.tag-recyclable {
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #3b82f6;
+}
+
+.ai-class-tag.tag-non-recyclable {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #ef4444;
+}
+
+.ai-stats-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 12px;
+  color: #52665b;
+}
+
+.ai-stat-item strong {
+  color: #183c32;
+  font-weight: 700;
+}
+
+/* 3-Compartment Fill Grid */
+.real-compartments-section {
+  margin-bottom: 16px;
+}
+
+.real-compartments-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.real-compartments-title h4 {
+  font-size: 13px;
+  font-weight: 700;
+  color: #183c32;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.real-compartments-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .real-compartments-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.compartment-gauge-card {
+  background: #ffffff;
+  border: 1px solid #dbe6db;
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.compartment-gauge-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.compartment-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #183c32;
+}
+
+.compartment-status-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.compartment-status-tag.tag-ok {
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.compartment-status-tag.tag-stale {
+  background: #fffbeb;
+  color: #92400e;
+  border: 1px dashed #f59e0b;
+}
+
+.compartment-status-tag.tag-error {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.compartment-fill-display {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.compartment-fill-pct {
+  font-size: 24px;
+  font-weight: 800;
+  color: #183c32;
+  line-height: 1;
+}
+
+.compartment-distance {
+  font-size: 12px;
+  color: #63756b;
+  font-family: var(--font-ui-mono);
+}
+
+.compartment-progress-bar {
+  height: 8px;
+  background: #e5ede4;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.compartment-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.fill-tone-normal {
+  background: #10b981;
+}
+
+.fill-tone-warning {
+  background: #f59e0b;
+}
+
+.fill-tone-critical {
+  background: #ef4444;
+}
+
+.compartment-stale-banner {
+  font-size: 10px;
+  color: #b45309;
+  background: #fffbeb;
+  padding: 3px 6px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}

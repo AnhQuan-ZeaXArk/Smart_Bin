@@ -10,7 +10,8 @@ import {
   IconRefresh,
   IconInfo,
   IconRadio,
-  IconActivity
+  IconActivity,
+  IconCamera
 } from './icons';
 import {
   type DeviceStatusEnum,
@@ -21,10 +22,35 @@ import {
   CANONICAL_PI_DEVICE_ID,
   isRaspberryPiDevice
 } from './device-utils';
+import { formatConfidence } from './ai-confidence';
+
+export interface CompartmentFillData {
+  distanceCm?: number | null;
+  fillLevel?: number | null;
+  status?: string;
+  updatedAt?: string | null;
+}
 
 export interface DeviceSensorsData {
   distanceCm?: number | null;
   fillLevel?: number | null;
+  organic?: CompartmentFillData | null;
+  recyclable?: CompartmentFillData | null;
+  nonRecyclable?: CompartmentFillData | null;
+}
+
+export interface SubsystemStatus {
+  yolo?: string;
+  camera?: string;
+  esp32?: string;
+}
+
+export interface AiDetectionResult {
+  class: string;
+  rawClass?: string;
+  confidence: number;
+  inferenceTimeMs?: number | null;
+  timestamp: string;
 }
 
 export interface RealDeviceData {
@@ -43,6 +69,9 @@ export interface RealDeviceData {
   firmwareVersion?: string | null;
   ipAddress?: string | null;
   isSocketConnected?: boolean;
+  subsystems?: SubsystemStatus | null;
+  aiDetection?: AiDetectionResult | null;
+  detectionHistory?: AiDetectionResult[];
   sensors?: DeviceSensorsData | null;
   metadata?: {
     onlineThresholdSeconds?: number;
@@ -50,6 +79,8 @@ export interface RealDeviceData {
     offlineThresholdSeconds?: number;
     staleThresholdSeconds?: number;
     platform?: string;
+    detectionCount?: number;
+    lastInferenceMs?: number | null;
   };
 }
 
@@ -151,6 +182,9 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
             uptimeSeconds: newUptime,
             cpuTempC: newCpu,
             sensors: newSensors,
+            subsystems: json.data.subsystems ?? prev.subsystems,
+            aiDetection: json.data.aiDetection ?? prev.aiDetection,
+            detectionHistory: json.data.detectionHistory ?? prev.detectionHistory,
             firmwareVersion: json.data.firmwareVersion ?? prev.firmwareVersion,
             ipAddress: json.data.ipAddress ?? prev.ipAddress
           };
@@ -221,6 +255,9 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
             uptimeSeconds: newUptime,
             cpuTempC: newCpu,
             sensors: newSensors,
+            subsystems: json.data.subsystems ?? prev.subsystems,
+            aiDetection: json.data.aiDetection ?? prev.aiDetection,
+            detectionHistory: json.data.detectionHistory ?? prev.detectionHistory,
             firmwareVersion: json.data.firmwareVersion ?? prev.firmwareVersion,
             ipAddress: json.data.ipAddress ?? prev.ipAddress
           };
@@ -275,6 +312,9 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
           uptimeSeconds: newUptime,
           cpuTempC: newCpu,
           sensors: newSensors,
+          subsystems: payload.subsystems ?? prev.subsystems,
+          aiDetection: payload.aiDetection ?? prev.aiDetection,
+          detectionHistory: payload.detectionHistory ?? prev.detectionHistory,
           firmwareVersion: payload.firmwareVersion ?? prev.firmwareVersion,
           ipAddress: payload.ipAddress ?? prev.ipAddress
         };
@@ -568,6 +608,87 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
     );
   }, [data]);
 
+  const yoloStatus = data?.subsystems?.yolo || 'STOPPED';
+  const cameraStatus = data?.subsystems?.camera || 'DISCONNECTED';
+  const esp32Status = data?.subsystems?.esp32 || 'DISCONNECTED';
+
+  const yoloPill = useMemo(() => {
+    if (yoloStatus === 'RUNNING') return { cls: 'is-ok', text: 'RUNNING (Đang chạy)' };
+    if (yoloStatus === 'ERROR') return { cls: 'is-error', text: 'ERROR (Lỗi)' };
+    if (yoloStatus === 'UNAVAILABLE') return { cls: 'is-warning', text: 'UNAVAILABLE (Chưa cài)' };
+    return { cls: 'is-warning', text: 'STOPPED (Đang dừng)' };
+  }, [yoloStatus]);
+
+  const cameraPill = useMemo(() => {
+    if (cameraStatus === 'CONNECTED') return { cls: 'is-ok', text: 'CONNECTED (Rapoo C200)' };
+    if (cameraStatus === 'ERROR') return { cls: 'is-error', text: 'ERROR (Lỗi camera)' };
+    return { cls: 'is-warning', text: 'DISCONNECTED (Chưa cắm)' };
+  }, [cameraStatus]);
+
+  const esp32Pill = useMemo(() => {
+    if (esp32Status === 'CONNECTED') return { cls: 'is-ok', text: 'CONNECTED (115200 baud)' };
+    if (esp32Status === 'ERROR') return { cls: 'is-error', text: 'ERROR (Lỗi Serial)' };
+    return { cls: 'is-warning', text: 'DISCONNECTED (Chưa cắm USB)' };
+  }, [esp32Status]);
+
+  const renderCompartmentCard = (
+    key: string,
+    label: string,
+    comp?: CompartmentFillData | null
+  ) => {
+    const hasReading = comp && comp.fillLevel !== null && comp.fillLevel !== undefined;
+    const fillPct = hasReading ? Math.min(100, Math.max(0, comp.fillLevel!)) : 0;
+    const isStale = comp?.status === 'STALE';
+    const isError = comp?.status === 'SENSOR_ERROR' || comp?.status === 'OUT_OF_RANGE';
+    const isNotAttached = !comp || comp.status === 'NOT_ATTACHED' || comp.status === undefined;
+
+    let tone = 'normal';
+    if (fillPct >= 90) tone = 'critical';
+    else if (fillPct >= 70) tone = 'warning';
+
+    return (
+      <div key={key} className="compartment-gauge-card">
+        <div className="compartment-gauge-head">
+          <span className="compartment-name">{label}</span>
+          {isStale ? (
+            <span className="compartment-status-tag tag-stale">Dữ liệu cũ (STALE)</span>
+          ) : isError ? (
+            <span className="compartment-status-tag tag-error">Lệch tầm đo</span>
+          ) : isNotAttached ? (
+            <span className="compartment-status-tag tag-stale">Chưa gắn</span>
+          ) : (
+            <span className="compartment-status-tag tag-ok">HOẠT ĐỘNG</span>
+          )}
+        </div>
+
+        <div className="compartment-fill-display">
+          <span className="compartment-fill-pct">
+            {hasReading ? `${fillPct}%` : '—'}
+          </span>
+          <span className="compartment-distance">
+            {comp?.distanceCm !== null && comp?.distanceCm !== undefined
+              ? `${comp.distanceCm.toFixed(1)} cm`
+              : 'Chờ đo'}
+          </span>
+        </div>
+
+        <div className="compartment-progress-bar">
+          <div
+            className={`compartment-progress-fill fill-tone-${tone}`}
+            style={{ width: `${hasReading ? fillPct : 0}%` }}
+          />
+        </div>
+
+        {isStale && (
+          <div className="compartment-stale-banner">
+            <IconAlertTriangle />
+            <span>Cảm biến không gửi dữ liệu mới &gt; 15s (Stale)</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <section className={`real-device-container ${compact ? 'compact' : ''} ${pulse ? 'has-pulse' : ''}`}>
       <div className="real-device-card">
@@ -622,6 +743,29 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
           <div className="real-device-loading">Đang kết nối và kiểm tra thiết bị Raspberry Pi 5...</div>
         ) : (
           <>
+            {/* Subsystems Strip: YOLO AI, Rapoo C200 Camera, ESP32 Serial */}
+            <div className="real-subsystems-strip">
+              <span className="real-subsystems-title">
+                <IconCpu />
+                <span>Hệ Thống Con:</span>
+              </span>
+
+              <div className={`subsystem-pill ${yoloPill.cls}`} title="Trạng thái tiến trình AI YOLO trong môi trường ảo venv">
+                <span className="subsystem-dot" />
+                <span>YOLO AI: {yoloPill.text}</span>
+              </div>
+
+              <div className={`subsystem-pill ${cameraPill.cls}`} title="Rapoo C200 USB Camera (/dev/video*)">
+                <span className="subsystem-dot" />
+                <span>Camera: {cameraPill.text}</span>
+              </div>
+
+              <div className={`subsystem-pill ${esp32Pill.cls}`} title="ESP32 USB Serial (115200 baud, newline-delimited JSON)">
+                <span className="subsystem-dot" />
+                <span>ESP32 Serial: {esp32Pill.text}</span>
+              </div>
+            </div>
+
             {/* Real Hardware Metrics Grid */}
             <div className="real-device-metrics-grid">
               {/* Metric 1: Trạng thái kết nối */}
@@ -729,6 +873,71 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
                   </span>
                 </div>
               )}
+            </div>
+
+            {/* AI Detection Panel */}
+            <div className="real-device-ai-panel">
+              <div className="real-device-ai-header">
+                <div className="real-device-ai-title">
+                  <IconCamera />
+                  <span>Nhận Diện Thị Giác AI (YOLO Camera Realtime)</span>
+                </div>
+                {data?.aiDetection?.timestamp && (
+                  <span className="metric-hint">
+                    Thời gian: {formatDateTime(data.aiDetection.timestamp)}
+                  </span>
+                )}
+              </div>
+
+              {data?.aiDetection ? (
+                <div className="ai-detection-body">
+                  <div className="ai-class-badge-wrapper">
+                    <span className={`ai-class-tag tag-${data.aiDetection.class.toLowerCase().replace('_', '-')}`}>
+                      {data.aiDetection.class === 'ORGANIC'
+                        ? 'RÁC HỮU CƠ'
+                        : data.aiDetection.class === 'RECYCLABLE'
+                        ? 'RÁC TÁI CHẾ'
+                        : 'RÁC KHÔNG TÁI CHẾ'}
+                    </span>
+                    {data.aiDetection.rawClass &&
+                      data.aiDetection.rawClass.toLowerCase() !== data.aiDetection.class.toLowerCase() && (
+                        <span className="metric-hint">({data.aiDetection.rawClass})</span>
+                      )}
+                  </div>
+
+                  <div className="ai-stats-row">
+                    <span className="ai-stat-item">
+                      Độ tin cậy: <strong>{formatConfidence(data.aiDetection.confidence)}</strong>
+                    </span>
+                    {typeof data.aiDetection.inferenceTimeMs === 'number' && (
+                      <span className="ai-stat-item">
+                        Độ trễ AI: <strong>{data.aiDetection.inferenceTimeMs} ms</strong>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="ai-detection-body" style={{ color: '#63756b', fontStyle: 'italic', fontSize: '13px' }}>
+                  Chưa có nhận diện rác mới (Đang chờ vật thể đưa vào vùng nhìn của Camera Rapoo C200...)
+                </div>
+              )}
+            </div>
+
+            {/* 3-Compartment Fill Level Grid */}
+            <div className="real-compartments-section">
+              <div className="real-compartments-title">
+                <h4>
+                  <IconRadio />
+                  <span>Mức Đầy 3 Ngăn Rác Thực Tế (ESP32 HC-SR04)</span>
+                </h4>
+                <span className="metric-hint">Hiệu chuẩn: 50cm (Trống) → 5cm (Đầy)</span>
+              </div>
+
+              <div className="real-compartments-grid">
+                {renderCompartmentCard('ORGANIC', 'Rác hữu cơ', data?.sensors?.organic)}
+                {renderCompartmentCard('RECYCLABLE', 'Rác tái chế', data?.sensors?.recyclable)}
+                {renderCompartmentCard('NON_RECYCLABLE', 'Rác không tái chế', data?.sensors?.nonRecyclable)}
+              </div>
             </div>
 
             {/* BẢNG ĐIỀU KHIỂN LỆNH HAI CHIỀU (Bi-directional Controls) */}

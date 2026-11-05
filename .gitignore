@@ -10,3 +10,5 @@ coverage/
 .vscode/
 apps/web/.vite/
 .expo/
+__pycache__/
+*.py[cod]

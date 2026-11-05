@@ -4,13 +4,13 @@ import {
   REALTIME_EVENTS,
   type DeviceCommandAckPayload,
   type DeviceCommandPayload,
-  type DeviceCommandStatusPayload
+  type DeviceCommandStatusPayload,
+  type MultiCompartmentSensorsData,
+  type SubsystemStatus,
+  type AiDetectionResult
 } from '../integrations/realtime/realtime.contract.js';
 
-export interface DeviceSensorsData {
-  distanceCm?: number | null;
-  fillLevel?: number | null;
-}
+export type DeviceSensorsData = MultiCompartmentSensorsData;
 
 export interface HeartbeatPayload {
   deviceId: string;
@@ -18,7 +18,10 @@ export interface HeartbeatPayload {
   uptimeSeconds: number;
   cpuTempC?: number | null;
   sentAt?: string;
-  sensors?: DeviceSensorsData | null;
+  subsystems?: SubsystemStatus | null;
+  aiDetection?: AiDetectionResult | null;
+  sensors?: MultiCompartmentSensorsData | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export type RealDeviceStatusType = 'ONLINE' | 'WARNING' | 'OFFLINE' | 'STALE';
@@ -37,13 +40,18 @@ export interface RealDeviceStatus {
   heartbeatCount: number;
   ageSeconds: number | null;
   isSocketConnected: boolean;
-  sensors?: DeviceSensorsData | null;
+  subsystems: SubsystemStatus;
+  aiDetection: AiDetectionResult | null;
+  detectionHistory: AiDetectionResult[];
+  sensors?: MultiCompartmentSensorsData | null;
   metadata?: {
     onlineThresholdSeconds?: number;
     warningThresholdSeconds?: number;
     staleThresholdSeconds: number;
     offlineThresholdSeconds: number;
     platform?: string;
+    detectionCount?: number;
+    lastInferenceMs?: number | null;
   };
 }
 
@@ -74,6 +82,13 @@ export class RealDeviceService {
   private previousSocketConnected: boolean = false;
   private isSocketConnected: boolean = false;
   private sensors: DeviceSensorsData | null = null;
+  private subsystems: SubsystemStatus = {
+    yolo: 'STOPPED',
+    camera: 'DISCONNECTED',
+    esp32: 'DISCONNECTED'
+  };
+  private aiDetection: AiDetectionResult | null = null;
+  private detectionHistory: AiDetectionResult[] = [];
 
   // Active command pending registry
   private pendingCommands = new Map<string, PendingCommand>();
@@ -144,6 +159,22 @@ export class RealDeviceService {
       this.sensors = input.sensors;
     }
 
+    if (input.subsystems) {
+      this.subsystems = {
+        ...this.subsystems,
+        ...input.subsystems
+      };
+    }
+
+    if (input.aiDetection) {
+      this.aiDetection = input.aiDetection;
+      // Lưu trữ 10 kết quả nhận diện gần nhất
+      this.detectionHistory.unshift(input.aiDetection);
+      if (this.detectionHistory.length > 10) {
+        this.detectionHistory = this.detectionHistory.slice(0, 10);
+      }
+    }
+
     const statusObj = this.getStatus();
     this.previousStatus = statusObj.status;
 
@@ -190,6 +221,9 @@ export class RealDeviceService {
       heartbeatCount: this.heartbeatCount,
       ageSeconds,
       isSocketConnected: this.isSocketConnected,
+      subsystems: this.subsystems,
+      aiDetection: this.aiDetection,
+      detectionHistory: this.detectionHistory,
       sensors: this.sensors,
       metadata: {
         onlineThresholdSeconds: DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_SECONDS,
@@ -355,6 +389,13 @@ export class RealDeviceService {
     this.previousSocketConnected = false;
     this.isSocketConnected = false;
     this.sensors = null;
+    this.subsystems = {
+      yolo: 'STOPPED',
+      camera: 'DISCONNECTED',
+      esp32: 'DISCONNECTED'
+    };
+    this.aiDetection = null;
+    this.detectionHistory = [];
     for (const [, pending] of this.pendingCommands) {
       clearTimeout(pending.timeoutTimer);
     }

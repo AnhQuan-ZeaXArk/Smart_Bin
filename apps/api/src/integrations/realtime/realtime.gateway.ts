@@ -14,11 +14,19 @@ import {
   type RealtimeAlertPayload,
   type RealtimeTelemetryPayload
 } from './realtime.contract.js';
+import { aiDetectionInputSchema } from './ai-detection.schema.js';
 
 export * from './realtime.contract.js';
 export type TelemetryEvent = RealtimeTelemetryPayload;
 
 const tokenSchema = z.object({ sub: z.string().min(1) });
+
+const compartmentFillInputSchema = z.object({
+  distanceCm: z.coerce.number().optional().nullable(),
+  fillLevel: z.coerce.number().optional().nullable(),
+  status: z.string().optional().default('OK'),
+  updatedAt: z.string().optional().nullable()
+});
 
 const deviceTelemetryInputSchema = z.object({
   deviceId: z.string().min(1).default(CANONICAL_DEVICE_ID),
@@ -30,9 +38,18 @@ const deviceTelemetryInputSchema = z.object({
   firmwareVersion: z.string().optional().nullable(),
   ipAddress: z.string().optional().nullable(),
   sentAt: z.string().optional(),
+  subsystems: z.object({
+    yolo: z.string().optional(),
+    camera: z.string().optional(),
+    esp32: z.string().optional()
+  }).optional().nullable(),
+  aiDetection: aiDetectionInputSchema,
   sensors: z.object({
     distanceCm: z.coerce.number().optional().nullable(),
-    fillLevel: z.coerce.number().optional().nullable()
+    fillLevel: z.coerce.number().optional().nullable(),
+    organic: compartmentFillInputSchema.optional().nullable(),
+    recyclable: compartmentFillInputSchema.optional().nullable(),
+    nonRecyclable: compartmentFillInputSchema.optional().nullable()
   }).optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional().nullable()
 });
@@ -178,7 +195,11 @@ export class RealtimeGateway {
               ipAddress: parsed.data.ipAddress,
               sentAt: parsed.data.sentAt,
               sensors: parsed.data.sensors,
-              metadata: parsed.data.metadata
+              metadata: {
+                ...(parsed.data.metadata || {}),
+                ...(parsed.data.subsystems ? { subsystems: parsed.data.subsystems } : {}),
+                ...(parsed.data.aiDetection ? { aiDetection: parsed.data.aiDetection } : {})
+              }
             }).catch((err) => {
               console.error(`[RealtimeGateway] Error processing heartbeat in DeviceHealthService for ${normalizedDeviceId}:`, err);
             });

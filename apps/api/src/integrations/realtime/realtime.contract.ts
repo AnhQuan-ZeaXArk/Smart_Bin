@@ -109,3 +109,47 @@ export interface DeviceCommandStatusPayload {
   updatedAt: string;
 }
 
+/**
+ * Dữ liệu đo mức đầy của một ngăn rác cụ thể
+ */
+export interface CompartmentFillData {
+  distanceCm?: number | null;
+  fillLevel?: number | null;
+  status?: 'OK' | 'OUT_OF_RANGE' | 'SENSOR_ERROR' | 'STALE' | 'NOT_ATTACHED' | string;
+  updatedAt?: string | null;
+}
+
+/**
+ * Cấu trúc dữ liệu cảm biến siêu âm đa ngăn (Multi-Compartment)
+ */
+export interface MultiCompartmentSensorsData {
+  distanceCm?: number | null;
+  fillLevel?: number | null;
+  organic?: CompartmentFillData | null;
+  recyclable?: CompartmentFillData | null;
+  nonRecyclable?: CompartmentFillData | null;
+}
+
+/**
+ * Trạng thái hoạt động của các hệ thống con trên Raspberry Pi 5
+ */
+export interface SubsystemStatus {
+  yolo?: 'RUNNING' | 'STOPPED' | 'ERROR' | 'UNAVAILABLE' | string;
+  camera?: 'CONNECTED' | 'DISCONNECTED' | 'ERROR' | string;
+  esp32?: 'CONNECTED' | 'DISCONNECTED' | 'ERROR' | string;
+}
+
+/**
+ * Kết quả nhận diện gần nhất từ mô hình thị giác máy tính YOLO
+ * confidence: số thực trong khoảng [0, 1] (ví dụ 0.958 = 95.8%).
+ * Được kiểm tra bởi aiDetectionStrictSchema (ai-detection.schema.ts).
+ */
+export interface AiDetectionResult {
+  class: string;
+  rawClass?: string;
+  confidence: number;
+  inferenceTimeMs?: number | null;
+  timestamp: string;
+}
+
+

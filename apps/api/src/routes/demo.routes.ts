@@ -6,8 +6,16 @@ import { deviceHealthService } from '../services/device-health.service.js';
 import { authenticateDeviceToken, requireAuth, requireRole } from '../middleware/auth.js';
 import { handleDeviceCommand } from './device.routes.js';
 import { normalizeDeviceId } from '../config/device-id.config.js';
+import { aiDetectionInputSchema } from '../integrations/realtime/ai-detection.schema.js';
 
 const router = Router();
+
+const compartmentFillHeartbeatSchema = z.object({
+  distanceCm: z.coerce.number().optional().nullable(),
+  fillLevel: z.coerce.number().optional().nullable(),
+  status: z.string().optional().default('OK'),
+  updatedAt: z.string().optional().nullable()
+});
 
 const deviceHeartbeatSchema = z.object({
   deviceId: z.string().min(1, 'deviceId không được để trống'),
@@ -18,9 +26,18 @@ const deviceHeartbeatSchema = z.object({
   firmwareVersion: z.string().optional().nullable(),
   ipAddress: z.string().optional().nullable(),
   sentAt: z.string().optional(),
+  subsystems: z.object({
+    yolo: z.string().optional(),
+    camera: z.string().optional(),
+    esp32: z.string().optional()
+  }).optional().nullable(),
+  aiDetection: aiDetectionInputSchema,
   sensors: z.object({
     distanceCm: z.coerce.number().optional().nullable(),
-    fillLevel: z.coerce.number().optional().nullable()
+    fillLevel: z.coerce.number().optional().nullable(),
+    organic: compartmentFillHeartbeatSchema.optional().nullable(),
+    recyclable: compartmentFillHeartbeatSchema.optional().nullable(),
+    nonRecyclable: compartmentFillHeartbeatSchema.optional().nullable()
   }).optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional().nullable()
 });
