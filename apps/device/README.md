@@ -36,21 +36,39 @@ TELEMETRY_INTERVAL=5
 SMARTBIN_YOLO_STATE_FILE=/tmp/smartbin_yolo_state.json
 ```
 
-## YOLO IPC status
+## YOLO IPC status and ultrasonic sensor telemetry
 
-The YOLO process publishes `/tmp/smartbin_yolo_state.json` atomically through
-`publish_yolo_state()` in `smartbin_yolo_bridge.py`. The path can be overridden
-with `SMARTBIN_YOLO_STATE_FILE`. Keep the same bridge module available to both
+The YOLO process owns `/dev/ttyUSB0` at 115200 baud and publishes
+`/tmp/smartbin_yolo_state.json` atomically through `publish_yolo_state()` in
+`smartbin_yolo_bridge.py`. The path can be overridden with
+`SMARTBIN_YOLO_STATE_FILE`. Keep the same bridge module available to both
 processes: the existing YOLO script must be able to import it, and the Agent
 must use its copy in `/home/pi/smartbin-agent/`.
 
-Each successful inference publishes `status`, `camera`, `updatedAtEpoch`, and
+Each successful inference publishes `status`, `camera`, `updatedAtEpoch`,
 either `detection: null` or a detection containing the accepted class,
-confidence, and timezone-aware UTC timestamp. Only `taiche`, `khongtaiche`, and
-`huuco` are accepted. A frame without a valid object publishes `detection:
-null`; an earlier frame's detection is not reused. YOLO publishes
-STOPPED/DISCONNECTED when it exits. IPC write errors are logged and do not stop
-inference or ESP32 handling.
+confidence, and timezone-aware UTC timestamp, and optional `sensors` telemetry.
+Only `taiche`, `khongtaiche`, and `huuco` are accepted. A frame without a valid
+object publishes `detection: null`; an earlier frame's detection is not reused.
+
+In addition, `yolo_camera.py` parses ESP32 ultrasonic telemetry in non-blocking
+fashion from the same serial port:
+- `HC1: <integer>%` -> Recyclable (`recyclable`)
+- `HC2: <integer>%` -> Non-recyclable (`nonRecyclable`)
+- `HC3: <integer>%` -> Organic (`organic`)
+
+Each sensor maintains its own independent receive timestamp and 15-second
+freshness window (`HC_VALID_TIMEOUT_SEC = 15.0`). If a sensor stops reporting
+for > 15s, it is marked unavailable/null; it is never coerced to 0% and does
+not invalidate other valid sensors or the YOLO detection.
+
+The Agent reads IPC state and relays fresh sensor readings to the Backend in the
+telemetry payload (`sensors: { recyclable, nonRecyclable, organic }`). Missing or
+stale sensors are omitted or represented as null. The Agent never opens serial or
+accesses `/dev/ttyUSB0`.
+
+YOLO publishes STOPPED/DISCONNECTED when it exits. IPC write errors are logged
+and do not stop inference or ESP32 handling.
 
 The Agent rejects missing, malformed, invalid, stale, and future-dated state.
 The reader's stale timeout defaults to **10 seconds** (configured with

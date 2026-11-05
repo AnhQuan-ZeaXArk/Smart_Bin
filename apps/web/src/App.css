@@ -2052,3 +2052,20 @@ button:disabled { cursor: not-allowed; }
   gap: 4px;
   font-weight: 600;
 }
+
+.compartment-progress-bar.is-unavailable {
+  background: #f1f4f1;
+  border: 1px dashed #c8d6c8;
+}
+
+.compartment-fill-pct.text-unavailable {
+  color: #8fa096;
+}
+
+.compartment-gauge-card.is-unavailable {
+  background: #fafbfa;
+}
+
+.compartment-progress-fill.is-unavailable {
+  background: transparent;
+}

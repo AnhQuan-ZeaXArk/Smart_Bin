@@ -289,6 +289,33 @@ def build_telemetry_payload() -> dict:
         payload['aiDetection'] = ai_detection_payload
     if yolo_info.get('lastInferenceTimeMs') is not None:
         payload['metadata']['lastInferenceMs'] = yolo_info['lastInferenceTimeMs']
+
+    sensors_info = yolo_info.get('sensors')
+    if sensors_info and isinstance(sensors_info, dict):
+        mapping = {
+            'hc1': 'recyclable',
+            'hc2': 'nonRecyclable',
+            'hc3': 'organic'
+        }
+        sensors_payload = {}
+        for hc_key, compartment_key in mapping.items():
+            reading = sensors_info.get(hc_key)
+            if reading and isinstance(reading, dict):
+                fill_pct = reading.get('fillPercent')
+                epoch = reading.get('updatedAtEpoch')
+                if isinstance(fill_pct, int) and not isinstance(fill_pct, bool) and 0 <= fill_pct <= 100:
+                    iso_ts = None
+                    if isinstance(epoch, (int, float)) and not isinstance(epoch, bool):
+                        iso_ts = datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+                    sensors_payload[compartment_key] = {
+                        'fillLevel': fill_pct,
+                        'distanceCm': None,
+                        'status': 'OK',
+                        'updatedAt': iso_ts
+                    }
+        if sensors_payload:
+            payload['sensors'] = sensors_payload
+
     return payload
 
 

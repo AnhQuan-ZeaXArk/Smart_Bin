@@ -636,18 +636,18 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
     label: string,
     comp?: CompartmentFillData | null
   ) => {
-    const hasReading = comp && comp.fillLevel !== null && comp.fillLevel !== undefined;
-    const fillPct = hasReading ? Math.min(100, Math.max(0, comp.fillLevel!)) : 0;
     const isStale = comp?.status === 'STALE';
     const isError = comp?.status === 'SENSOR_ERROR' || comp?.status === 'OUT_OF_RANGE';
     const isNotAttached = !comp || comp.status === 'NOT_ATTACHED' || comp.status === undefined;
+    const hasReading = comp && comp.fillLevel !== null && comp.fillLevel !== undefined && !isStale && !isError && !isNotAttached;
+    const fillPct = hasReading ? Math.min(100, Math.max(0, comp.fillLevel!)) : 0;
 
     let tone = 'normal';
     if (fillPct >= 90) tone = 'critical';
     else if (fillPct >= 70) tone = 'warning';
 
     return (
-      <div key={key} className="compartment-gauge-card">
+      <div key={key} className={`compartment-gauge-card ${!hasReading ? 'is-unavailable' : ''}`}>
         <div className="compartment-gauge-head">
           <span className="compartment-name">{label}</span>
           {isStale ? (
@@ -655,28 +655,35 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
           ) : isError ? (
             <span className="compartment-status-tag tag-error">Lệch tầm đo</span>
           ) : isNotAttached ? (
-            <span className="compartment-status-tag tag-stale">Chưa gắn</span>
+            <span className="compartment-status-tag tag-stale">Chưa có dữ liệu</span>
           ) : (
             <span className="compartment-status-tag tag-ok">HOẠT ĐỘNG</span>
           )}
         </div>
 
         <div className="compartment-fill-display">
-          <span className="compartment-fill-pct">
+          <span className={`compartment-fill-pct ${!hasReading ? 'text-unavailable' : ''}`}>
             {hasReading ? `${fillPct}%` : '—'}
           </span>
           <span className="compartment-distance">
-            {comp?.distanceCm !== null && comp?.distanceCm !== undefined
+            {comp?.distanceCm !== null && comp?.distanceCm !== undefined && hasReading
               ? `${comp.distanceCm.toFixed(1)} cm`
-              : 'Chờ đo'}
+              : 'Chưa có dữ liệu'}
           </span>
         </div>
 
-        <div className="compartment-progress-bar">
-          <div
-            className={`compartment-progress-fill fill-tone-${tone}`}
-            style={{ width: `${hasReading ? fillPct : 0}%` }}
-          />
+        <div className={`compartment-progress-bar ${!hasReading ? 'is-unavailable' : ''}`}>
+          {hasReading ? (
+            <div
+              className={`compartment-progress-fill fill-tone-${tone}`}
+              style={{ width: `${fillPct}%` }}
+            />
+          ) : (
+            <div
+              className="compartment-progress-fill is-unavailable"
+              style={{ width: '0%' }}
+            />
+          )}
         </div>
 
         {isStale && (
@@ -934,9 +941,9 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
               </div>
 
               <div className="real-compartments-grid">
-                {renderCompartmentCard('ORGANIC', 'Rác hữu cơ', data?.sensors?.organic)}
-                {renderCompartmentCard('RECYCLABLE', 'Rác tái chế', data?.sensors?.recyclable)}
-                {renderCompartmentCard('NON_RECYCLABLE', 'Rác không tái chế', data?.sensors?.nonRecyclable)}
+                {renderCompartmentCard('RECYCLABLE', 'Rác tái chế (HC1)', data?.sensors?.recyclable)}
+                {renderCompartmentCard('NON_RECYCLABLE', 'Rác không tái chế (HC2)', data?.sensors?.nonRecyclable)}
+                {renderCompartmentCard('ORGANIC', 'Rác hữu cơ (HC3)', data?.sensors?.organic)}
               </div>
             </div>
 

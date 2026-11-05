@@ -22,6 +22,8 @@ if not math.isfinite(STALE_TIMEOUT_SEC) or STALE_TIMEOUT_SEC <= 0:
     STALE_TIMEOUT_SEC = 10.0
 
 VALID_DETECTION_CLASSES = frozenset({'taiche', 'khongtaiche', 'huuco'})
+VALID_SENSOR_KEYS = frozenset({'hc1', 'hc2', 'hc3'})
+HC_VALID_TIMEOUT_SEC = 15.0
 
 
 def normalize_class(raw_class: str) -> str:
@@ -67,10 +69,44 @@ def _valid_detection(detection: Any) -> bool:
     )
 
 
+def _sanitize_sensors_for_publish(sensors: Any) -> Optional[Dict[str, Optional[Dict[str, Any]]]]:
+    if sensors is None:
+        return None
+    if not isinstance(sensors, dict):
+        return None
+    sanitized: Dict[str, Optional[Dict[str, Any]]] = {}
+    for key in ('hc1', 'hc2', 'hc3'):
+        entry = sensors.get(key)
+        if entry is None:
+            sanitized[key] = None
+            continue
+        if isinstance(entry, dict):
+            fill = entry.get('fillPercent')
+            epoch = entry.get('updatedAtEpoch')
+            if (
+                isinstance(fill, int)
+                and not isinstance(fill, bool)
+                and 0 <= fill <= 100
+                and isinstance(epoch, (int, float))
+                and not isinstance(epoch, bool)
+                and math.isfinite(epoch)
+            ):
+                sanitized[key] = {
+                    'fillPercent': fill,
+                    'updatedAtEpoch': float(epoch)
+                }
+            else:
+                sanitized[key] = None
+        else:
+            sanitized[key] = None
+    return sanitized
+
+
 def publish_yolo_state(
     detection: Optional[Dict[str, Any]] = None,
     status: str = 'RUNNING',
-    camera: str = 'CONNECTED'
+    camera: str = 'CONNECTED',
+    sensors: Optional[Dict[str, Any]] = None
 ) -> bool:
     """Write one complete state to a same-directory temporary file and replace atomically."""
     if status not in ('RUNNING', 'STOPPED') or camera not in ('CONNECTED', 'DISCONNECTED'):
@@ -96,6 +132,9 @@ def publish_yolo_state(
             'timestamp': detection['timestamp']
         }
     }
+    sanitized_sensors = _sanitize_sensors_for_publish(sensors)
+    if sanitized_sensors is not None:
+        state['sensors'] = sanitized_sensors
 
     temporary_path = None
     try:
@@ -147,9 +186,11 @@ def read_yolo_state() -> Dict[str, Any]:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return _unavailable_state()
 
-    if not isinstance(data, dict) or set(data) != {
-        'status', 'camera', 'updatedAtEpoch', 'detection'
-    }:
+    allowed_keys = {'status', 'camera', 'updatedAtEpoch', 'detection'}
+    if not isinstance(data, dict):
+        return _unavailable_state()
+    keys = set(data)
+    if keys != allowed_keys and keys != (allowed_keys | {'sensors'}):
         return _unavailable_state()
 
     updated_epoch = data['updatedAtEpoch']
@@ -170,27 +211,50 @@ def read_yolo_state() -> Dict[str, Any]:
     detection = data['detection']
     if not _valid_detection(detection):
         return _unavailable_state()
-    if detection is None:
-        return {
-            'yoloStatus': 'RUNNING',
-            'cameraStatus': 'CONNECTED',
-            'latestDetection': None
-        }
 
-    parsed_timestamp = datetime.fromisoformat(
-        detection['timestamp'].replace('Z', '+00:00')
-    )
-    if parsed_timestamp > datetime.now(timezone.utc):
-        return _unavailable_state()
+    if detection is not None:
+        parsed_timestamp = datetime.fromisoformat(
+            detection['timestamp'].replace('Z', '+00:00')
+        )
+        if parsed_timestamp > datetime.now(timezone.utc):
+            return _unavailable_state()
+
+    validated_sensors = None
+    if 'sensors' in data and isinstance(data['sensors'], dict):
+        validated_sensors = {}
+        for key in ('hc1', 'hc2', 'hc3'):
+            entry = data['sensors'].get(key)
+            if isinstance(entry, dict):
+                fill = entry.get('fillPercent')
+                epoch = entry.get('updatedAtEpoch')
+                if (
+                    isinstance(fill, int)
+                    and not isinstance(fill, bool)
+                    and 0 <= fill <= 100
+                    and isinstance(epoch, (int, float))
+                    and not isinstance(epoch, bool)
+                    and math.isfinite(epoch)
+                    and epoch <= now
+                    and 0 <= (now - epoch) <= HC_VALID_TIMEOUT_SEC
+                ):
+                    validated_sensors[key] = {
+                        'fillPercent': fill,
+                        'updatedAtEpoch': float(epoch)
+                    }
+                else:
+                    validated_sensors[key] = None
+            else:
+                validated_sensors[key] = None
 
     return {
         'yoloStatus': 'RUNNING',
         'cameraStatus': 'CONNECTED',
-        'latestDetection': {
+        'latestDetection': None if detection is None else {
             'class': detection['class'],
             'confidence': float(detection['confidence']),
             'timestamp': detection['timestamp']
-        }
+        },
+        'sensors': validated_sensors
     }
 
 
@@ -198,5 +262,6 @@ def _unavailable_state() -> Dict[str, Any]:
     return {
         'yoloStatus': 'STOPPED',
         'cameraStatus': 'DISCONNECTED',
-        'latestDetection': None
+        'latestDetection': None,
+        'sensors': None
     }

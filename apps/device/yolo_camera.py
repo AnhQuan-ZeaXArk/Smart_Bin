@@ -4,6 +4,7 @@ import torch
 import serial
 import time
 import math
+import re
 from datetime import datetime, timezone
 from ultralytics import YOLO
 from smartbin_yolo_bridge import publish_yolo_state
@@ -67,26 +68,83 @@ def send_command(command):
 
 
 # =====================================================
-# 5. DOC PHAN HOI TU ESP32
+# 5. DOC PHAN HOI TU ESP32 VA PARSE TELEMETRY CAM BIEN
 # =====================================================
 
+HC_VALID_TIMEOUT_SEC = 15.0
+
+# Luu tru trang thai doc cam bien doc lap cho tung HC:
+# {"fillPercent": int, "updatedAtEpoch": float}
+sensor_state = {
+    "hc1": None,
+    "hc2": None,
+    "hc3": None
+}
+_serial_buffer = ""
+
+
 def read_esp32():
+    global _serial_buffer
 
     try:
+        if esp32 is None:
+            return
 
         while esp32.in_waiting > 0:
+            chunk = esp32.read(esp32.in_waiting).decode("utf-8", errors="ignore")
+            _serial_buffer += chunk
 
-            response = esp32.readline().decode(
-                "utf-8",
-                errors="ignore"
-            ).strip()
+        # Ngan buffer tran neu gap nhieu khong co newline
+        if len(_serial_buffer) > 4096:
+            _serial_buffer = _serial_buffer[-1024:]
 
-            if response:
-                print("[ESP32]", response)
+        while "\n" in _serial_buffer:
+            line, _serial_buffer = _serial_buffer.split("\n", 1)
+            line = line.strip()
+            if not line:
+                continue
+
+            print("[ESP32]", line)
+
+            # Khop mau cam bien: HC1: <int>%, HC2: <int>%, HC3: <int>%
+            match = re.match(r"^HC([123]):\s*(\d+)%$", line)
+            if match:
+                hc_num = match.group(1)
+                percent_str = match.group(2)
+                try:
+                    percent_val = int(percent_str)
+                    if 0 <= percent_val <= 100:
+                        sensor_key = f"hc{hc_num}"
+                        sensor_state[sensor_key] = {
+                            "fillPercent": percent_val,
+                            "updatedAtEpoch": time.time()
+                        }
+                except ValueError:
+                    pass
 
     except serial.SerialException as e:
-
         print("[USB SERIAL] Loi doc:", e)
+
+
+def get_live_sensors():
+    now = time.time()
+    has_any = False
+    result = {}
+    for key in ("hc1", "hc2", "hc3"):
+        reading = sensor_state.get(key)
+        if reading is not None:
+            age = now - reading["updatedAtEpoch"]
+            if 0 <= age <= HC_VALID_TIMEOUT_SEC and reading["updatedAtEpoch"] <= now:
+                result[key] = {
+                    "fillPercent": reading["fillPercent"],
+                    "updatedAtEpoch": reading["updatedAtEpoch"]
+                }
+                has_any = True
+            else:
+                result[key] = None
+        else:
+            result[key] = None
+    return result if has_any else None
 
 
 # =====================================================
@@ -180,9 +238,16 @@ def process_detection(result):
     return ipc_detection
 
 
-def _publish_state_safely(detection=None, status="RUNNING", camera="CONNECTED"):
+def _publish_state_safely(detection=None, status="RUNNING", camera="CONNECTED", sensors=None):
     try:
-        if not publish_yolo_state(detection=detection, status=status, camera=camera):
+        kwargs = {
+            "detection": detection,
+            "status": status,
+            "camera": camera
+        }
+        if sensors is not None:
+            kwargs["sensors"] = sensors
+        if not publish_yolo_state(**kwargs):
             logger.warning("YOLO IPC state was not published.")
     except Exception:
         logger.exception("YOLO IPC publishing failed; inference will continue.")
@@ -286,14 +351,17 @@ def main():
 
             # Xu ly nhan dien va gui lenh USB Serial
             detection = process_detection(result)
+
+            # Doc phan hoi ESP32 va cap nhat cam bien
+            read_esp32()
+            sensors = get_live_sensors()
+
             _publish_state_safely(
                 detection=detection,
                 status="RUNNING",
-                camera="CONNECTED"
+                camera="CONNECTED",
+                sensors=sensors
             )
-
-            # Doc phan hoi ESP32
-            read_esp32()
 
             # Ve bounding box
             annotated_frame = result.plot()
