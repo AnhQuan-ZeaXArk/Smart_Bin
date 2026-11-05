@@ -10,6 +10,7 @@ Kiểm thử độc lập các module phần cứng:
 """
 
 import os
+import json
 import sys
 import tempfile
 import time
@@ -120,38 +121,35 @@ class TestSmartBinYOLOBridge(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             state_file = os.path.join(temp_dir, 'yolo_state.json')
             with mock.patch.object(smartbin_yolo_bridge, 'STATE_FILE_PATH', state_file):
-                with mock.patch.object(smartbin_yolo_bridge.os, 'kill') as process_signal:
-                    success = export_detection(
-                        raw_class='plastic_bottle',
-                        confidence=0.958,
-                        inference_ms=32.4,
-                        camera_status='CONNECTED'
-                    )
-                    self.assertTrue(success)
+                success = export_detection(
+                    raw_class='taiche',
+                    confidence=0.958,
+                    inference_ms=32.4,
+                    camera_status='CONNECTED'
+                )
+                self.assertTrue(success)
+                state = read_yolo_state()
 
-                    state = read_yolo_state()
-
-        process_signal.assert_called_once_with(os.getpid(), 0)
         self.assertEqual(state['yoloStatus'], 'RUNNING')
         self.assertEqual(state['cameraStatus'], 'CONNECTED')
         self.assertIsNotNone(state['latestDetection'])
-        self.assertEqual(state['latestDetection']['class'], 'RECYCLABLE')
+        self.assertEqual(state['latestDetection']['class'], 'taiche')
         self.assertEqual(state['latestDetection']['confidence'], 0.958)
-        self.assertEqual(state['latestDetection']['inferenceTimeMs'], 32.4)
+        self.assertIn('timestamp', state['latestDetection'])
 
-    def test_dead_yolo_process_is_reported_as_stopped(self):
+    def test_stale_yolo_state_is_reported_as_stopped(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             state_file = os.path.join(temp_dir, 'yolo_state.json')
             with mock.patch.object(smartbin_yolo_bridge, 'STATE_FILE_PATH', state_file):
-                with mock.patch.object(
-                    smartbin_yolo_bridge.os,
-                    'kill',
-                    side_effect=ProcessLookupError
-                ) as process_signal:
-                    self.assertTrue(export_detection('apple', 0.9))
-                    state = read_yolo_state()
+                self.assertTrue(export_detection('huuco', 0.9))
+                with open(state_file, 'r+', encoding='utf-8') as state_file_handle:
+                    data = json.load(state_file_handle)
+                    data['updatedAtEpoch'] = time.time() - 10
+                    state_file_handle.seek(0)
+                    json.dump(data, state_file_handle)
+                    state_file_handle.truncate()
+                state = read_yolo_state()
 
-        process_signal.assert_called_once_with(os.getpid(), 0)
         self.assertEqual(state['yoloStatus'], 'STOPPED')
         self.assertEqual(state['cameraStatus'], 'DISCONNECTED')
         self.assertIsNone(state['latestDetection'])
@@ -164,41 +162,27 @@ class TestPiAgentTelemetryBuilder(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             state_file = os.path.join(temp_dir, 'yolo_state.json')
             with mock.patch.object(smartbin_yolo_bridge, 'STATE_FILE_PATH', state_file):
-                with mock.patch.object(smartbin_yolo_bridge.os, 'kill') as process_signal:
-                    pi_agent.esp32_reader.inject_mock_data(
-                        organic_cm=35.0,
-                        recyclable_cm=18.0,
-                        non_recyclable_cm=10.0
-                    )
-                    export_detection(
-                        raw_class='apple',
-                        confidence=0.915,
-                        inference_ms=42.0,
-                        camera_status='CONNECTED'
-                    )
-
-                    payload = pi_agent.build_telemetry_payload()
-
-        process_signal.assert_called_once_with(os.getpid(), 0)
+                export_detection(
+                    raw_class='huuco',
+                    confidence=0.915,
+                    inference_ms=42.0,
+                    camera_status='CONNECTED'
+                )
+                payload = pi_agent.build_telemetry_payload()
 
         self.assertEqual(payload['deviceId'], 'raspberry-pi-5')
         self.assertEqual(payload['status'], 'ONLINE')
         self.assertIn('subsystems', payload)
         self.assertEqual(payload['subsystems']['yolo'], 'RUNNING')
         self.assertEqual(payload['subsystems']['camera'], 'CONNECTED')
-        self.assertEqual(payload['subsystems']['esp32'], 'CONNECTED')
 
         self.assertIn('aiDetection', payload)
-        self.assertEqual(payload['aiDetection']['class'], 'ORGANIC')
+        self.assertEqual(payload['aiDetection']['class'], 'huuco')
         # Chuẩn hóa confidence dạng số thực trong [0.0, 1.0]
         self.assertEqual(payload['aiDetection']['confidence'], 0.915)
 
-        self.assertIn('sensors', payload)
-        sensors = payload['sensors']
-        self.assertIsNotNone(sensors['organic'])
-        self.assertIsNotNone(sensors['recyclable'])
-        self.assertIsNotNone(sensors['nonRecyclable'])
-        self.assertEqual(sensors['recyclable']['distanceCm'], 18.0)
+        self.assertNotIn('sensors', payload)
+        self.assertNotIn('esp32', payload['subsystems'])
 
 
 class TestPiAgentProcessSignaling(unittest.TestCase):

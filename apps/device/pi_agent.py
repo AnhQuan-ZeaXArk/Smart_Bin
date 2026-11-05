@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 """
 SmartBin Raspberry Pi 5 Agent (Debian 13 ARM64)
-Quản trị tiến trình & tích hợp phần cứng thực tế:
+Reports Raspberry Pi status and read-only YOLO IPC data to the Backend:
 1. Giao tiếp thời gian thực hai chiều với Backend qua Socket.IO (Bearer auth qua DEVICE_INGEST_TOKEN).
-2. Tích hợp mô hình AI YOLO Camera (Rapoo C200 USB Camera) chạy độc lập trong virtualenv.
-3. Tích hợp giao tiếp USB Serial với ESP32 (baud rate 115200) đọc cảm biến siêu âm 3 ngăn:
-   - RECYCLABLE (Rác tái chế)
-   - ORGANIC (Rác hữu cơ)
-   - NON_RECYCLABLE (Rác không tái chế)
-4. Tự động kiểm tra Camera và ESP32, tự kết nối lại khi thiết bị USB bị rút/cắm.
-5. Socket.IO reconnect hoạt động độc lập với AI và Serial process; không dừng YOLO khi mất mạng.
+2. The existing YOLO process owns the camera and inference; the Agent only reads IPC.
+3. ESP32 serial is not used by the Agent.
+4. Socket.IO retries do not start or stop local YOLO.
 6. Cơ chế chống chạy tiến trình trùng lặp (PID lock file).
 7. Xử lý an toàn tín hiệu dừng (SIGINT, SIGTERM) và dọn dẹp tài nguyên.
 """
@@ -19,6 +15,7 @@ import sys
 import time
 import signal
 import logging
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,8 +40,7 @@ try:
 except ImportError:
     socketio = None
 
-# Import các module phần cứng & cầu nối
-from esp32_serial import ESP32SerialReader
+# Import giao diện đọc trạng thái YOLO; Agent không điều khiển camera hoặc ESP32.
 from smartbin_yolo_bridge import read_yolo_state
 
 # Cấu hình logging bảo mật (không ghi token)
@@ -57,7 +53,7 @@ logger = logging.getLogger('SmartBin-Pi5')
 
 # Cấu hình thông số từ biến môi trường
 SERVER_URL = os.getenv('SERVER_URL', 'https://smartbin-api-e08b.onrender.com').rstrip('/')
-DEVICE_ID = os.getenv('DEVICE_ID', 'raspberry-pi-5').strip()
+DEVICE_ID = 'raspberry-pi-5'
 DEVICE_NAME = os.getenv('DEVICE_NAME', 'Raspberry Pi 5 Gateway').strip()
 FIRMWARE_VERSION = os.getenv('FIRMWARE_VERSION', '1.0.0').strip()
 DEVICE_INGEST_TOKEN = os.getenv('DEVICE_INGEST_TOKEN', '').strip()
@@ -65,20 +61,24 @@ TELEMETRY_INTERVAL = max(5, min(60, int(os.getenv('TELEMETRY_INTERVAL', '5'))))
 
 PID_FILE = Path(os.getenv('PID_FILE_PATH', '/tmp/smartbin_agent.pid'))
 
-# Khởi tạo driver đọc cảm biến ESP32 Serial
-esp32_reader = ESP32SerialReader()
+configured_device_id = os.getenv('DEVICE_ID', DEVICE_ID).strip()
+if configured_device_id != DEVICE_ID:
+    logger.warning("Ignoring configured DEVICE_ID; the required value is %s.", DEVICE_ID)
 
 # Biến cờ điều khiển
 running = True
 start_time = time.time()
+SOCKET_RETRY_INITIAL_SEC = 2.0
+SOCKET_RETRY_MAX_SEC = 60.0
+_socket_retry_delay = SOCKET_RETRY_INITIAL_SEC
+_next_socket_retry_at = 0.0
+_socket_connect_lock = threading.Lock()
 
-# Khởi tạo Socket.IO Client với cấu hình tự động Reconnect độc lập
+# Connection attempts are scheduled by the main loop, not Socket.IO's background
+# reconnect thread, so initial failures and disconnects share one retry policy.
 if socketio:
     sio = socketio.Client(
-        reconnection=True,
-        reconnection_attempts=0,     # Thử kết nối lại vô hạn
-        reconnection_delay=2,        # Thử lại sau 2 giây
-        reconnection_delay_max=10,   # Tối đa 10 giây
+        reconnection=False,
         logger=False,
         engineio_logger=False
     )
@@ -177,13 +177,15 @@ def connect():
 @sio_event
 def connect_error(data):
     """Sự kiện lỗi kết nối."""
-    logger.warning("Kết nối Socket.IO thất bại: %s. Đang tự động kết nối lại trong nền (YOLO và Cảm biến vẫn tiếp tục chạy độc lập)...", data)
+    logger.warning("Socket.IO connection failed; the agent will retry with backoff.")
 
 
 @sio_event
 def disconnect():
     """Sự kiện mất kết nối Socket.IO."""
+    global _next_socket_retry_at
     logger.warning("Đã ngắt kết nối khỏi Socket.IO Server. Đang tự động kết nối lại...")
+    _next_socket_retry_at = time.monotonic() + _socket_retry_delay
 
 
 @sio_on('realtime:connected')
@@ -195,38 +197,27 @@ def on_realtime_connected(data):
 @sio_on('device:command')
 def on_device_command(payload):
     """
-    Lắng nghe lệnh điều khiển từ SmartBin Web được Backend phân phối tới.
-    Chỉ thực thi các lệnh an toàn: PING và TRIGGER_ULTRASONIC.
-    Tuyệt đối từ chối các lệnh can thiệp nắp/servo hoặc reboot chưa kiểm chứng.
+    Chỉ xử lý PING; mọi lệnh khác bị từ chối mà không truy cập phần cứng.
     """
     if not isinstance(payload, dict):
         logger.warning("Nhận lệnh không đúng định dạng: %s", payload)
         return
 
-    command_id = payload.get('commandId', '')
-    action = payload.get('action', '')
+    command_id = payload.get('commandId')
+    action = payload.get('action')
+    if not isinstance(command_id, str) or not command_id.strip() \
+            or not isinstance(action, str) or not action.strip():
+        logger.warning("Nhận lệnh thiếu commandId hoặc action hợp lệ.")
+        return
 
     logger.info(">>> Nhận lệnh từ Web: action='%s' (commandId=%s)", action, command_id)
 
-    # 1. Gửi phản hồi ACK trạng thái RECEIVED ngay lập tức
-    ack_received = {
-        'commandId': command_id,
-        'deviceId': DEVICE_ID,
-        'action': action,
-        'status': 'RECEIVED',
-        'message': f"Raspberry Pi 5 đã nhận lệnh {action}"
-    }
-    if sio:
-        sio.emit('device:command:ack', ack_received)
-
-    # 2. Xử lý lệnh: Chỉ duy trì PING cho kiểm tra trạng thái thiết bị
     if action == 'PING':
         cpu_temp = get_cpu_temp_c()
         uptime = get_uptime_seconds()
         yolo_info = read_yolo_state()
-        serial_info = esp32_reader.get_readings()
 
-        ack_completed = {
+        ack = {
             'commandId': command_id,
             'deviceId': DEVICE_ID,
             'action': 'PING',
@@ -238,30 +229,28 @@ def on_device_command(payload):
                 'platform': 'Raspberry Pi 5 (Debian 13 ARM64)',
                 'subsystems': {
                     'yolo': yolo_info.get('yoloStatus'),
-                    'camera': yolo_info.get('cameraStatus'),
-                    'esp32': serial_info.get('status')
+                    'camera': yolo_info.get('cameraStatus')
                 },
                 'timestamp': datetime.now(timezone.utc).isoformat()
             },
             'executedAt': datetime.now(timezone.utc).isoformat()
         }
         if sio:
-            sio.emit('device:command:ack', ack_completed)
+            sio.emit('device:command:ack', ack)
         logger.info("<<< Hoàn tất lệnh PING và gửi ACK COMPLETED")
 
     else:
-        # Từ chối tất cả các lệnh khác (bao gồm TRIGGER_ULTRASONIC và Servo) để bảo đảm an toàn phần cứng
-        ack_rejected = {
+        ack = {
             'commandId': command_id,
             'deviceId': DEVICE_ID,
             'action': action,
             'status': 'FAILED',
-            'message': f"Lệnh '{action}' không được phép thực thi trong giai đoạn này (Chỉ duy trì PING; không thực hiện thao tác điều khiển phần cứng).",
+            'message': f"Lệnh '{action}' không được phép thực thi trong giai đoạn này. Chỉ cho phép PING.",
             'error': 'ACTION_NOT_PERMITTED',
             'executedAt': datetime.now(timezone.utc).isoformat()
         }
         if sio:
-            sio.emit('device:command:ack', ack_rejected)
+            sio.emit('device:command:ack', ack)
         logger.warning("<<< Lệnh '%s' bị từ chối do chính sách an toàn phần cứng.", action)
 
 
@@ -272,43 +261,19 @@ def build_telemetry_payload() -> dict:
     local_ip = get_local_ip()
     sent_at = datetime.now(timezone.utc).isoformat()
 
-    # 1. Thu thập dữ liệu từ YOLO AI qua cầu nối IPC (smartbin_yolo_bridge)
-    # yolo_camera.py đang chạy trong ~/yolo-env-new trên Pi 5 sẽ xuất kết quả ra file này
+    # Read-only IPC access; YOLO owns its camera and inference process.
     yolo_info = read_yolo_state()
-
-    # Thu thập dữ liệu từ ESP32 Serial
-    serial_info = esp32_reader.get_readings()
-    comps = serial_info.get('compartments', {})
-
-    # Tính toán distanceCm / fillLevel chung để tương thích ngược với API cũ
-    primary_dist = None
-    primary_fill = None
-    for k in ['recyclable', 'organic', 'nonRecyclable']:
-        if comps.get(k, {}).get('distanceCm') is not None:
-            primary_dist = comps[k]['distanceCm']
-            primary_fill = comps[k]['fillLevel']
-            break
-
-    sensors_payload = {
-        'distanceCm': primary_dist,
-        'fillLevel': primary_fill,
-        'organic': comps.get('organic'),
-        'recyclable': comps.get('recyclable'),
-        'nonRecyclable': comps.get('nonRecyclable')
-    }
 
     subsystems_payload = {
         'yolo': yolo_info.get('yoloStatus', 'STOPPED'),
-        'camera': yolo_info.get('cameraStatus', 'DISCONNECTED'),
-        'esp32': serial_info.get('status', 'DISCONNECTED')
+        'camera': yolo_info.get('cameraStatus', 'DISCONNECTED')
     }
 
     ai_detection_payload = yolo_info.get('latestDetection')
 
-    return {
+    payload = {
         'deviceId': DEVICE_ID,
         'deviceName': DEVICE_NAME,
-        'deviceType': 'RASPBERRY_PI',
         'status': 'ONLINE',
         'uptimeSeconds': uptime,
         'cpuTempC': cpu_temp,
@@ -316,14 +281,66 @@ def build_telemetry_payload() -> dict:
         'ipAddress': local_ip,
         'sentAt': sent_at,
         'subsystems': subsystems_payload,
-        'aiDetection': ai_detection_payload,
-        'sensors': sensors_payload,
         'metadata': {
-            'platform': 'Raspberry Pi 5 (Debian 13 ARM64)',
-            'detectionCount': yolo_info.get('detectionCount', 0),
-            'lastInferenceMs': yolo_info.get('lastInferenceTimeMs')
+            'platform': 'Raspberry Pi 5 (Debian 13 ARM64)'
         }
     }
+    if ai_detection_payload is not None:
+        payload['aiDetection'] = ai_detection_payload
+    if yolo_info.get('lastInferenceTimeMs') is not None:
+        payload['metadata']['lastInferenceMs'] = yolo_info['lastInferenceTimeMs']
+    return payload
+
+
+def ensure_socket_connection(now: float | None = None) -> bool:
+    """Make one due Socket.IO connection attempt, backing off on transient failures."""
+    global _socket_retry_delay, _next_socket_retry_at
+    if not sio or not DEVICE_INGEST_TOKEN:
+        return False
+    if sio.connected:
+        return True
+
+    current_time = time.monotonic() if now is None else now
+    if current_time < _next_socket_retry_at:
+        return False
+    if not _socket_connect_lock.acquire(blocking=False):
+        return False
+
+    try:
+        if sio.connected:
+            return True
+        try:
+            sio.connect(
+                SERVER_URL,
+                auth={
+                    'type': 'device',
+                    'token': DEVICE_INGEST_TOKEN,
+                    'deviceId': DEVICE_ID
+                },
+                transports=['websocket', 'polling'],
+                wait_timeout=5
+            )
+        except Exception as error:
+            logger.warning(
+                "Socket.IO connection attempt failed (%s); retrying with backoff.",
+                type(error).__name__
+            )
+            retry_base_time = current_time if now is not None else time.monotonic()
+            _next_socket_retry_at = retry_base_time + _socket_retry_delay
+            _socket_retry_delay = min(_socket_retry_delay * 2, SOCKET_RETRY_MAX_SEC)
+            return False
+
+        if not sio.connected:
+            retry_base_time = current_time if now is not None else time.monotonic()
+            _next_socket_retry_at = retry_base_time + _socket_retry_delay
+            _socket_retry_delay = min(_socket_retry_delay * 2, SOCKET_RETRY_MAX_SEC)
+            return False
+
+        _socket_retry_delay = SOCKET_RETRY_INITIAL_SEC
+        _next_socket_retry_at = 0.0
+        return True
+    finally:
+        _socket_connect_lock.release()
 
 
 def send_telemetry():
@@ -335,16 +352,15 @@ def send_telemetry():
         try:
             sio.emit('device:telemetry', payload)
             logger.info(
-                "Socket.IO telemetry -> uptime: %ss | temp: %s°C | Subsystems: [YOLO: %s, Cam: %s, ESP32: %s]",
+                "Socket.IO telemetry -> uptime: %ss | temp: %s°C | Subsystems: [YOLO: %s, Cam: %s]",
                 payload['uptimeSeconds'],
                 payload['cpuTempC'],
                 payload['subsystems']['yolo'],
-                payload['subsystems']['camera'],
-                payload['subsystems']['esp32']
+                payload['subsystems']['camera']
             )
             return True
         except Exception as e:
-            logger.error("Lỗi khi emit device:telemetry: %s", e)
+            logger.error("Socket.IO telemetry emit failed (%s).", type(e).__name__)
 
     # 2. Fallback qua HTTP POST nếu Socket.IO chưa kết nối
     if requests and DEVICE_INGEST_TOKEN:
@@ -359,9 +375,9 @@ def send_telemetry():
                 logger.info("Fallback HTTP Heartbeat thành công -> uptime: %ss | temp: %s°C", payload['uptimeSeconds'], payload['cpuTempC'])
                 return True
             else:
-                logger.warning("Fallback HTTP Heartbeat trả về mã lỗi %s: %s", resp.status_code, resp.text)
+                logger.warning("Fallback HTTP heartbeat returned status %s.", resp.status_code)
         except Exception as e:
-            logger.warning("Fallback HTTP Heartbeat thất bại: %s", e)
+            logger.warning("Fallback HTTP heartbeat failed (%s).", type(e).__name__)
 
     return False
 
@@ -371,12 +387,6 @@ def handle_exit(signum, frame):
     global running
     logger.info("Đang dừng Pi Agent và các hệ thống con...")
     running = False
-
-    # Dừng driver phần cứng
-    try:
-        esp32_reader.stop()
-    except Exception:
-        pass
 
     if sio and sio.connected:
         try:
@@ -411,32 +421,13 @@ def main():
         release_pid_lock()
         sys.exit(1)
 
-    # 1. Khởi động ESP32 Serial Reader
-    logger.info("Khởi động ESP32 Serial Reader...")
-    esp32_reader.start()
-
-    # 2. Giám sát YOLO AI qua cầu nối IPC (smartbin_yolo_bridge)
-    # Giữ nguyên chương trình yolo_camera.py chạy độc lập trong virtualenv ~/yolo-env-new
+    # Read-only IPC monitoring; the existing YOLO process owns its camera and inference.
     state_file = os.getenv('SMARTBIN_YOLO_STATE_FILE', '/tmp/smartbin_yolo_state.json')
     logger.info("Chế độ Bridge: Đọc kết quả nhận diện từ yolo_camera.py qua %s...", state_file)
 
-    # 3. Kết nối Socket.IO
-    logger.info("Đang khởi tạo kết nối Socket.IO...")
-    try:
-        sio.connect(
-            SERVER_URL,
-            auth={
-                'type': 'device',
-                'token': DEVICE_INGEST_TOKEN,
-                'deviceId': DEVICE_ID
-            },
-            transports=['websocket', 'polling']
-        )
-    except Exception as e:
-        logger.warning("Chưa thể kết nối Socket.IO ngay lập tức (%s). Đang chạy chế độ tự kết nối lại trong nền...", e)
-
-    # 4. Vòng lặp gửi Telemetry định kỳ
+    # Keep the agent alive and retry transient network failures with bounded backoff.
     while running:
+        ensure_socket_connection()
         send_telemetry()
         time.sleep(TELEMETRY_INTERVAL)
 

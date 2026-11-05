@@ -1,14 +1,7 @@
-# Dependencies for Raspberry Pi 5 SmartBin Agent (Debian 13 ARM64)
-# Compatible with Socket.IO v4 server (^4.8.x) on SmartBin API
+# Runtime dependencies for the SmartBin Pi Agent.
+# The existing YOLO environment and ESP32 firmware are managed separately.
 python-socketio[client]>=5.11.0,<6.0.0
 python-engineio>=4.9.0,<5.0.0
 websocket-client>=1.7.0
 requests>=2.31.0
 python-dotenv>=1.0.0
-
-# Hardware & AI Integration Dependencies
-pyserial>=3.5
-# Lưu ý OpenCV: Tái sử dụng gói opencv-python đã cài đặt trong ~/yolo-env-new/
-# Không bắt buộc cài lại opencv-python-headless để tránh làm hỏng chế độ cv2.imshow() của yolo_camera.py
-opencv-python>=4.8.0
-ultralytics>=8.0.0
