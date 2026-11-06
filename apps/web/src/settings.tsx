@@ -80,6 +80,16 @@ export function SettingsPage() {
   const [remoteNotice, setRemoteNotice] = useState('');
   const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
   const latestThresholdsTimestampRef = useRef<number>(0);
+  const selfSaveTrackerRef = useRef<{
+    isSaving: boolean;
+    thresholds: SmartBinThresholds | null;
+    savedAt: number;
+    updatedAt?: string;
+  }>({
+    isSaving: false,
+    thresholds: null,
+    savedAt: 0
+  });
 
   useEffect(() => {
     const handleConnectionChange = () => setIsOnline(window.navigator.onLine);
@@ -162,7 +172,29 @@ export function SettingsPage() {
       }));
       setThresholdError('');
       saveSmartBinThresholds(nextThresholds);
-      setRemoteNotice('Cấu hình đã được cập nhật bởi một thiết bị khác.');
+
+      // Phân biệt nguồn phát sinh sự kiện để không hiển thị thông báo trùng lặp cho chính thiết bị vừa lưu
+      const tracker = selfSaveTrackerRef.current;
+      const isMatchingThresholds =
+        tracker.thresholds !== null &&
+        tracker.thresholds.warningThreshold === nextThresholds.warningThreshold &&
+        tracker.thresholds.nearFullThreshold === nextThresholds.nearFullThreshold &&
+        tracker.thresholds.fullThreshold === nextThresholds.fullThreshold;
+
+      const isSelfSaveEcho =
+        tracker.isSaving ||
+        (Boolean(tracker.updatedAt) && tracker.updatedAt === String(p.updatedAt)) ||
+        (isMatchingThresholds && Date.now() - tracker.savedAt < 10_000);
+
+      if (isSelfSaveEcho) {
+        // Sự kiện vọng lại từ chính thao tác lưu của thiết bị hiện tại:
+        // Không hiển thị "Cấu hình đã được cập nhật bởi một thiết bị khác."
+        setRemoteNotice('');
+      } else {
+        // Sự kiện thực sự từ thiết bị khác: Cập nhật dữ liệu và hiển thị thông báo đồng bộ
+        setStatus('');
+        setRemoteNotice('Cấu hình đã được cập nhật bởi một thiết bị khác.');
+      }
     };
 
     socket.on('settings:thresholds:updated', handleThresholdsUpdated);
@@ -184,6 +216,7 @@ export function SettingsPage() {
       return next;
     });
     setRemoteNotice('');
+    setStatus('');
   }
 
   function updateNotification(key: keyof NotificationConfig, value: boolean) {
@@ -210,6 +243,12 @@ export function SettingsPage() {
     setStatus('');
     setRemoteNotice('');
     setIsSaving(true);
+
+    selfSaveTrackerRef.current = {
+      isSaving: true,
+      thresholds: { ...nextThresholds },
+      savedAt: Date.now()
+    };
 
     try {
       // Gửi yêu cầu cập nhật lên Backend lưu vào PostgreSQL
@@ -241,10 +280,19 @@ export function SettingsPage() {
       const savedTime = result?.thresholds?.updatedAt ? new Date(result.thresholds.updatedAt).getTime() : Date.now();
       latestThresholdsTimestampRef.current = savedTime;
 
+      selfSaveTrackerRef.current = {
+        isSaving: false,
+        thresholds: { ...saved },
+        savedAt: Date.now(),
+        updatedAt: result?.thresholds?.updatedAt
+      };
+
       saveSmartBinThresholds(saved);
       localStorage.setItem('smartbin-demo-settings', JSON.stringify({ ...settings, ...saved }));
-      setStatus('Lưu cấu hình thành công vào cơ sở dữ liệu PostgreSQL.');
+      setStatus('Lưu ngưỡng thành công!');
+      setRemoteNotice('');
     } catch (error) {
+      selfSaveTrackerRef.current.isSaving = false;
       const msg = error instanceof Error ? error.message : 'Lỗi kết nối khi lưu cấu hình.';
       setThresholdError(msg);
     } finally {
@@ -451,8 +499,6 @@ export function SettingsPage() {
             </div>
           </div>
         </section>
-
-        {status && <p className="settings-success">{status}</p>}
       </div>
     </section>
   );
