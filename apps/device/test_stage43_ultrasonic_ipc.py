@@ -540,10 +540,10 @@ class TestFrontendStaleSensorContract(unittest.TestCase):
         # 4. Verify progress fill uses is-unavailable class when not reading
         self.assertIn("compartment-progress-fill is-unavailable", content)
 
-        # 5. Verify 3-compartment mapping order
-        self.assertIn("renderCompartmentCard('RECYCLABLE', 'Rác tái chế (HC1)'", content)
-        self.assertIn("renderCompartmentCard('NON_RECYCLABLE', 'Rác không tái chế (HC2)'", content)
-        self.assertIn("renderCompartmentCard('ORGANIC', 'Rác hữu cơ (HC3)'", content)
+        # 5. Verify 3-compartment mapping order and new simplified labels
+        self.assertIn("renderCompartmentCard('RECYCLABLE', 'Rác tái chế'", content)
+        self.assertIn("renderCompartmentCard('NON_RECYCLABLE', 'Rác không tái chế'", content)
+        self.assertIn("renderCompartmentCard('ORGANIC', 'Rác hữu cơ'", content)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useRealtime } from './realtime-store';
-import { useAuth } from './auth-context';
 import { apiUrl } from './api-config';
 import {
   IconCpu,
@@ -8,10 +7,7 @@ import {
   IconAlertTriangle,
   IconXCircle,
   IconRefresh,
-  IconInfo,
-  IconRadio,
-  IconActivity,
-  IconCamera
+  IconRadio
 } from './icons';
 import {
   type DeviceStatusEnum,
@@ -22,7 +18,6 @@ import {
   CANONICAL_PI_DEVICE_ID,
   isRaspberryPiDevice
 } from './device-utils';
-import { formatConfidence } from './ai-confidence';
 
 export interface CompartmentFillData {
   distanceCm?: number | null;
@@ -84,16 +79,6 @@ export interface RealDeviceData {
   };
 }
 
-interface CommandExecutionState {
-  status: 'IDLE' | 'PENDING' | 'RECEIVED' | 'COMPLETED' | 'FAILED' | 'TIMEOUT';
-  action: 'PING' | 'TRIGGER_ULTRASONIC' | null;
-  latencyMs?: number;
-  message?: string;
-  result?: Record<string, unknown> | null;
-  error?: string | null;
-  updatedAt?: number;
-}
-
 interface RealDeviceCardProps {
   /** Optional compact styling */
   compact?: boolean;
@@ -103,25 +88,16 @@ interface RealDeviceCardProps {
 
 export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCardProps) {
   const { socket, connected: realtimeConnected } = useRealtime();
-  const { token, user, systemMode } = useAuth();
-  const canExecuteCommands = systemMode === 'demo' || user?.role === 'ADMIN' || user?.role === 'SUPERVISOR';
   const [data, setData] = useState<RealDeviceData | null>(null);
   const [receivedAtLocalMs, setReceivedAtLocalMs] = useState<number>(() => Date.now());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pulse, setPulse] = useState(false);
-  const [showGuide, setShowGuide] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   // Timestamp guard using ref to avoid unsafe state updater side-effects
   const latestHeartbeatTsRef = useRef<number>(0);
-
-  // Trạng thái thực thi lệnh điều khiển hai chiều
-  const [commandState, setCommandState] = useState<CommandExecutionState>({
-    status: 'IDLE',
-    action: null
-  });
 
   // Update clock every second for live age calculation
   useEffect(() => {
@@ -273,7 +249,7 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
       });
   }, []);
 
-  // Realtime Socket.IO listeners: device:heartbeat, device:command:status, and reconnection sync
+  // Realtime Socket.IO listeners: device:heartbeat, device:status, and reconnection sync
   useEffect(() => {
     if (!socket) return;
 
@@ -327,23 +303,6 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
       setTimeout(() => setPulse(false), 1200);
     };
 
-    const handleCommandStatus = (statusPayload: any) => {
-      setCommandState({
-        status: statusPayload.status,
-        action: statusPayload.action,
-        latencyMs: statusPayload.latencyMs,
-        message: statusPayload.message,
-        result: statusPayload.result,
-        error: statusPayload.error,
-        updatedAt: Date.now()
-      });
-
-      if (statusPayload.status === 'COMPLETED') {
-        setPulse(true);
-        setTimeout(() => setPulse(false), 1200);
-      }
-    };
-
     const handleReconnect = () => {
       handleManualRefresh();
     };
@@ -384,13 +343,11 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
 
     socket.on('device:heartbeat', handleHeartbeat);
     socket.on('device:status', handleDeviceStatus);
-    socket.on('device:command:status', handleCommandStatus);
     socket.on('connect', handleReconnect);
 
     return () => {
       socket.off('device:heartbeat', handleHeartbeat);
       socket.off('device:status', handleDeviceStatus);
-      socket.off('device:command:status', handleCommandStatus);
       socket.off('connect', handleReconnect);
     };
   }, [socket, handleManualRefresh]);
@@ -426,154 +383,6 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
     return `${h} giờ trước`;
   }
 
-  // Gửi lệnh PING an toàn tới Raspberry Pi 5
-  const handleSendPing = async () => {
-    if (liveStatus === 'OFFLINE' || commandState.status === 'PENDING') return;
-
-    if (!canExecuteCommands) {
-      setCommandState({
-        status: 'FAILED',
-        action: 'PING',
-        message: 'Từ chối quyền: Cần đăng nhập tài khoản Quản trị viên hoặc Giám sát viên để gửi lệnh điều khiển tới thiết bị.',
-        updatedAt: Date.now()
-      });
-      return;
-    }
-
-    setCommandState({
-      status: 'PENDING',
-      action: 'PING',
-      message: 'Đang gửi lệnh PING tới Raspberry Pi 5...',
-      updatedAt: Date.now()
-    });
-
-    try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const res = await fetch(`${apiUrl}/api/demo/device-command`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          deviceId: CANONICAL_PI_DEVICE_ID,
-          action: 'PING'
-        })
-      });
-
-      const json = await res.json();
-      if (!res.ok) {
-        let msg = json.message || 'Lệnh PING thất bại';
-        if (res.status === 401) {
-          msg = 'Phiên làm việc hết hạn hoặc chưa đăng nhập (401). Vui lòng đăng nhập lại.';
-        } else if (res.status === 403) {
-          msg = 'Từ chối quyền (403): Chỉ Quản trị viên và Giám sát viên mới có quyền gửi lệnh.';
-        }
-        setCommandState({
-          status: json.error === 'COMMAND_TIMEOUT' ? 'TIMEOUT' : 'FAILED',
-          action: 'PING',
-          message: msg,
-          error: json.error,
-          updatedAt: Date.now()
-        });
-      } else {
-        setCommandState({
-          status: 'COMPLETED',
-          action: 'PING',
-          message: json.message || 'Pong! Raspberry Pi 5 đã phản hồi thành công.',
-          latencyMs: json.latencyMs,
-          result: json.result,
-          updatedAt: Date.now()
-        });
-        setPulse(true);
-        setTimeout(() => setPulse(false), 1200);
-      }
-    } catch (err) {
-      setCommandState({
-        status: 'FAILED',
-        action: 'PING',
-        message: err instanceof Error ? err.message : 'Lỗi kết nối khi gửi lệnh PING',
-        updatedAt: Date.now()
-      });
-    }
-  };
-
-  // Gửi lệnh đo siêu âm (TRIGGER_ULTRASONIC)
-  const handleTriggerUltrasonic = async () => {
-    if (liveStatus === 'OFFLINE' || commandState.status === 'PENDING') return;
-
-    if (!canExecuteCommands) {
-      setCommandState({
-        status: 'FAILED',
-        action: 'TRIGGER_ULTRASONIC',
-        message: 'Từ chối quyền: Cần đăng nhập tài khoản Quản trị viên hoặc Giám sát viên để gửi lệnh tới thiết bị.',
-        updatedAt: Date.now()
-      });
-      return;
-    }
-
-    setCommandState({
-      status: 'PENDING',
-      action: 'TRIGGER_ULTRASONIC',
-      message: 'Đang gửi yêu cầu đo cảm biến siêu âm tới Pi 5...',
-      updatedAt: Date.now()
-    });
-
-    try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const res = await fetch(`${apiUrl}/api/demo/device-command`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          deviceId: CANONICAL_PI_DEVICE_ID,
-          action: 'TRIGGER_ULTRASONIC'
-        })
-      });
-
-      const json = await res.json();
-      if (!res.ok) {
-        let msg = json.message || 'Cảm biến chưa sẵn sàng hoặc chưa kết nối chân GPIO vật lý.';
-        if (res.status === 401) {
-          msg = 'Phiên làm việc hết hạn hoặc chưa đăng nhập (401). Vui lòng đăng nhập lại.';
-        } else if (res.status === 403) {
-          msg = 'Từ chối quyền (403): Chỉ Quản trị viên và Giám sát viên mới có quyền gửi lệnh.';
-        }
-        setCommandState({
-          status: json.error === 'COMMAND_TIMEOUT' ? 'TIMEOUT' : 'FAILED',
-          action: 'TRIGGER_ULTRASONIC',
-          message: msg,
-          error: json.error,
-          updatedAt: Date.now()
-        });
-      } else {
-        setCommandState({
-          status: 'COMPLETED',
-          action: 'TRIGGER_ULTRASONIC',
-          message: json.message || 'Đo cảm biến siêu âm thành công.',
-          latencyMs: json.latencyMs,
-          result: json.result,
-          updatedAt: Date.now()
-        });
-      }
-    } catch (err) {
-      setCommandState({
-        status: 'FAILED',
-        action: 'TRIGGER_ULTRASONIC',
-        message: err instanceof Error ? err.message : 'Lỗi kết nối khi gửi lệnh đo siêu âm',
-        updatedAt: Date.now()
-      });
-    }
-  };
-
   const statusBadge = useMemo(() => {
     switch (liveStatus) {
       case 'ONLINE':
@@ -598,38 +407,6 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
         );
     }
   }, [liveStatus]);
-
-  // Kiểm tra cảm biến siêu âm đã có dữ liệu thực tế chưa
-  const hasUltrasonicSensorData = useMemo(() => {
-    return (
-      data?.sensors !== null &&
-      data?.sensors !== undefined &&
-      typeof data.sensors.distanceCm === 'number'
-    );
-  }, [data]);
-
-  const yoloStatus = data?.subsystems?.yolo || 'STOPPED';
-  const cameraStatus = data?.subsystems?.camera || 'DISCONNECTED';
-  const esp32Status = data?.subsystems?.esp32 || 'DISCONNECTED';
-
-  const yoloPill = useMemo(() => {
-    if (yoloStatus === 'RUNNING') return { cls: 'is-ok', text: 'RUNNING (Đang chạy)' };
-    if (yoloStatus === 'ERROR') return { cls: 'is-error', text: 'ERROR (Lỗi)' };
-    if (yoloStatus === 'UNAVAILABLE') return { cls: 'is-warning', text: 'UNAVAILABLE (Chưa cài)' };
-    return { cls: 'is-warning', text: 'STOPPED (Đang dừng)' };
-  }, [yoloStatus]);
-
-  const cameraPill = useMemo(() => {
-    if (cameraStatus === 'CONNECTED') return { cls: 'is-ok', text: 'CONNECTED (Rapoo C200)' };
-    if (cameraStatus === 'ERROR') return { cls: 'is-error', text: 'ERROR (Lỗi camera)' };
-    return { cls: 'is-warning', text: 'DISCONNECTED (Chưa cắm)' };
-  }, [cameraStatus]);
-
-  const esp32Pill = useMemo(() => {
-    if (esp32Status === 'CONNECTED') return { cls: 'is-ok', text: 'CONNECTED (115200 baud)' };
-    if (esp32Status === 'ERROR') return { cls: 'is-error', text: 'ERROR (Lỗi Serial)' };
-    return { cls: 'is-warning', text: 'DISCONNECTED (Chưa cắm USB)' };
-  }, [esp32Status]);
 
   const renderCompartmentCard = (
     key: string,
@@ -665,11 +442,11 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
           <span className={`compartment-fill-pct ${!hasReading ? 'text-unavailable' : ''}`}>
             {hasReading ? `${fillPct}%` : '—'}
           </span>
-          <span className="compartment-distance">
-            {comp?.distanceCm !== null && comp?.distanceCm !== undefined && hasReading
-              ? `${comp.distanceCm.toFixed(1)} cm`
-              : 'Chưa có dữ liệu'}
-          </span>
+          {hasReading && comp?.distanceCm !== null && comp?.distanceCm !== undefined && (
+            <span className="compartment-distance">
+              {comp.distanceCm.toFixed(1)} cm
+            </span>
+          )}
         </div>
 
         <div className={`compartment-progress-bar ${!hasReading ? 'is-unavailable' : ''}`}>
@@ -750,29 +527,6 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
           <div className="real-device-loading">Đang kết nối và kiểm tra thiết bị Raspberry Pi 5...</div>
         ) : (
           <>
-            {/* Subsystems Strip: YOLO AI, Rapoo C200 Camera, ESP32 Serial */}
-            <div className="real-subsystems-strip">
-              <span className="real-subsystems-title">
-                <IconCpu />
-                <span>Hệ Thống Con:</span>
-              </span>
-
-              <div className={`subsystem-pill ${yoloPill.cls}`} title="Trạng thái tiến trình AI YOLO trong môi trường ảo venv">
-                <span className="subsystem-dot" />
-                <span>YOLO AI: {yoloPill.text}</span>
-              </div>
-
-              <div className={`subsystem-pill ${cameraPill.cls}`} title="Rapoo C200 USB Camera (/dev/video*)">
-                <span className="subsystem-dot" />
-                <span>Camera: {cameraPill.text}</span>
-              </div>
-
-              <div className={`subsystem-pill ${esp32Pill.cls}`} title="ESP32 USB Serial (115200 baud, newline-delimited JSON)">
-                <span className="subsystem-dot" />
-                <span>ESP32 Serial: {esp32Pill.text}</span>
-              </div>
-            </div>
-
             {/* Real Hardware Metrics Grid */}
             <div className="real-device-metrics-grid">
               {/* Metric 1: Trạng thái kết nối */}
@@ -860,74 +614,9 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
                   )}
                 </div>
                 <span className="metric-hint">
-                  {data?.isSocketConnected ? 'Hỗ trợ lệnh hai chiều tức thì' : 'Đang ở chế độ nhịp HTTP'}
+                  {data?.isSocketConnected ? 'Duy trì kết nối hai chiều' : 'Đang ở chế độ nhịp HTTP'}
                 </span>
               </div>
-
-              {/* Metric 7: Cảm biến siêu âm thực tế (nếu Pi đã gửi) */}
-              {hasUltrasonicSensorData && (
-                <div className="real-metric-card">
-                  <span className="metric-label">Cảm biến siêu âm</span>
-                  <strong className="metric-value">
-                    {data?.sensors?.distanceCm !== null && data?.sensors?.distanceCm !== undefined
-                      ? `${data.sensors.distanceCm.toFixed(1)} cm`
-                      : '—'}
-                  </strong>
-                  <span className="metric-hint">
-                    {data?.sensors?.fillLevel !== null && data?.sensors?.fillLevel !== undefined
-                      ? `Mức đầy: ${data.sensors.fillLevel}%`
-                      : 'Dữ liệu đo thực tế'}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* AI Detection Panel */}
-            <div className="real-device-ai-panel">
-              <div className="real-device-ai-header">
-                <div className="real-device-ai-title">
-                  <IconCamera />
-                  <span>Nhận Diện Thị Giác AI (YOLO Camera Realtime)</span>
-                </div>
-                {data?.aiDetection?.timestamp && (
-                  <span className="metric-hint">
-                    Thời gian: {formatDateTime(data.aiDetection.timestamp)}
-                  </span>
-                )}
-              </div>
-
-              {data?.aiDetection ? (
-                <div className="ai-detection-body">
-                  <div className="ai-class-badge-wrapper">
-                    <span className={`ai-class-tag tag-${data.aiDetection.class.toLowerCase().replace('_', '-')}`}>
-                      {data.aiDetection.class === 'ORGANIC'
-                        ? 'RÁC HỮU CƠ'
-                        : data.aiDetection.class === 'RECYCLABLE'
-                        ? 'RÁC TÁI CHẾ'
-                        : 'RÁC KHÔNG TÁI CHẾ'}
-                    </span>
-                    {data.aiDetection.rawClass &&
-                      data.aiDetection.rawClass.toLowerCase() !== data.aiDetection.class.toLowerCase() && (
-                        <span className="metric-hint">({data.aiDetection.rawClass})</span>
-                      )}
-                  </div>
-
-                  <div className="ai-stats-row">
-                    <span className="ai-stat-item">
-                      Độ tin cậy: <strong>{formatConfidence(data.aiDetection.confidence)}</strong>
-                    </span>
-                    {typeof data.aiDetection.inferenceTimeMs === 'number' && (
-                      <span className="ai-stat-item">
-                        Độ trễ AI: <strong>{data.aiDetection.inferenceTimeMs} ms</strong>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="ai-detection-body" style={{ color: '#63756b', fontStyle: 'italic', fontSize: '13px' }}>
-                  Chưa có nhận diện rác mới (Đang chờ vật thể đưa vào vùng nhìn của Camera Rapoo C200...)
-                </div>
-              )}
             </div>
 
             {/* 3-Compartment Fill Level Grid */}
@@ -935,151 +624,16 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
               <div className="real-compartments-title">
                 <h4>
                   <IconRadio />
-                  <span>Mức Đầy 3 Ngăn Rác Thực Tế (ESP32 HC-SR04)</span>
+                  <span>Mức Đầy 3 Ngăn Rác Thực Tế</span>
                 </h4>
                 <span className="metric-hint">Hiệu chuẩn: 50cm (Trống) → 5cm (Đầy)</span>
               </div>
 
               <div className="real-compartments-grid">
-                {renderCompartmentCard('RECYCLABLE', 'Rác tái chế (HC1)', data?.sensors?.recyclable)}
-                {renderCompartmentCard('NON_RECYCLABLE', 'Rác không tái chế (HC2)', data?.sensors?.nonRecyclable)}
-                {renderCompartmentCard('ORGANIC', 'Rác hữu cơ (HC3)', data?.sensors?.organic)}
+                {renderCompartmentCard('RECYCLABLE', 'Rác tái chế', data?.sensors?.recyclable)}
+                {renderCompartmentCard('NON_RECYCLABLE', 'Rác không tái chế', data?.sensors?.nonRecyclable)}
+                {renderCompartmentCard('ORGANIC', 'Rác hữu cơ', data?.sensors?.organic)}
               </div>
-            </div>
-
-            {/* BẢNG ĐIỀU KHIỂN LỆNH HAI CHIỀU (Bi-directional Controls) */}
-            <div className="real-device-control-panel">
-              <div className="real-device-control-header">
-                <div className="real-device-control-title">
-                  <IconRadio />
-                  <span>Điều Khiển Hai Chiều (Bi-directional Commands)</span>
-                </div>
-                <div>
-                  {data?.isSocketConnected ? (
-                    <span className="real-device-channel-badge socket-direct" title="Pi 5 đang duy trì kết nối Socket.IO">
-                      Kênh: Socket.IO Sẵn Sàng
-                    </span>
-                  ) : (
-                    <span className="real-device-channel-badge http-fallback" title="Pi 5 cần kết nối Socket.IO để nhận lệnh">
-                      Kênh: Chờ Pi 5 kết nối Socket.IO
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="real-device-actions-row">
-                {/* Nút 1: PING Thiết Bị */}
-                <button
-                  type="button"
-                  className={`button-control-action button-ping ${commandState.status === 'PENDING' && commandState.action === 'PING' ? 'is-loading' : ''}`}
-                  onClick={handleSendPing}
-                  disabled={liveStatus === 'OFFLINE' || commandState.status === 'PENDING' || !canExecuteCommands}
-                  title={!canExecuteCommands ? 'Yêu cầu quyền Quản trị viên hoặc Giám sát viên để gửi lệnh' : liveStatus === 'OFFLINE' ? 'Không thể PING khi Pi đang OFFLINE' : 'Gửi lệnh PING kiểm tra kết nối hai chiều tới Pi 5'}
-                >
-                  {commandState.status === 'PENDING' && commandState.action === 'PING' ? (
-                    <>
-                      <span className="control-spinner" />
-                      <span>Đang PING...</span>
-                    </>
-                  ) : (
-                    <>
-                      <IconActivity />
-                      <span>PING Pi 5 (Kiểm tra phản hồi)</span>
-                    </>
-                  )}
-                </button>
-
-                {/* Nút 2: TRIGGER_ULTRASONIC (Đo cảm biến siêu âm) */}
-                <button
-                  type="button"
-                  className={`button-control-action button-ultrasonic ${commandState.status === 'PENDING' && commandState.action === 'TRIGGER_ULTRASONIC' ? 'is-loading' : ''}`}
-                  onClick={handleTriggerUltrasonic}
-                  disabled={liveStatus === 'OFFLINE' || commandState.status === 'PENDING' || !canExecuteCommands}
-                  title={!canExecuteCommands ? 'Yêu cầu quyền Quản trị viên hoặc Giám sát viên để gửi lệnh' : liveStatus === 'OFFLINE' ? 'Không thể đo khi Pi đang OFFLINE' : 'Yêu cầu Pi 5 kích hoạt đọc cảm biến siêu âm'}
-                >
-                  {commandState.status === 'PENDING' && commandState.action === 'TRIGGER_ULTRASONIC' ? (
-                    <>
-                      <span className="control-spinner spinner-dark" />
-                      <span>Đang yêu cầu đo...</span>
-                    </>
-                  ) : (
-                    <>
-                      <IconRadio />
-                      <span>
-                        {hasUltrasonicSensorData ? 'Đo cảm biến siêu âm ngay' : 'Kiểm tra cảm biến siêu âm'}
-                      </span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* Thông báo trạng thái phản hồi lệnh (Command Feedback Banner) */}
-              {commandState.status !== 'IDLE' && (
-                <div className={`real-device-command-feedback feedback-status-${commandState.status.toLowerCase()}`}>
-                  <div className="feedback-left">
-                    {commandState.status === 'PENDING' && <span className="control-spinner spinner-dark" />}
-                    {commandState.status === 'COMPLETED' && <IconCheckCircle />}
-                    {commandState.status === 'FAILED' && <IconXCircle />}
-                    {commandState.status === 'TIMEOUT' && <IconAlertTriangle />}
-                    <span>{commandState.message}</span>
-                  </div>
-
-                  {typeof commandState.latencyMs === 'number' && (
-                    <span className="feedback-latency-badge">
-                      Độ trễ: {commandState.latencyMs} ms
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Quick Test / Integration Instructions toggle */}
-            <div className="real-device-guide-section">
-              <button
-                type="button"
-                className="guide-toggle-button"
-                onClick={() => setShowGuide((prev) => !prev)}
-              >
-                <IconInfo />
-                <span>
-                  {showGuide ? 'Ẩn hướng dẫn kết nối Pi 5 qua Socket.IO / PuTTY' : 'Xem hướng dẫn chạy Pi Agent hai chiều & lệnh cURL'}
-                </span>
-              </button>
-
-              {showGuide && (
-                <div className="guide-content-box">
-                  <p className="guide-desc">
-                    <strong>Cách 1: Chạy Pi Agent hai chiều (Khuyên dùng - Hỗ trợ PING &amp; Telemetry liên tục):</strong>
-                  </p>
-                  <pre className="guide-code-block">
-{`# 1. Kết nối qua PuTTY vào Pi 5 (Debian 13 ARM64)
-# 2. Cài đặt thư viện vào virtualenv:
-pip install python-socketio[client] requests python-dotenv
-
-# 3. Chạy script agent (trong apps/device/pi_agent.py):
-python3 pi_agent.py`}
-                  </pre>
-
-                  <p className="guide-desc" style={{ marginTop: '10px' }}>
-                    <strong>Cách 2: Gửi HTTP Heartbeat dự phòng qua cURL (Tương thích ngược):</strong>
-                  </p>
-                  <pre className="guide-code-block">
-{`curl -X POST https://smartbin-api-e08b.onrender.com/api/demo/device-heartbeat \\
-  -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer <DEVICE_INGEST_TOKEN>" \\
-  -d '{
-    "deviceId": "raspberry-pi-5",
-    "status": "ONLINE",
-    "uptimeSeconds": '$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 120)',
-    "cpuTempC": '$(awk '{print $1/1000}' /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 48.5)',
-    "sentAt": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
-  }'`}
-                  </pre>
-                  <p className="guide-note">
-                    * Lưu ý: Token xác thực được lưu trong file <code>.env</code> trên Pi và cấu hình trên Render (không hiển thị công khai).
-                  </p>
-                </div>
-              )}
             </div>
           </>
         )}
@@ -1087,4 +641,3 @@ python3 pi_agent.py`}
     </section>
   );
 }
-

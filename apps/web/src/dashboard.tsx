@@ -6,18 +6,7 @@ import { translateAlertSeverity, translateBinStatus, translateFillCategory } fro
 import type { Bin, FillCategory } from './bins';
 import { getCompartments, WASTE_CATEGORY_LABEL, WASTE_CATEGORY_ORDER, type WasteCategoryKey } from './waste-category';
 import {
-  type DeviceType,
-  type DeviceStatusEnum,
-  type DeviceItem,
-  DEVICE_TYPE_LABELS,
-  STATUS_LABELS,
-  formatDateTime
-} from './device-utils';
-import {
   IconCpu,
-  IconCamera,
-  IconRadio,
-  IconServer,
   IconCheckCircle,
   IconAlertTriangle,
   IconXCircle,
@@ -66,7 +55,7 @@ type DashboardData = {
     timestamp: string;
     bin: { binCode: string; name: string };
   }[];
-  devices?: DeviceItem[];
+  devices?: unknown[];
   alerts: DashboardAlert[];
 };
 
@@ -94,46 +83,6 @@ function ago(value: string | null) {
 
 function badge(value: string) {
   return value.toLowerCase().replace('_', '-');
-}
-
-function getDeviceIcon(type: DeviceType) {
-  switch (type) {
-    case 'RASPBERRY_PI':
-      return <IconCpu />;
-    case 'CAMERA':
-      return <IconCamera />;
-    case 'ULTRASONIC_SENSOR':
-      return <IconRadio />;
-    case 'MQTT':
-      return <IconServer />;
-    default:
-      return <IconActivity />;
-  }
-}
-
-function getStatusBadge(status: DeviceStatusEnum) {
-  switch (status) {
-    case 'ONLINE':
-      return (
-        <span className="badge badge-device-status badge-device-online">
-          <IconCheckCircle /> {STATUS_LABELS.ONLINE}
-        </span>
-      );
-    case 'WARNING':
-      return (
-        <span className="badge badge-device-status badge-device-warning">
-          <IconAlertTriangle /> {STATUS_LABELS.WARNING}
-        </span>
-      );
-    case 'OFFLINE':
-      return (
-        <span className="badge badge-device-status badge-device-offline">
-          <IconXCircle /> {STATUS_LABELS.OFFLINE}
-        </span>
-      );
-    default:
-      return <span className="badge">{status}</span>;
-  }
 }
 
 function mergeTelemetry(data: DashboardData, event: RealtimeTelemetry): DashboardData {
@@ -173,7 +122,7 @@ function mergeTelemetry(data: DashboardData, event: RealtimeTelemetry): Dashboar
 }
 
 export function DashboardPage() {
-  const { token, systemMode } = useAuth();
+  const { token } = useAuth();
   const { socket: realtime, connected } = useRealtime();
   const navigate = useNavigate();
   const [data, setData] = useState<DashboardData | null>(null);
@@ -182,21 +131,9 @@ export function DashboardPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Device Health monitoring state
-  const [devices, setDevices] = useState<DeviceItem[]>([]);
-  const [deviceLoading, setDeviceLoading] = useState(true);
-  const [deviceError, setDeviceError] = useState('');
-
-  // Alerts state
-  const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
-  const [recentAlertIds, setRecentAlertIds] = useState<Set<string>>(() => new Set());
-  const seenAlertIds = useRef(new Set<string>());
-
   function refreshDashboard() {
     setError('');
-    setDeviceError('');
     setRefreshing(true);
-    setDeviceLoading(true);
     setRefreshKey((value) => value + 1);
   }
 
@@ -208,11 +145,6 @@ export function DashboardPage() {
       .then((result) => {
         if (active) {
           setData(result);
-          for (const alert of result.alerts || []) seenAlertIds.current.add(alert.id);
-          setAlerts((current) => {
-            const knownIds = new Set(current.map((alert) => alert.id));
-            return [...current, ...(result.alerts || []).filter((alert) => !knownIds.has(alert.id))];
-          });
         }
       })
       .catch((loadError) => {
@@ -228,26 +160,6 @@ export function DashboardPage() {
     };
   }, [token, refreshKey]);
 
-  // Load Device list data independently
-  useEffect(() => {
-    let active = true;
-
-    getData<{ devices: DeviceItem[] }>('/api/devices', token)
-      .then((result) => {
-        if (active) setDevices(result.devices || []);
-      })
-      .catch((devErr) => {
-        if (active) setDeviceError(devErr instanceof Error ? devErr.message : 'Không thể tải tình trạng thiết bị.');
-      })
-      .finally(() => {
-        if (active) setDeviceLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [token, refreshKey]);
-
   // Realtime subscriptions use the AppShell connection.
   useEffect(() => {
     if (!realtime) return;
@@ -256,69 +168,12 @@ export function DashboardPage() {
       setData((current) => (current ? mergeTelemetry(current, event) : current));
     };
 
-    const onDeviceStatus = (updated: DeviceItem) => {
-      setDevices((prev) => {
-        const index = prev.findIndex((d) => d.deviceId === updated.deviceId || d.id === updated.id);
-        if (index >= 0) {
-          const next = [...prev];
-          next[index] = { ...next[index], ...updated };
-          return next;
-        }
-        return [...prev, updated];
-      });
-    };
-
-    const onAlertCreated = (newAlert: DashboardAlert) => {
-      if (seenAlertIds.current.has(newAlert.id)) return;
-      seenAlertIds.current.add(newAlert.id);
-      setRecentAlertIds((current) => new Set(current).add(newAlert.id));
-      setAlerts((prev) => {
-        if (prev.some((a) => a.id === newAlert.id)) return prev;
-        return [newAlert, ...prev].slice(0, 10);
-      });
-    };
-
-    const onAlertResolved = (resolved: { id?: string; alertId?: string; deviceId?: string }) => {
-      setAlerts((prev) =>
-        prev.filter((a) => {
-          if (resolved.id && a.id === resolved.id) return false;
-          if (resolved.alertId && a.id === resolved.alertId) return false;
-          if (resolved.deviceId && a.deviceId === resolved.deviceId && a.type === 'DEVICE_OFFLINE') return false;
-          return true;
-        })
-      );
-    };
-
-    const onAlertUpdated = (updated: DashboardAlert) => {
-      setAlerts((prev) =>
-        prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a))
-      );
-    };
-
     realtime.on('bin:telemetry', onTelemetry);
-    realtime.on('device:status', onDeviceStatus);
-    realtime.on('alert:created', onAlertCreated);
-    realtime.on('alert:resolved', onAlertResolved);
-    realtime.on('alert:updated', onAlertUpdated);
 
     return () => {
       realtime.off('bin:telemetry', onTelemetry);
-      realtime.off('device:status', onDeviceStatus);
-      realtime.off('alert:created', onAlertCreated);
-      realtime.off('alert:resolved', onAlertResolved);
-      realtime.off('alert:updated', onAlertUpdated);
     };
   }, [realtime]);
-
-  // Calculated Device KPI statistics
-  const deviceStats = useMemo(() => {
-    return {
-      total: devices.length,
-      online: devices.filter((d) => d.status === 'ONLINE').length,
-      warning: devices.filter((d) => d.status === 'WARNING').length,
-      offline: devices.filter((d) => d.status === 'OFFLINE').length
-    };
-  }, [devices]);
 
   if (loading) {
     return (
@@ -345,7 +200,6 @@ export function DashboardPage() {
   }
 
   const compartments = getCompartments(data.bins);
-  const needsCollection = compartments.filter((compartment) => compartment.bin?.fillCategory === 'CRITICAL');
   const needsAttentionCount = data.bins.filter((bin) => bin.fillCategory === 'MONITOR').length;
   const nearlyFullCount = data.bins.filter((bin) => bin.fillCategory === 'NEARLY_FULL' || bin.fillCategory === 'CRITICAL').length;
 
@@ -369,7 +223,7 @@ export function DashboardPage() {
         <SummaryCard label="Bình thường" value={data.summary.normal} tone="normal" icon={<IconCheckCircle />} />
         <SummaryCard label="Cần chú ý" value={needsAttentionCount} tone="warning" icon={<IconAlertTriangle />} />
         <SummaryCard label="Gần đầy / Đầy" value={nearlyFullCount} tone="critical" icon={<IconXCircle />} />
-        <SummaryCard label="Thiết bị offline" value={deviceLoading ? '—' : deviceStats.offline} tone="offline" icon={<IconCpu />} />
+        <SummaryCard label="Thiết bị offline" value={data.summary.offline} tone="offline" icon={<IconCpu />} />
       </div>
 
       {/* Waste Compartments Grid */}
@@ -398,133 +252,6 @@ export function DashboardPage() {
 
         {/* Real Hardware Raspberry Pi 5 Telemetry Card */}
         <RealDeviceCard refreshTrigger={refreshKey} />
-
-        <div className="section-sub-heading" style={{ margin: '18px 0 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h3 style={{ margin: 0, fontSize: '15px', color: '#456257', textTransform: 'uppercase', letterSpacing: '0.6px', fontWeight: 700 }}>
-            {systemMode === 'production' ? 'Phân hệ cảm biến & Thiết bị ngoại vi (IoT Peripherals)' : 'Cảm biến & Thiết bị mô phỏng (Demo Simulation)'}
-          </h3>
-          <span style={{ fontSize: '12px', color: '#718078' }}>{systemMode === 'production' ? 'Dữ liệu giám sát từ cơ sở dữ liệu PostgreSQL' : 'Dữ liệu sinh tự động cho chế độ demo'}</span>
-        </div>
-
-        {/* Device KPI Summary Cards */}
-        <div className="summary-grid device-dashboard-kpi">
-          <div className="summary-card">
-            <span>Tổng thiết bị</span>
-            <strong>{deviceStats.total}</strong>
-          </div>
-          <div className="summary-card">
-            <span>Đang hoạt động</span>
-            <strong className="text-success">{deviceStats.online}</strong>
-          </div>
-          <div className="summary-card warning">
-            <span>Cần kiểm tra</span>
-            <strong className="text-warning">{deviceStats.warning}</strong>
-          </div>
-          <div className="summary-card critical">
-            <span>Mất kết nối</span>
-            <strong className="text-danger">{deviceStats.offline}</strong>
-          </div>
-        </div>
-
-        {/* Device Cards Grid */}
-        {deviceLoading && devices.length === 0 ? (
-          <div className="device-health-loading">Đang tải tình trạng thiết bị...</div>
-        ) : deviceError && devices.length === 0 ? (
-          <div className="device-health-error">Không thể tải tình trạng thiết bị.</div>
-        ) : devices.length === 0 ? (
-          <div className="device-health-loading">Không có thiết bị.</div>
-        ) : (
-          <div className="dashboard-device-grid">
-            {devices.map((device) => (
-              <div
-                key={device.id}
-                className={`dashboard-device-card dashboard-device-card--${device.status.toLowerCase()}`}
-                onClick={() => navigate('/devices')}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    navigate('/devices');
-                  }
-                }}
-                title={`Xem chi tiết ${device.deviceName}`}
-              >
-                <div className="dashboard-device-card__head">
-                  <div className="dashboard-device-card__icon">
-                    {getDeviceIcon(device.deviceType)}
-                  </div>
-                  <div className="dashboard-device-card__titles">
-                    <h3 className="dashboard-device-card__name">
-                      {DEVICE_TYPE_LABELS[device.deviceType] || device.deviceName}
-                    </h3>
-                    <span className="device-id-code">{device.deviceId}</span>
-                  </div>
-                </div>
-
-                <div className="dashboard-device-card__status">
-                  {getStatusBadge(device.status)}
-                </div>
-
-                <div className="dashboard-device-card__meta">
-                  <span>Hoạt động cuối:</span>
-                  <strong title={formatDateTime(device.lastSeen)}>
-                    {secondsAgoLabel(device.lastSeen)}
-                  </strong>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Collection Alerts & Realtime System Alerts */}
-      <section className={`collection-alert-section ${needsCollection.length > 0 || alerts.length > 0 ? 'has-alerts' : 'no-alerts'}`}>
-        <div className="section-heading dashboard-section-header">
-          <div>
-            <h2>Cảnh báo hệ thống & Thu gom</h2>
-            <p className="section-subtext">Cảnh báo thu gom thùng rác và tình trạng thiết bị mất kết nối.</p>
-          </div>
-          <button type="button" className="text-link-button" onClick={() => navigate('/alerts')}>
-            Xem tất cả cảnh báo →
-          </button>
-        </div>
-
-        {needsCollection.length === 0 && alerts.length === 0 ? (
-          <p className="empty-copy">Hiện tại không có ngăn nào cần thu gom và không có cảnh báo hệ thống.</p>
-        ) : (
-          <div className="dashboard-alerts-container">
-            {needsCollection.length > 0 && (
-              <ul className="collection-alert-list">
-                {needsCollection.map((compartment) => (
-                  <li key={compartment.key}>
-                    ⚠ {compartment.label} đã đạt {compartment.bin!.currentFillLevel}%. Đề nghị nhân viên thu gom kiểm tra và xử lý.
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {alerts.length > 0 && (
-              <div className="alert-list">
-                {alerts.slice(0, 5).map((alert) => (
-                    <article className={`alert-row${recentAlertIds.has(alert.id) ? ' alert-row--realtime-new' : ''}`} key={alert.id} onAnimationEnd={() => {
-                      if (recentAlertIds.has(alert.id)) setRecentAlertIds((current) => {
-                        const next = new Set(current);
-                        next.delete(alert.id);
-                        return next;
-                      });
-                    }}>
-                    <span className={`badge badge-${badge(alert.severity)}`}>
-                      {translateAlertSeverity(alert.severity)}
-                    </span>
-                    <strong>{alert.bin?.binCode ?? (alert.deviceId || 'Hệ thống')}</strong>
-                    <span>{alert.message}</span>
-                    <small>{ago(alert.createdAt)}</small>
-                  </article>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </section>
     </section>
   );
