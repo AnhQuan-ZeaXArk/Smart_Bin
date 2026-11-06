@@ -26,6 +26,12 @@ async function runDashboardTests() {
   const port = (httpServer.address() as any).port;
   const socketUrl = `http://localhost:${port}`;
 
+  // Ensure known baseline state for DB device status
+  await prisma.deviceStatus.updateMany({
+    where: { deviceType: 'MQTT' },
+    data: { status: 'ONLINE', lastHeartbeat: new Date(), lastSeen: new Date() }
+  });
+
   try {
     // ----------------------------------------------------
     // D1: Dashboard retains existing widgets

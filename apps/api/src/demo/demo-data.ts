@@ -6,12 +6,12 @@ export interface DemoBin {
   latitude: number | null;
   longitude: number | null;
   capacity: number;
-  currentFillLevel: number;
+  currentFillLevel: number | null;
   distanceCm: number | null;
   fillCategory: 'NORMAL' | 'MONITOR' | 'NEARLY_FULL' | 'CRITICAL';
   status: 'ONLINE' | 'OFFLINE' | 'MAINTENANCE';
   isActive: boolean;
-  lastSeen: string;
+  lastSeen: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -77,52 +77,52 @@ export const DEMO_BINS: DemoBin[] = [
     id: 'bin-organic-01',
     binCode: 'ORGANIC',
     name: 'Rác hữu cơ',
-    location: 'Ngăn rác hữu cơ - Khu vực demo',
+    location: 'Ngăn rác hữu cơ',
     latitude: 10.7769,
     longitude: 106.7009,
     capacity: 240,
-    currentFillLevel: 25,
-    distanceCm: 75,
+    currentFillLevel: null,
+    distanceCm: null,
     fillCategory: 'NORMAL',
-    status: 'ONLINE',
+    status: 'OFFLINE',
     isActive: true,
-    lastSeen: timeAgo(2),
+    lastSeen: null,
     createdAt: hoursAgo(72),
-    updatedAt: timeAgo(2)
+    updatedAt: hoursAgo(72)
   },
   {
     id: 'bin-recyclable-02',
     binCode: 'RECYCLABLE',
     name: 'Rác tái chế',
-    location: 'Ngăn rác tái chế - Khu vực demo',
+    location: 'Ngăn rác tái chế',
     latitude: 10.7769,
     longitude: 106.7009,
     capacity: 240,
-    currentFillLevel: 58,
-    distanceCm: 42,
-    fillCategory: 'MONITOR',
-    status: 'ONLINE',
+    currentFillLevel: null,
+    distanceCm: null,
+    fillCategory: 'NORMAL',
+    status: 'OFFLINE',
     isActive: true,
-    lastSeen: timeAgo(1),
+    lastSeen: null,
     createdAt: hoursAgo(72),
-    updatedAt: timeAgo(1)
+    updatedAt: hoursAgo(72)
   },
   {
     id: 'bin-non-recyclable-03',
     binCode: 'NON_RECYCLABLE',
     name: 'Rác không tái chế',
-    location: 'Ngăn rác không tái chế - Khu vực demo',
+    location: 'Ngăn rác không tái chế',
     latitude: 10.7769,
     longitude: 106.7009,
     capacity: 360,
-    currentFillLevel: 78,
-    distanceCm: 22,
-    fillCategory: 'NEARLY_FULL',
-    status: 'ONLINE',
+    currentFillLevel: null,
+    distanceCm: null,
+    fillCategory: 'NORMAL',
+    status: 'OFFLINE',
     isActive: true,
-    lastSeen: timeAgo(1),
+    lastSeen: null,
     createdAt: hoursAgo(72),
-    updatedAt: timeAgo(1)
+    updatedAt: hoursAgo(72)
   }
 ];
 
@@ -189,116 +189,9 @@ export const DEMO_DEVICES: DemoDevice[] = [
   }
 ];
 
-export const DEMO_ALERTS: DemoAlert[] = [
-  {
-    id: 'alert-demo-01',
-    binId: 'bin-non-recyclable-03',
-    type: 'CRITICAL',
-    severity: 'CRITICAL',
-    message: 'Ngăn rác không tái chế đạt 78% — cần lên lịch thu gom sớm.',
-    isResolved: false,
-    createdAt: timeAgo(15),
-    resolvedAt: null,
-    bin: { binCode: 'NON_RECYCLABLE', name: 'Rác không tái chế' }
-  },
-  {
-    id: 'alert-demo-02',
-    binId: 'bin-recyclable-02',
-    type: 'NEARLY_FULL',
-    severity: 'WARNING',
-    message: 'Ngăn rác tái chế vượt ngưỡng theo dõi (58%).',
-    isResolved: false,
-    createdAt: timeAgo(45),
-    resolvedAt: null,
-    bin: { binCode: 'RECYCLABLE', name: 'Rác tái chế' }
-  },
-  {
-    id: 'alert-demo-03',
-    binId: null,
-    type: 'SENSOR_ABNORMAL',
-    severity: 'INFO',
-    message: 'Hệ thống SmartBin đang hoạt động ở chế độ Demo mô phỏng độc lập.',
-    isResolved: false,
-    createdAt: hoursAgo(2),
-    resolvedAt: null,
-    bin: null
-  }
-];
+export const DEMO_ALERTS: DemoAlert[] = [];
 
-export const DEMO_SENSOR_READINGS: DemoSensorReading[] = [
-  {
-    id: 'read-demo-01',
-    binId: 'bin-non-recyclable-03',
-    distance: 22,
-    fillLevel: 78,
-    timestamp: timeAgo(5),
-    createdAt: timeAgo(5),
-    bin: { binCode: 'NON_RECYCLABLE', name: 'Rác không tái chế' }
-  },
-  {
-    id: 'read-demo-02',
-    binId: 'bin-recyclable-02',
-    distance: 42,
-    fillLevel: 58,
-    timestamp: timeAgo(10),
-    createdAt: timeAgo(10),
-    bin: { binCode: 'RECYCLABLE', name: 'Rác tái chế' }
-  },
-  {
-    id: 'read-demo-03',
-    binId: 'bin-organic-01',
-    distance: 75,
-    fillLevel: 25,
-    timestamp: timeAgo(15),
-    createdAt: timeAgo(15),
-    bin: { binCode: 'ORGANIC', name: 'Rác hữu cơ' }
-  },
-  {
-    id: 'read-demo-04',
-    binId: 'bin-non-recyclable-03',
-    distance: 24,
-    fillLevel: 76,
-    timestamp: timeAgo(30),
-    createdAt: timeAgo(30),
-    bin: { binCode: 'NON_RECYCLABLE', name: 'Rác không tái chế' }
-  },
-  {
-    id: 'read-demo-05',
-    binId: 'bin-recyclable-02',
-    distance: 46,
-    fillLevel: 54,
-    timestamp: timeAgo(45),
-    createdAt: timeAgo(45),
-    bin: { binCode: 'RECYCLABLE', name: 'Rác tái chế' }
-  },
-  {
-    id: 'read-demo-06',
-    binId: 'bin-organic-01',
-    distance: 77,
-    fillLevel: 23,
-    timestamp: timeAgo(60),
-    createdAt: timeAgo(60),
-    bin: { binCode: 'ORGANIC', name: 'Rác hữu cơ' }
-  },
-  {
-    id: 'read-demo-07',
-    binId: 'bin-non-recyclable-03',
-    distance: 27,
-    fillLevel: 73,
-    timestamp: hoursAgo(2),
-    createdAt: hoursAgo(2),
-    bin: { binCode: 'NON_RECYCLABLE', name: 'Rác không tái chế' }
-  },
-  {
-    id: 'read-demo-08',
-    binId: 'bin-recyclable-02',
-    distance: 51,
-    fillLevel: 49,
-    timestamp: hoursAgo(3),
-    createdAt: hoursAgo(3),
-    bin: { binCode: 'RECYCLABLE', name: 'Rác tái chế' }
-  }
-];
+export const DEMO_SENSOR_READINGS: DemoSensorReading[] = [];
 
 export const DEMO_COLLECTIONS: DemoCollectionRecord[] = [
   {

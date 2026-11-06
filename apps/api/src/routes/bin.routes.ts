@@ -36,7 +36,10 @@ const querySchema = z.object({
 
 type FillCategory = 'NORMAL' | 'MONITOR' | 'NEARLY_FULL' | 'CRITICAL';
 
-function getFillCategory(fillLevel: number, thresholds?: Partial<SystemThresholds>): FillCategory {
+export function getFillCategory(fillLevel: number | null | undefined, thresholds?: Partial<SystemThresholds>): FillCategory {
+  if (fillLevel === null || fillLevel === undefined || Number.isNaN(fillLevel)) {
+    return 'NORMAL';
+  }
   const t = thresholds ?? settingsService.getCachedThresholds();
   const warning = t.warningThreshold ?? 50;
   const nearFull = t.nearFullThreshold ?? 70;
@@ -170,5 +173,4 @@ router.delete('/:id', requireAuth, requireRole('ADMIN'), async (request, respons
   }
 });
 
-export { getFillCategory };
 export default router;

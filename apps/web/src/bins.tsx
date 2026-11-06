@@ -19,7 +19,7 @@ export interface Bin {
   latitude: number | null;
   longitude: number | null;
   capacity: number;
-  currentFillLevel: number;
+  currentFillLevel: number | null;
   fillCategory: FillCategory;
   status: BinStatus;
   isActive: boolean;
@@ -57,7 +57,17 @@ function formatDate(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? 'Chưa có dữ liệu' : date.toLocaleString('vi-VN');
 }
 
-function FillMeter({ value, category }: { value: number; category: FillCategory }) {
+function FillMeter({ value, category }: { value: number | null | undefined; category: FillCategory }) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return (
+      <div className="fill-meter">
+        <div className="fill-track is-unavailable" role="progressbar" aria-label="Mức độ đầy" aria-valuenow={0} aria-valuemin={0} aria-valuemax={100}>
+          <span className="fill-value is-unavailable" style={{ width: '0%' }} />
+        </div>
+        <strong className="text-unavailable">—</strong>
+      </div>
+    );
+  }
   const safeValue = Math.max(0, Math.min(100, value));
   return (
     <div className="fill-meter">

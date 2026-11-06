@@ -11,6 +11,8 @@ import {
   type DemoCollectionRecord
 } from './demo-data.js';
 import { normalizeDeviceId, CANONICAL_DEVICE_ID } from '../config/device-id.config.js';
+import { realDeviceService } from './real-device.service.js';
+import { settingsService } from '../services/settings.service.js';
 
 export interface BinQueryFilters {
   search?: string;
@@ -28,7 +30,42 @@ export interface SensorReadingFilters {
 
 export class DemoService {
   getAllBins(filters?: BinQueryFilters): DemoBin[] {
-    let result = [...DEMO_BINS];
+    const realStatus = realDeviceService.getStatus();
+    const isPiOnline = realStatus.status === 'ONLINE' || realStatus.status === 'WARNING';
+    const sensors = isPiOnline ? realStatus.sensors : null;
+
+    let result = DEMO_BINS.map((b) => {
+      let comp: any = null;
+      if (b.binCode === 'ORGANIC') comp = sensors?.organic;
+      else if (b.binCode === 'RECYCLABLE') comp = sensors?.recyclable;
+      else if (b.binCode === 'NON_RECYCLABLE') comp = sensors?.nonRecyclable;
+
+      if (comp && typeof comp.fillLevel === 'number' && comp.status !== 'STALE' && isPiOnline) {
+        const t = settingsService.getCachedThresholds();
+        let cat: 'NORMAL' | 'MONITOR' | 'NEARLY_FULL' | 'CRITICAL' = 'NORMAL';
+        if (comp.fillLevel >= t.fullThreshold) cat = 'CRITICAL';
+        else if (comp.fillLevel >= t.nearFullThreshold) cat = 'NEARLY_FULL';
+        else if (comp.fillLevel >= t.warningThreshold) cat = 'MONITOR';
+
+        return {
+          ...b,
+          currentFillLevel: comp.fillLevel,
+          distanceCm: typeof comp.distanceCm === 'number' ? comp.distanceCm : null,
+          status: 'ONLINE' as const,
+          lastSeen: comp.updatedAt || realStatus.lastHeartbeat,
+          fillCategory: cat
+        };
+      }
+
+      return {
+        ...b,
+        currentFillLevel: null,
+        distanceCm: null,
+        status: 'OFFLINE' as const,
+        lastSeen: realStatus.lastHeartbeat || null,
+        fillCategory: 'NORMAL' as const
+      };
+    });
 
     if (filters?.status) {
       result = result.filter((b) => b.status === filters.status);
@@ -52,7 +89,8 @@ export class DemoService {
   }
 
   getBinById(idOrCode: string): DemoBin | null {
-    const found = DEMO_BINS.find(
+    const bins = this.getAllBins();
+    const found = bins.find(
       (b) => b.id === idOrCode || b.binCode.toLowerCase() === idOrCode.toLowerCase()
     );
     return found ?? null;
@@ -113,10 +151,10 @@ export class DemoService {
   getDashboardSummary() {
     const bins = this.getAllBins();
     const total = bins.length;
-    const normal = bins.filter((b) => b.fillCategory === 'NORMAL').length;
-    const warning = bins.filter((b) => ['MONITOR', 'NEARLY_FULL'].includes(b.fillCategory)).length;
-    const full = bins.filter((b) => b.fillCategory === 'CRITICAL').length;
-    const offline = bins.filter((b) => b.status === 'OFFLINE').length;
+    const normal = bins.filter((b) => b.currentFillLevel !== null && b.fillCategory === 'NORMAL').length;
+    const warning = bins.filter((b) => b.currentFillLevel !== null && ['MONITOR', 'NEARLY_FULL'].includes(b.fillCategory)).length;
+    const full = bins.filter((b) => b.currentFillLevel !== null && b.fillCategory === 'CRITICAL').length;
+    const offline = bins.filter((b) => b.status === 'OFFLINE' || b.currentFillLevel === null).length;
 
     return {
       summary: {

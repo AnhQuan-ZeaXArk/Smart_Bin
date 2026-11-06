@@ -16,12 +16,17 @@ import {
 
 import { apiUrl } from './api-config';
 import { RealDeviceCard } from './real-device-card';
+import {
+  parseTimestamp,
+  shouldDropIncoming,
+  isRaspberryPiDevice
+} from './device-utils';
 
 type RealtimeTelemetry = {
   binCode: string;
-  fillLevel: number;
+  fillLevel: number | null;
   fillCategory: FillCategory;
-  distanceCm: number;
+  distanceCm: number | null;
   timestamp: string;
 };
 
@@ -45,9 +50,14 @@ export type DashboardAlert = {
   resolvedAt?: string | null;
 };
 
+type DashboardBin = Bin & {
+  distanceCm: number | null;
+  isReal?: boolean;
+};
+
 type DashboardData = {
   summary: Summary;
-  bins: (Bin & { distanceCm: number | null })[];
+  bins: DashboardBin[];
   recentSensorReadings: {
     id: string;
     fillLevel: number;
@@ -76,7 +86,6 @@ async function getData<T>(path: string, token?: string | null): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-
 function ago(value: string | null) {
   return value ? new Date(value).toLocaleString('vi-VN') : 'Chưa có dữ liệu';
 }
@@ -86,38 +95,161 @@ function badge(value: string) {
 }
 
 function mergeTelemetry(data: DashboardData, event: RealtimeTelemetry): DashboardData {
-  const bins = data.bins.map((bin) =>
-    bin.binCode === event.binCode
-      ? {
-          ...bin,
-          currentFillLevel: event.fillLevel,
-          fillCategory: event.fillCategory,
-          distanceCm: event.distanceCm,
-          lastSeen: event.timestamp
-        }
-      : bin
+  const bins = data.bins.map((bin) => {
+    if (bin.binCode !== event.binCode) return bin;
+
+    // RULE 2: Dữ liệu mô phỏng bin:telemetry TUYỆT ĐỐI KHÔNG ĐƯỢC ghi đè dữ liệu cảm biến thực tế
+    if (bin.isReal) {
+      return bin;
+    }
+
+    const currentTs = parseTimestamp(bin.lastSeen);
+    const incomingTs = parseTimestamp(event.timestamp);
+    if (shouldDropIncoming(currentTs, incomingTs)) {
+      return bin;
+    }
+
+    return {
+      ...bin,
+      currentFillLevel: event.fillLevel,
+      fillCategory: event.fillCategory,
+      distanceCm: event.distanceCm,
+      lastSeen: event.timestamp,
+      status: (event.fillLevel !== null ? 'ONLINE' : 'OFFLINE') as any
+    };
+  });
+
+  const onlineNumericBins = bins.filter(
+    (bin) => typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel) && bin.status !== 'OFFLINE'
   );
+
   const summary = {
     ...data.summary,
-    normal: bins.filter((bin) => bin.fillCategory === 'NORMAL').length,
-    warning: bins.filter((bin) => bin.fillCategory === 'MONITOR' || bin.fillCategory === 'NEARLY_FULL').length,
-    full: bins.filter((bin) => bin.fillCategory === 'CRITICAL').length,
-    offline: bins.filter((bin) => bin.status === 'OFFLINE').length
+    normal: onlineNumericBins.filter((bin) => bin.fillCategory === 'NORMAL').length,
+    warning: onlineNumericBins.filter((bin) => bin.fillCategory === 'MONITOR' || bin.fillCategory === 'NEARLY_FULL').length,
+    full: onlineNumericBins.filter((bin) => bin.fillCategory === 'CRITICAL').length,
+    offline: bins.length - onlineNumericBins.length
   };
+
   return {
     ...data,
     bins,
     summary,
-    recentSensorReadings: [
+    recentSensorReadings: typeof event.fillLevel === 'number' ? [
       {
         id: `live-${event.binCode}-${event.timestamp}`,
         fillLevel: event.fillLevel,
-        distance: event.distanceCm,
+        distance: event.distanceCm ?? 0,
         timestamp: event.timestamp,
         bin: { binCode: event.binCode, name: bins.find((bin) => bin.binCode === event.binCode)?.name ?? event.binCode }
       },
       ...data.recentSensorReadings
-    ].slice(0, 8)
+    ].slice(0, 8) : data.recentSensorReadings
+  };
+}
+
+function getFillCategoryForLevel(fillLevel: number | null | undefined): FillCategory {
+  if (fillLevel === null || fillLevel === undefined || Number.isNaN(fillLevel)) return 'NORMAL';
+  if (fillLevel >= 90) return 'CRITICAL';
+  if (fillLevel >= 70) return 'NEARLY_FULL';
+  if (fillLevel >= 50) return 'MONITOR';
+  return 'NORMAL';
+}
+
+function mergeDeviceHeartbeat(data: DashboardData, hb: any): DashboardData {
+  if (!hb) return data;
+
+  // Nếu sự kiện dành cho thiết bị ngoại vi khác (Camera, MQTT), chỉ cập nhật devices, KHÔNG ghi đè ngăn rác
+  if (hb.deviceId && !isRaspberryPiDevice(hb.deviceId, hb.deviceType)) {
+    if (data.devices && Array.isArray(data.devices)) {
+      const updatedDevices = data.devices.map((d: any) =>
+        d.deviceId === hb.deviceId || d.id === hb.id ? { ...d, ...hb } : d
+      );
+      return { ...data, devices: updatedDevices };
+    }
+    return data;
+  }
+
+  const isOffline = hb.status === 'OFFLINE';
+  const sensors = isOffline ? null : hb.sensors;
+
+  // Timestamp toàn cục của gói heartbeat
+  const hbTs = parseTimestamp(hb.lastHeartbeat || hb.receivedAt || hb.sentAt);
+
+  const mapping: Record<string, 'ORGANIC' | 'RECYCLABLE' | 'NON_RECYCLABLE'> = {
+    recyclable: 'RECYCLABLE',
+    nonRecyclable: 'NON_RECYCLABLE',
+    organic: 'ORGANIC'
+  };
+
+  const bins = data.bins.map((bin) => {
+    let sensorKey: string | null = null;
+    for (const [sKey, bCode] of Object.entries(mapping)) {
+      if (bCode === bin.binCode) {
+        sensorKey = sKey;
+        break;
+      }
+    }
+    const comp = sensorKey && sensors ? sensors[sensorKey] : null;
+
+    // 1. Mỗi cảm biến có thời gian cập nhật độc lập (comp.updatedAt hoặc fallback về hbTs)
+    const sensorUpdatedAtMs = parseTimestamp(comp?.updatedAt) || hbTs;
+    const currentBinTs = parseTimestamp(bin.lastSeen);
+
+    // 2. Chống sự kiện cũ: Heartbeat cũ không được ghi đè dữ liệu mới
+    if (shouldDropIncoming(currentBinTs, sensorUpdatedAtMs)) {
+      return bin;
+    }
+
+    if (comp && typeof comp.fillLevel === 'number' && comp.status !== 'STALE' && !isOffline) {
+      return {
+        ...bin,
+        currentFillLevel: comp.fillLevel,
+        distanceCm: typeof comp.distanceCm === 'number' ? comp.distanceCm : null,
+        fillCategory: getFillCategoryForLevel(comp.fillLevel),
+        status: 'ONLINE' as const,
+        lastSeen: comp.updatedAt || hb.lastHeartbeat || (sensorUpdatedAtMs > 0 ? new Date(sensorUpdatedAtMs).toISOString() : new Date().toISOString()),
+        isReal: true
+      };
+    }
+
+    return {
+      ...bin,
+      currentFillLevel: null,
+      distanceCm: null,
+      fillCategory: 'NORMAL' as const,
+      status: 'OFFLINE' as const,
+      lastSeen: comp?.updatedAt || hb.lastHeartbeat || (sensorUpdatedAtMs > 0 ? new Date(sensorUpdatedAtMs).toISOString() : bin.lastSeen),
+      isReal: true
+    };
+  });
+
+  const onlineNumericBins = bins.filter(
+    (bin) => typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel) && bin.status !== 'OFFLINE'
+  );
+
+  const summary = {
+    ...data.summary,
+    normal: onlineNumericBins.filter((bin) => bin.fillCategory === 'NORMAL').length,
+    warning: onlineNumericBins.filter((bin) => bin.fillCategory === 'MONITOR' || bin.fillCategory === 'NEARLY_FULL').length,
+    full: onlineNumericBins.filter((bin) => bin.fillCategory === 'CRITICAL').length,
+    offline: bins.length - onlineNumericBins.length
+  };
+
+  let devices = data.devices;
+  if (devices && Array.isArray(devices)) {
+    devices = devices.map((d: any) =>
+      isRaspberryPiDevice(d.deviceId, d.deviceType)
+        ? { ...d, ...hb, status: hb.status || d.status }
+        : d
+    );
+  }
+
+  return {
+    ...data,
+    bins,
+    summary,
+    devices
   };
 }
 
@@ -130,12 +262,21 @@ export function DashboardPage() {
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [clock, setClock] = useState(() => Date.now());
 
   function refreshDashboard() {
     setError('');
     setRefreshing(true);
     setRefreshKey((value) => value + 1);
   }
+
+  // Periodic timer for live age labels and stale data checking
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setClock(Date.now());
+    }, 2000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Load Dashboard summary data
   useEffect(() => {
@@ -144,7 +285,11 @@ export function DashboardPage() {
     getData<DashboardData>('/api/dashboard/summary', token)
       .then((result) => {
         if (active) {
-          setData(result);
+          const initialized: DashboardData = {
+            ...result,
+            bins: result.bins.map((b) => ({ ...b, isReal: true }))
+          };
+          setData(initialized);
         }
       })
       .catch((loadError) => {
@@ -160,7 +305,7 @@ export function DashboardPage() {
     };
   }, [token, refreshKey]);
 
-  // Realtime subscriptions use the AppShell connection.
+  // Realtime subscriptions for both simulator telemetry and real Raspberry Pi heartbeat/status
   useEffect(() => {
     if (!realtime) return;
 
@@ -168,10 +313,36 @@ export function DashboardPage() {
       setData((current) => (current ? mergeTelemetry(current, event) : current));
     };
 
+    const onHeartbeat = (payload: any) => {
+      setData((current) => (current ? mergeDeviceHeartbeat(current, payload) : current));
+    };
+
+    const onStatus = (payload: any) => {
+      if (!payload) return;
+      if (isRaspberryPiDevice(payload.deviceId, payload.deviceType)) {
+        setData((current) => (current ? mergeDeviceHeartbeat(current, payload) : current));
+      } else {
+        setData((current) => {
+          if (!current) return current;
+          if (current.devices && Array.isArray(current.devices)) {
+            const updatedDevices = (current.devices as any[]).map((d) =>
+              d.deviceId === payload.deviceId || (d.id && d.id === payload.id) ? { ...d, ...payload } : d
+            );
+            return { ...current, devices: updatedDevices };
+          }
+          return current;
+        });
+      }
+    };
+
     realtime.on('bin:telemetry', onTelemetry);
+    realtime.on('device:heartbeat', onHeartbeat);
+    realtime.on('device:status', onStatus);
 
     return () => {
       realtime.off('bin:telemetry', onTelemetry);
+      realtime.off('device:heartbeat', onHeartbeat);
+      realtime.off('device:status', onStatus);
     };
   }, [realtime]);
 
@@ -200,8 +371,15 @@ export function DashboardPage() {
   }
 
   const compartments = getCompartments(data.bins);
-  const needsAttentionCount = data.bins.filter((bin) => bin.fillCategory === 'MONITOR').length;
-  const nearlyFullCount = data.bins.filter((bin) => bin.fillCategory === 'NEARLY_FULL' || bin.fillCategory === 'CRITICAL').length;
+  const onlineNumericBins = data.bins.filter(
+    (bin) => typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel) && bin.status !== 'OFFLINE'
+  );
+  const normalCount = onlineNumericBins.filter((bin) => bin.fillCategory === 'NORMAL').length;
+  const needsAttentionCount = onlineNumericBins.filter((bin) => bin.fillCategory === 'MONITOR').length;
+  const nearlyFullCount = onlineNumericBins.filter(
+    (bin) => bin.fillCategory === 'NEARLY_FULL' || bin.fillCategory === 'CRITICAL'
+  ).length;
+  const offlineCount = data.bins.length - onlineNumericBins.length;
 
   return (
     <section className="page dashboard-page">
@@ -219,11 +397,11 @@ export function DashboardPage() {
 
       {/* Summary KPI Grid */}
       <div className="summary-grid overview-grid">
-        <SummaryCard label="Tổng số thùng" value={data.summary.total} icon={<IconActivity />} />
-        <SummaryCard label="Bình thường" value={data.summary.normal} tone="normal" icon={<IconCheckCircle />} />
+        <SummaryCard label="Tổng số thùng" value={data.bins.length} icon={<IconActivity />} />
+        <SummaryCard label="Bình thường" value={normalCount} tone="normal" icon={<IconCheckCircle />} />
         <SummaryCard label="Cần chú ý" value={needsAttentionCount} tone="warning" icon={<IconAlertTriangle />} />
         <SummaryCard label="Gần đầy / Đầy" value={nearlyFullCount} tone="critical" icon={<IconXCircle />} />
-        <SummaryCard label="Thiết bị offline" value={data.summary.offline} tone="offline" icon={<IconCpu />} />
+        <SummaryCard label="Thiết bị offline" value={offlineCount} tone="offline" icon={<IconCpu />} />
       </div>
 
       {/* Waste Compartments Grid */}
@@ -234,7 +412,7 @@ export function DashboardPage() {
 
       <div className="waste-grid">
         {compartments.map((compartment) => (
-          <WasteCard key={compartment.key} label={compartment.label} bin={compartment.bin} />
+          <WasteCard key={compartment.key} label={compartment.label} bin={compartment.bin} now={clock} />
         ))}
       </div>
 
@@ -267,9 +445,10 @@ function SummaryCard({ label, value, tone = '', icon }: { label: string; value: 
   );
 }
 
-function secondsAgoLabel(value: string | null): string {
+function secondsAgoLabel(value: string | null, now?: number): string {
   if (!value) return 'Chưa có dữ liệu';
-  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  const baseNow = typeof now === 'number' && now > 0 ? now : Date.now();
+  const seconds = Math.max(0, Math.round((baseNow - new Date(value).getTime()) / 1000));
   if (seconds < 5) return 'Vừa xong';
   if (seconds < 60) return `Cập nhật ${seconds} giây trước`;
   const minutes = Math.round(seconds / 60);
@@ -277,21 +456,107 @@ function secondsAgoLabel(value: string | null): string {
   return `Cập nhật lúc ${new Date(value).toLocaleTimeString('vi-VN')}`;
 }
 
-function WasteCard({ label, bin }: { label: string; bin: (Bin & { distanceCm: number | null }) | undefined }) {
-  if (!bin) return <article className="waste-card waste-card-empty"><h3>{label}</h3><p className="empty-copy">Chưa có thùng rác nào được gán cho loại này.</p></article>;
-  const tone = bin.fillCategory === 'CRITICAL' ? 'critical' : bin.fillCategory === 'NEARLY_FULL' ? 'nearly_full' : bin.fillCategory === 'MONITOR' ? 'monitor' : 'normal';
+export function WasteCard({
+  label,
+  bin,
+  now
+}: {
+  label: string;
+  bin: (Bin & { distanceCm: number | null }) | undefined;
+  now?: number;
+}) {
+  if (!bin) {
+    return (
+      <article className="waste-card waste-card-empty">
+        <h3>{label}</h3>
+        <p className="empty-copy">Chưa có thùng rác nào được gán cho loại này.</p>
+      </article>
+    );
+  }
+
+  const isOffline = bin.status === 'OFFLINE';
+  const hasValidFillLevel = typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel);
+
+  // Stale check (> 15 seconds)
+  const currentNow = typeof now === 'number' && now > 0 ? now : 0;
+  const lastSeenMs = bin.lastSeen ? new Date(bin.lastSeen).getTime() : 0;
+  const isStale = lastSeenMs > 0 && currentNow > 0 ? currentNow - lastSeenMs > 15000 : false;
+
+  const isValidReading = hasValidFillLevel && !isOffline && !isStale;
+  const fillPct = hasValidFillLevel ? Math.max(0, Math.min(100, Math.round(bin.currentFillLevel!))) : 0;
+
+  const tone = !isValidReading
+    ? 'unavailable'
+    : fillPct >= 90
+    ? 'critical'
+    : fillPct >= 70
+    ? 'nearly_full'
+    : fillPct >= 50
+    ? 'monitor'
+    : 'normal';
+
+  const badgeStatusText = isOffline
+    ? 'Mất kết nối'
+    : isStale
+    ? 'Dữ liệu cũ (STALE)'
+    : !hasValidFillLevel
+    ? 'Chưa có dữ liệu'
+    : translateBinStatus(bin.status);
+
+  const fillCategoryText = isValidReading
+    ? translateFillCategory(bin.fillCategory)
+    : isOffline
+    ? 'Mất kết nối'
+    : isStale
+    ? 'Cần kiểm tra'
+    : 'Chưa có dữ liệu';
+
+  const hasDistance = isValidReading && typeof bin.distanceCm === 'number' && !Number.isNaN(bin.distanceCm);
+
   return (
     <article className={`waste-card waste-tone-${tone}`}>
-      <div className="waste-card-header"><div className="waste-card-identity"><h3>{label}</h3><span className="device-id-code">{bin.binCode}</span></div><span className={`status-badge status-badge--${bin.status.toLowerCase()}`}>{translateBinStatus(bin.status)}</span></div>
-      <strong className="waste-percentage">{bin.currentFillLevel}%</strong>
-      <div className="waste-progress-track" role="progressbar" aria-valuenow={bin.currentFillLevel} aria-valuemin={0} aria-valuemax={100}>
-        <span className={`waste-progress-fill waste-tone-${tone}`} style={{ width: `${bin.currentFillLevel}%` }} />
+      <div className="waste-card-header">
+        <div className="waste-card-identity">
+          <h3>{label}</h3>
+          <span className="device-id-code">{bin.binCode}</span>
+        </div>
+        <span className={`status-badge status-badge--${isOffline || !isValidReading ? 'offline' : bin.status.toLowerCase()}`}>
+          {badgeStatusText}
+        </span>
       </div>
+
+      <strong className={`waste-percentage ${!isValidReading ? 'text-unavailable' : ''}`}>
+        {isValidReading ? `${fillPct}%` : '—'}
+      </strong>
+
+      <div
+        className={`waste-progress-track ${!isValidReading ? 'is-unavailable' : ''}`}
+        role="progressbar"
+        aria-valuenow={isValidReading ? fillPct : 0}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <span
+          className={`waste-progress-fill ${isValidReading ? `waste-tone-${tone}` : 'is-unavailable'}`}
+          style={{ width: `${isValidReading ? fillPct : 0}%` }}
+        />
+      </div>
+
       <div className="waste-card-footer">
-        <span className={`badge badge-${tone}`}>{translateFillCategory(bin.fillCategory)}</span>
+        <span className={`badge badge-${tone}`}>
+          {fillCategoryText}
+        </span>
         <small>{secondsAgoLabel(bin.lastSeen)}</small>
       </div>
-      <dl className="waste-card-facts"><div><dt>Khoảng cách</dt><dd>{bin.distanceCm === null ? 'Chưa có dữ liệu' : `${bin.distanceCm} cm`}</dd></div><div><dt>Dung tích</dt><dd>{bin.capacity.toLocaleString('vi-VN')} L</dd></div></dl>
+
+      {hasDistance && (
+        <dl className="waste-card-facts">
+          <div>
+            <dt>Khoảng cách</dt>
+            <dd>{bin.distanceCm!.toFixed(1)} cm</dd>
+          </div>
+        </dl>
+      )}
     </article>
   );
 }

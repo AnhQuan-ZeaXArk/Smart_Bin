@@ -2068,3 +2068,30 @@ button:disabled { cursor: not-allowed; }
 .compartment-progress-fill.is-unavailable {
   background: transparent;
 }
+
+.waste-card.waste-tone-unavailable {
+  border-top-color: #475569;
+}
+
+.waste-card.waste-tone-unavailable .waste-percentage {
+  color: #64748b;
+}
+
+.waste-progress-track.is-unavailable {
+  background: #1e293b;
+  border: 1px dashed #334155;
+}
+
+.waste-progress-fill.is-unavailable {
+  background: transparent;
+}
+
+.waste-percentage.text-unavailable {
+  color: #64748b;
+}
+
+.badge-offline {
+  color: #ff9b9b;
+  background: #3c252b;
+  border-color: #713840;
+}
