@@ -2086,7 +2086,9 @@ button:disabled { cursor: not-allowed; }
   background: transparent;
 }
 
-.waste-percentage.text-unavailable {
+.waste-percentage.text-unavailable,
+.bin-detail-level strong.text-unavailable,
+.text-unavailable {
   color: #64748b;
 }
 

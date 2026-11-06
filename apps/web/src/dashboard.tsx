@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './auth-context';
 import { useRealtime } from './realtime-store';
-import { translateAlertSeverity, translateBinStatus, translateFillCategory } from './i18n-labels';
+import { translateAlertSeverity } from './i18n-labels';
 import type { Bin, FillCategory } from './bins';
 import { getCompartments, WASTE_CATEGORY_LABEL, WASTE_CATEGORY_ORDER, type WasteCategoryKey } from './waste-category';
 import {
@@ -21,6 +21,10 @@ import {
   shouldDropIncoming,
   isRaspberryPiDevice
 } from './device-utils';
+import {
+  computeBinViewModel,
+  mergeDeviceHeartbeatToBins
+} from './bin-view-model';
 
 type RealtimeTelemetry = {
   binCode: string;
@@ -148,14 +152,6 @@ function mergeTelemetry(data: DashboardData, event: RealtimeTelemetry): Dashboar
   };
 }
 
-function getFillCategoryForLevel(fillLevel: number | null | undefined): FillCategory {
-  if (fillLevel === null || fillLevel === undefined || Number.isNaN(fillLevel)) return 'NORMAL';
-  if (fillLevel >= 90) return 'CRITICAL';
-  if (fillLevel >= 70) return 'NEARLY_FULL';
-  if (fillLevel >= 50) return 'MONITOR';
-  return 'NORMAL';
-}
-
 function mergeDeviceHeartbeat(data: DashboardData, hb: any): DashboardData {
   if (!hb) return data;
 
@@ -170,59 +166,7 @@ function mergeDeviceHeartbeat(data: DashboardData, hb: any): DashboardData {
     return data;
   }
 
-  const isOffline = hb.status === 'OFFLINE';
-  const sensors = isOffline ? null : hb.sensors;
-
-  // Timestamp toàn cục của gói heartbeat
-  const hbTs = parseTimestamp(hb.lastHeartbeat || hb.receivedAt || hb.sentAt);
-
-  const mapping: Record<string, 'ORGANIC' | 'RECYCLABLE' | 'NON_RECYCLABLE'> = {
-    recyclable: 'RECYCLABLE',
-    nonRecyclable: 'NON_RECYCLABLE',
-    organic: 'ORGANIC'
-  };
-
-  const bins = data.bins.map((bin) => {
-    let sensorKey: string | null = null;
-    for (const [sKey, bCode] of Object.entries(mapping)) {
-      if (bCode === bin.binCode) {
-        sensorKey = sKey;
-        break;
-      }
-    }
-    const comp = sensorKey && sensors ? sensors[sensorKey] : null;
-
-    // 1. Mỗi cảm biến có thời gian cập nhật độc lập (comp.updatedAt hoặc fallback về hbTs)
-    const sensorUpdatedAtMs = parseTimestamp(comp?.updatedAt) || hbTs;
-    const currentBinTs = parseTimestamp(bin.lastSeen);
-
-    // 2. Chống sự kiện cũ: Heartbeat cũ không được ghi đè dữ liệu mới
-    if (shouldDropIncoming(currentBinTs, sensorUpdatedAtMs)) {
-      return bin;
-    }
-
-    if (comp && typeof comp.fillLevel === 'number' && comp.status !== 'STALE' && !isOffline) {
-      return {
-        ...bin,
-        currentFillLevel: comp.fillLevel,
-        distanceCm: typeof comp.distanceCm === 'number' ? comp.distanceCm : null,
-        fillCategory: getFillCategoryForLevel(comp.fillLevel),
-        status: 'ONLINE' as const,
-        lastSeen: comp.updatedAt || hb.lastHeartbeat || (sensorUpdatedAtMs > 0 ? new Date(sensorUpdatedAtMs).toISOString() : new Date().toISOString()),
-        isReal: true
-      };
-    }
-
-    return {
-      ...bin,
-      currentFillLevel: null,
-      distanceCm: null,
-      fillCategory: 'NORMAL' as const,
-      status: 'OFFLINE' as const,
-      lastSeen: comp?.updatedAt || hb.lastHeartbeat || (sensorUpdatedAtMs > 0 ? new Date(sensorUpdatedAtMs).toISOString() : bin.lastSeen),
-      isReal: true
-    };
-  });
+  const bins = mergeDeviceHeartbeatToBins(data.bins, hb);
 
   const onlineNumericBins = bins.filter(
     (bin) => typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel) && bin.status !== 'OFFLINE'
@@ -445,17 +389,6 @@ function SummaryCard({ label, value, tone = '', icon }: { label: string; value: 
   );
 }
 
-function secondsAgoLabel(value: string | null, now?: number): string {
-  if (!value) return 'Chưa có dữ liệu';
-  const baseNow = typeof now === 'number' && now > 0 ? now : Date.now();
-  const seconds = Math.max(0, Math.round((baseNow - new Date(value).getTime()) / 1000));
-  if (seconds < 5) return 'Vừa xong';
-  if (seconds < 60) return `Cập nhật ${seconds} giây trước`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `Cập nhật ${minutes} phút trước`;
-  return `Cập nhật lúc ${new Date(value).toLocaleTimeString('vi-VN')}`;
-}
-
 export function WasteCard({
   label,
   bin,
@@ -474,86 +407,49 @@ export function WasteCard({
     );
   }
 
-  const isOffline = bin.status === 'OFFLINE';
-  const hasValidFillLevel = typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel);
-
-  // Stale check (> 15 seconds)
-  const currentNow = typeof now === 'number' && now > 0 ? now : 0;
-  const lastSeenMs = bin.lastSeen ? new Date(bin.lastSeen).getTime() : 0;
-  const isStale = lastSeenMs > 0 && currentNow > 0 ? currentNow - lastSeenMs > 15000 : false;
-
-  const isValidReading = hasValidFillLevel && !isOffline && !isStale;
-  const fillPct = hasValidFillLevel ? Math.max(0, Math.min(100, Math.round(bin.currentFillLevel!))) : 0;
-
-  const tone = !isValidReading
-    ? 'unavailable'
-    : fillPct >= 90
-    ? 'critical'
-    : fillPct >= 70
-    ? 'nearly_full'
-    : fillPct >= 50
-    ? 'monitor'
-    : 'normal';
-
-  const badgeStatusText = isOffline
-    ? 'Mất kết nối'
-    : isStale
-    ? 'Dữ liệu cũ (STALE)'
-    : !hasValidFillLevel
-    ? 'Chưa có dữ liệu'
-    : translateBinStatus(bin.status);
-
-  const fillCategoryText = isValidReading
-    ? translateFillCategory(bin.fillCategory)
-    : isOffline
-    ? 'Mất kết nối'
-    : isStale
-    ? 'Cần kiểm tra'
-    : 'Chưa có dữ liệu';
-
-  const hasDistance = isValidReading && typeof bin.distanceCm === 'number' && !Number.isNaN(bin.distanceCm);
+  const vm = computeBinViewModel(bin, now);
 
   return (
-    <article className={`waste-card waste-tone-${tone}`}>
+    <article className={`waste-card waste-tone-${vm.tone}`}>
       <div className="waste-card-header">
         <div className="waste-card-identity">
           <h3>{label}</h3>
           <span className="device-id-code">{bin.binCode}</span>
         </div>
-        <span className={`status-badge status-badge--${isOffline || !isValidReading ? 'offline' : bin.status.toLowerCase()}`}>
-          {badgeStatusText}
+        <span className={`status-badge status-badge--${!vm.isValidReading ? 'offline' : bin.status.toLowerCase()}`}>
+          {vm.statusBadgeText}
         </span>
       </div>
 
-      <strong className={`waste-percentage ${!isValidReading ? 'text-unavailable' : ''}`}>
-        {isValidReading ? `${fillPct}%` : '—'}
+      <strong className={`waste-percentage ${!vm.isValidReading ? 'text-unavailable' : ''}`}>
+        {vm.displayPercentage}
       </strong>
 
       <div
-        className={`waste-progress-track ${!isValidReading ? 'is-unavailable' : ''}`}
+        className={`waste-progress-track ${!vm.isValidReading ? 'is-unavailable' : ''}`}
         role="progressbar"
-        aria-valuenow={isValidReading ? fillPct : 0}
+        aria-valuenow={vm.isValidReading ? vm.fillPct : 0}
         aria-valuemin={0}
         aria-valuemax={100}
       >
         <span
-          className={`waste-progress-fill ${isValidReading ? `waste-tone-${tone}` : 'is-unavailable'}`}
-          style={{ width: `${isValidReading ? fillPct : 0}%` }}
+          className={`waste-progress-fill ${vm.isValidReading ? `waste-tone-${vm.tone}` : 'is-unavailable'}`}
+          style={{ width: vm.progressWidth }}
         />
       </div>
 
       <div className="waste-card-footer">
-        <span className={`badge badge-${tone}`}>
-          {fillCategoryText}
+        <span className={`badge badge-${vm.tone}`}>
+          {vm.fillCategoryBadgeText}
         </span>
-        <small>{secondsAgoLabel(bin.lastSeen)}</small>
+        <small>{vm.lastSeenText}</small>
       </div>
 
-      {hasDistance && (
+      {vm.hasDistance && (
         <dl className="waste-card-facts">
           <div>
             <dt>Khoảng cách</dt>
-            <dd>{bin.distanceCm!.toFixed(1)} cm</dd>
+            <dd>{vm.distanceText}</dd>
           </div>
         </dl>
       )}

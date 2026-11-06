@@ -8,6 +8,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { env } from '../config/env.js';
 import { demoService } from '../demo/demo.service.js';
 import { settingsService, type SystemThresholds } from '../services/settings.service.js';
+import { syncBinWithRealDevice, syncBinsWithRealDevice } from '../services/bin-sync.service.js';
 
 const router = Router();
 const idSchema = z.string().min(1);
@@ -79,9 +80,24 @@ router.get('/', async (request, response, next) => {
     }
 
     const query = queryResult.data;
-    const bins = await prisma.bin.findMany({ where: { isActive: true, ...(query.status ? { status: query.status } : {}), ...(query.search ? { OR: [{ binCode: { contains: query.search } }, { name: { contains: query.search } }, { location: { contains: query.search } }] } : {}) }, orderBy: { binCode: 'asc' } });
-    const filtered = query.fillCategory ? bins.filter((bin) => getFillCategory(bin.currentFillLevel) === query.fillCategory) : bins;
-    return response.json({ bins: filtered.map(serializeBin) });
+    const bins = await prisma.bin.findMany({
+      where: {
+        isActive: true,
+        ...(query.search ? { OR: [{ binCode: { contains: query.search } }, { name: { contains: query.search } }, { location: { contains: query.search } }] } : {})
+      },
+      orderBy: { binCode: 'asc' }
+    });
+
+    // Đồng bộ hóa trạng thái cảm biến phần cứng thực tế với Database Bins
+    const synchronized = syncBinsWithRealDevice(bins);
+    let filtered = synchronized;
+    if (query.status) {
+      filtered = filtered.filter((b) => b.status === query.status);
+    }
+    if (query.fillCategory) {
+      filtered = filtered.filter((b) => b.fillCategory === query.fillCategory);
+    }
+    return response.json({ bins: filtered });
   } catch (error) {
     return next(error);
   }
@@ -97,8 +113,16 @@ router.get('/:id', async (request, response, next) => {
       return bin ? response.json({ bin }) : notFound(response);
     }
 
-    const bin = await prisma.bin.findFirst({ where: { id, isActive: true } });
-    return bin ? response.json({ bin: serializeBin(bin) }) : notFound(response);
+    const bin = await prisma.bin.findFirst({
+      where: {
+        isActive: true,
+        OR: [{ id }, { binCode: id }]
+      }
+    });
+    if (!bin) return notFound(response);
+
+    const synchronized = syncBinWithRealDevice(bin);
+    return response.json({ bin: synchronized });
   } catch (error) {
     return next(error);
   }

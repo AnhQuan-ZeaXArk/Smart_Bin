@@ -1,286 +1,304 @@
 import assert from 'node:assert/strict';
 import { demoService } from '../../api/src/demo/demo.service.js';
 import { realDeviceService } from '../../api/src/demo/real-device.service.js';
-import { DEMO_BINS, DEMO_ALERTS, DEMO_SENSOR_READINGS } from '../../api/src/demo/demo-data.js';
+import { DEMO_BINS } from '../../api/src/demo/demo-data.js';
+import { syncBinsWithRealDevice } from '../../api/src/services/bin-sync.service.js';
+import { computeBinViewModel, mergeDeviceHeartbeatToBins } from './bin-view-model.js';
 
-console.log('=== RUNNING COMPREHENSIVE SMARTBIN REAL SENSOR DATA VERIFICATION TESTS ===\n');
+console.log('=== RUNNING COMPREHENSIVE SMARTBIN UNIFIED REGRESSION TESTS (CASES 1 - 10) ===\n');
 
 async function runTests() {
-  // Test 1: Verify all fake hardcoded percentages (25%, 58%, 78%) are eliminated from DEMO_BINS
-  console.log('Test 1: DEMO_BINS in demo-data.ts must have null currentFillLevel and OFFLINE status');
-  for (const bin of DEMO_BINS) {
-    assert.equal(bin.currentFillLevel, null, `Bin ${bin.binCode} currentFillLevel should be null, got ${bin.currentFillLevel}`);
-    assert.equal(bin.distanceCm, null, `Bin ${bin.binCode} distanceCm should be null, got ${bin.distanceCm}`);
-    assert.equal(bin.status, 'OFFLINE', `Bin ${bin.binCode} status should be OFFLINE, got ${bin.status}`);
-  }
-  assert.equal(DEMO_ALERTS.length, 0, `DEMO_ALERTS should be empty, got ${DEMO_ALERTS.length}`);
-  assert.equal(DEMO_SENSOR_READINGS.length, 0, `DEMO_SENSOR_READINGS should be empty, got ${DEMO_SENSOR_READINGS.length}`);
-  console.log('  -> PASS: All demo static fake data eradicated.\n');
+  // Setup baseline
+  const now = Date.now();
 
-  // Test 2: When Raspberry Pi has not sent telemetry / is OFFLINE
-  console.log('Test 2: Dashboard summary when Pi is OFFLINE or has no sensor data');
-  // Reset real device service to offline with no sensors
+  // ---------------------------------------------------------------------------------
+  // Case 1: Pi OFFLINE -> Dashboard và Bins đều hiển thị "—", MẤT KẾT NỐI, không khoảng cách
+  // ---------------------------------------------------------------------------------
+  console.log('Case 1: Pi OFFLINE -> Cả Dashboard và Bins đều hiển thị "—" và MẤT KẾT NỐI');
   realDeviceService.setLastHeartbeatDateForTest(null);
   (realDeviceService as any).sensors = null;
 
-  const summaryOffline = demoService.getDashboardSummary();
-  assert.equal(summaryOffline.bins.length, 3, 'Should have 3 compartment bins');
-  for (const bin of summaryOffline.bins) {
-    assert.equal(bin.currentFillLevel, null, `Bin ${bin.binCode} should be null when Pi is OFFLINE`);
-    assert.equal(bin.distanceCm, null, `Bin ${bin.binCode} distance should be null when Pi is OFFLINE`);
-    assert.equal(bin.status, 'OFFLINE', `Bin ${bin.binCode} should be OFFLINE`);
-  }
-  assert.equal(summaryOffline.summary.offline, 3, 'All 3 bins should be counted as offline');
-  assert.equal(summaryOffline.summary.normal, 0, 'No bins should be counted as normal');
-  assert.equal(summaryOffline.summary.warning, 0, 'No bins should be counted as warning');
-  assert.equal(summaryOffline.summary.full, 0, 'No bins should be counted as full');
-  console.log('  -> PASS: 0 fake counts and 0 fake percentages when Pi is OFFLINE.\n');
+  const realStatusOff = realDeviceService.getStatus();
+  assert.equal(realStatusOff.status, 'OFFLINE');
 
-  // Test 3: WasteCard rendering logic simulation for offline/unavailable
-  console.log('Test 3: WasteCard state helper logic for null / offline bins');
-  function computeWasteCardViewModel(bin: { currentFillLevel: number | null; status: string; lastSeen: string | null; distanceCm?: number | null }, nowMs: number) {
-    const isOffline = bin.status === 'OFFLINE';
-    const hasValidFillLevel = typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel);
-    const lastSeenMs = bin.lastSeen ? new Date(bin.lastSeen).getTime() : 0;
-    const isStale = lastSeenMs > 0 && nowMs > 0 ? nowMs - lastSeenMs > 15000 : false;
-    const isValidReading = hasValidFillLevel && !isOffline && !isStale;
-    const fillPct = hasValidFillLevel ? Math.max(0, Math.min(100, Math.round(bin.currentFillLevel!))) : 0;
-    const displayPercentage = isValidReading ? `${fillPct}%` : '—';
-    const progressWidth = isValidReading ? `${fillPct}%` : '0%';
-    const progressTrackClass = isValidReading ? 'waste-progress-track' : 'waste-progress-track is-unavailable';
-    const badgeText = isOffline
-      ? 'Mất kết nối'
-      : isStale
-      ? 'Dữ liệu cũ (STALE)'
-      : !hasValidFillLevel
-      ? 'Chưa có dữ liệu'
-      : 'HOẠT ĐỘNG';
-    const hasDistance = isValidReading && typeof bin.distanceCm === 'number' && !Number.isNaN(bin.distanceCm);
-
-    return {
-      isValidReading,
-      displayPercentage,
-      progressWidth,
-      progressTrackClass,
-      badgeText,
-      hasDistance
-    };
+  // Backend sync test
+  const backendBinsOff = syncBinsWithRealDevice(DEMO_BINS, realStatusOff);
+  for (const b of backendBinsOff) {
+    assert.equal(b.currentFillLevel, null, `Bin ${b.binCode} must be null when Pi is OFFLINE`);
+    assert.equal(b.distanceCm, null, `Bin ${b.binCode} distance must be null when Pi is OFFLINE`);
+    assert.equal(b.status, 'OFFLINE', `Bin ${b.binCode} status must be OFFLINE`);
   }
 
-  const vmOffline = computeWasteCardViewModel({ currentFillLevel: null, status: 'OFFLINE', lastSeen: null }, Date.now());
-  assert.equal(vmOffline.isValidReading, false);
-  assert.equal(vmOffline.displayPercentage, '—');
-  assert.equal(vmOffline.progressWidth, '0%');
-  assert.match(vmOffline.progressTrackClass, /is-unavailable/);
-  assert.equal(vmOffline.badgeText, 'Mất kết nối');
-  assert.equal(vmOffline.hasDistance, false);
-  console.log('  -> PASS: Correct "—", "0%", "is-unavailable", "Mất kết nối", no distance.\n');
+  // Frontend view-model test for both Dashboard (WasteCard) and Bins (BinCard)
+  for (const b of backendBinsOff) {
+    const vm = computeBinViewModel(b, now);
+    assert.equal(vm.isValidReading, false);
+    assert.equal(vm.displayPercentage, '—', `Must display '—', got ${vm.displayPercentage}`);
+    assert.equal(vm.progressWidth, '0%');
+    assert.equal(vm.statusBadgeText, 'Mất kết nối');
+    assert.equal(vm.hasDistance, false);
+    assert.equal(vm.distanceText, null);
+    assert.equal(vm.hasCapacity, false);
+  }
+  console.log('  -> PASS: Cả Dashboard và Bins đều hiển thị "—", MẤT KẾT NỐI, không có số giả.\n');
 
-  // Test 4: Stale sensor data (> 15 seconds)
-  console.log('Test 4: Stale sensor data transition when lastSeen > 15 seconds');
-  const twentySecondsAgo = new Date(Date.now() - 20000).toISOString();
-  const vmStale = computeWasteCardViewModel({ currentFillLevel: 45, status: 'ONLINE', lastSeen: twentySecondsAgo }, Date.now());
+  // ---------------------------------------------------------------------------------
+  // Case 2: API Failed to fetch -> Cả hai trang không hiển thị dữ liệu giả
+  // ---------------------------------------------------------------------------------
+  console.log('Case 2: API Failed to fetch -> Không hiển thị dữ liệu giả, không fallback');
+  // Khi API gặp lỗi, frontend state là error, data là null.
+  const vmUndefined = computeBinViewModel(undefined, now);
+  assert.equal(vmUndefined.isValidReading, false);
+  assert.equal(vmUndefined.displayPercentage, '—');
+  assert.equal(vmUndefined.hasDistance, false);
+  assert.equal(vmUndefined.hasCapacity, false);
+  assert.equal(vmUndefined.statusBadgeText, 'Chưa có dữ liệu');
+  console.log('  -> PASS: Khi fetch thất bại, fallback là null/unavailable, không có dữ liệu demo.\n');
+
+  // ---------------------------------------------------------------------------------
+  // Case 3: Pi ONLINE nhưng HC1, HC2, HC3 null -> Cả hai trang hiển thị CHƯA CÓ DỮ LIỆU
+  // ---------------------------------------------------------------------------------
+  console.log('Case 3: Pi ONLINE nhưng cảm biến HC1, HC2, HC3 null -> CHƯA CÓ DỮ LIỆU');
+  const nowIso = new Date(now).toISOString();
+  realDeviceService.recordHeartbeat({
+    deviceId: 'raspberry-pi-5',
+    uptimeSeconds: 100,
+    cpuTempC: 45.0,
+    sentAt: nowIso,
+    sensors: {
+      recyclable: null as any,
+      nonRecyclable: null as any,
+      organic: null as any
+    }
+  });
+
+  const realStatusOnlineNoSensors = realDeviceService.getStatus();
+  assert.equal(realStatusOnlineNoSensors.status, 'ONLINE');
+
+  const syncedNoSensors = syncBinsWithRealDevice(DEMO_BINS, realStatusOnlineNoSensors);
+  for (const b of syncedNoSensors) {
+    assert.equal(b.currentFillLevel, null);
+    assert.equal(b.distanceCm, null);
+    const vm = computeBinViewModel(b, now);
+    assert.equal(vm.isValidReading, false);
+    assert.equal(vm.displayPercentage, '—');
+    assert.notEqual(vm.displayPercentage, '0%', 'Null must not be coerced to 0%');
+  }
+  console.log('  -> PASS: Pi ONLINE nhưng cảm biến null -> Cả hai trang hiển thị "—", không ép thành 0%.\n');
+
+  // ---------------------------------------------------------------------------------
+  // Case 4: Chỉ HC1 có dữ liệu -> Chỉ thùng tái chế hiển thị phần trăm
+  // ---------------------------------------------------------------------------------
+  console.log('Case 4: Chỉ HC1 có dữ liệu (35%) -> Chỉ Rác tái chế hiển thị 35%');
+  realDeviceService.recordHeartbeat({
+    deviceId: 'raspberry-pi-5',
+    uptimeSeconds: 105,
+    cpuTempC: 45.1,
+    sentAt: new Date(now).toISOString(),
+    sensors: {
+      recyclable: { fillLevel: 35, distanceCm: 45.5, status: 'OK', updatedAt: new Date(now).toISOString() },
+      nonRecyclable: null as any,
+      organic: null as any
+    }
+  });
+
+  const syncedHC1 = syncBinsWithRealDevice(DEMO_BINS, realDeviceService.getStatus());
+  const bRecyc1 = syncedHC1.find((b) => b.binCode === 'RECYCLABLE')!;
+  const bNonRecyc1 = syncedHC1.find((b) => b.binCode === 'NON_RECYCLABLE')!;
+  const bOrg1 = syncedHC1.find((b) => b.binCode === 'ORGANIC')!;
+
+  const vmRecyc1 = computeBinViewModel(bRecyc1, now);
+  const vmNonRecyc1 = computeBinViewModel(bNonRecyc1, now);
+  const vmOrg1 = computeBinViewModel(bOrg1, now);
+
+  assert.equal(vmRecyc1.isValidReading, true);
+  assert.equal(vmRecyc1.displayPercentage, '35%');
+  assert.equal(vmRecyc1.distanceText, '45.5 cm');
+
+  assert.equal(vmNonRecyc1.isValidReading, false);
+  assert.equal(vmNonRecyc1.displayPercentage, '—');
+
+  assert.equal(vmOrg1.isValidReading, false);
+  assert.equal(vmOrg1.displayPercentage, '—');
+  console.log('  -> PASS: Chỉ HC1 (Tái chế) hiển thị 35%, 2 ngăn còn lại là "—".\n');
+
+  // ---------------------------------------------------------------------------------
+  // Case 5: Chỉ HC2 có dữ liệu -> Chỉ thùng không tái chế hiển thị phần trăm
+  // ---------------------------------------------------------------------------------
+  console.log('Case 5: Chỉ HC2 có dữ liệu (72%) -> Chỉ Rác không tái chế hiển thị 72%');
+  realDeviceService.recordHeartbeat({
+    deviceId: 'raspberry-pi-5',
+    uptimeSeconds: 110,
+    cpuTempC: 45.2,
+    sentAt: new Date(now).toISOString(),
+    sensors: {
+      recyclable: null as any,
+      nonRecyclable: { fillLevel: 72, distanceCm: 20.0, status: 'OK', updatedAt: new Date(now).toISOString() },
+      organic: null as any
+    }
+  });
+
+  const syncedHC2 = syncBinsWithRealDevice(DEMO_BINS, realDeviceService.getStatus());
+  const bRecyc2 = syncedHC2.find((b) => b.binCode === 'RECYCLABLE')!;
+  const bNonRecyc2 = syncedHC2.find((b) => b.binCode === 'NON_RECYCLABLE')!;
+  const bOrg2 = syncedHC2.find((b) => b.binCode === 'ORGANIC')!;
+
+  assert.equal(computeBinViewModel(bRecyc2, now).displayPercentage, '—');
+  assert.equal(computeBinViewModel(bNonRecyc2, now).displayPercentage, '72%');
+  assert.equal(computeBinViewModel(bNonRecyc2, now).distanceText, '20.0 cm');
+  assert.equal(computeBinViewModel(bOrg2, now).displayPercentage, '—');
+  console.log('  -> PASS: Chỉ HC2 (Không tái chế) hiển thị 72%, 2 ngăn còn lại là "—".\n');
+
+  // ---------------------------------------------------------------------------------
+  // Case 6: Chỉ HC3 có dữ liệu -> Chỉ thùng hữu cơ hiển thị phần trăm
+  // ---------------------------------------------------------------------------------
+  console.log('Case 6: Chỉ HC3 có dữ liệu (18%) -> Chỉ Rác hữu cơ hiển thị 18%');
+  realDeviceService.recordHeartbeat({
+    deviceId: 'raspberry-pi-5',
+    uptimeSeconds: 115,
+    cpuTempC: 45.3,
+    sentAt: new Date(now).toISOString(),
+    sensors: {
+      recyclable: null as any,
+      nonRecyclable: null as any,
+      organic: { fillLevel: 18, distanceCm: 58.0, status: 'OK', updatedAt: new Date(now).toISOString() }
+    }
+  });
+
+  const syncedHC3 = syncBinsWithRealDevice(DEMO_BINS, realDeviceService.getStatus());
+  const bRecyc3 = syncedHC3.find((b) => b.binCode === 'RECYCLABLE')!;
+  const bNonRecyc3 = syncedHC3.find((b) => b.binCode === 'NON_RECYCLABLE')!;
+  const bOrg3 = syncedHC3.find((b) => b.binCode === 'ORGANIC')!;
+
+  assert.equal(computeBinViewModel(bRecyc3, now).displayPercentage, '—');
+  assert.equal(computeBinViewModel(bNonRecyc3, now).displayPercentage, '—');
+  assert.equal(computeBinViewModel(bOrg3, now).displayPercentage, '18%');
+  assert.equal(computeBinViewModel(bOrg3, now).distanceText, '58.0 cm');
+  console.log('  -> PASS: Chỉ HC3 (Hữu cơ) hiển thị 18%, 2 ngăn còn lại là "—".\n');
+
+  // ---------------------------------------------------------------------------------
+  // Case 7: Dữ liệu STALE trên 15 giây -> Cả hai trang cùng chuyển unavailable
+  // ---------------------------------------------------------------------------------
+  console.log('Case 7: Dữ liệu STALE > 15 giây -> Cả hai trang chuyển "—" và badge STALE');
+  const staleTime = new Date(now - 20000).toISOString(); // 20s ago
+  const staleBin = {
+    id: 'bin-1',
+    binCode: 'ORGANIC',
+    name: 'Rác hữu cơ',
+    location: 'Ngăn rác hữu cơ',
+    capacity: 240,
+    currentFillLevel: 50,
+    status: 'ONLINE' as const,
+    fillCategory: 'MONITOR' as const,
+    isActive: true,
+    lastSeen: staleTime,
+    createdAt: staleTime,
+    updatedAt: staleTime,
+    latitude: null,
+    longitude: null,
+    distanceCm: 30.0
+  };
+
+  const vmStale = computeBinViewModel(staleBin, now);
+  assert.equal(vmStale.isStale, true);
   assert.equal(vmStale.isValidReading, false);
   assert.equal(vmStale.displayPercentage, '—');
-  assert.equal(vmStale.badgeText, 'Dữ liệu cũ (STALE)');
+  assert.equal(vmStale.statusBadgeText, 'Dữ liệu cũ (STALE)');
   assert.equal(vmStale.hasDistance, false);
-  console.log('  -> PASS: Stale sensor data correctly flagged as unavailable with STALE badge.\n');
+  console.log('  -> PASS: Quá 15s không có dữ liệu -> Chuyển "—" và badge Dữ liệu cũ (STALE).\n');
 
-  // Test 5: True 0% fill level handling
-  console.log('Test 5: True 0% fill level handling (must NOT be treated as null)');
-  const recentNow = new Date().toISOString();
-  const vmZero = computeWasteCardViewModel({ currentFillLevel: 0, status: 'ONLINE', lastSeen: recentNow, distanceCm: 80.5 }, Date.now());
+  // ---------------------------------------------------------------------------------
+  // Case 8: Giá trị 0% thực tế -> Cả hai trang hiển thị đúng "0%"
+  // ---------------------------------------------------------------------------------
+  console.log('Case 8: Giá trị 0% thực tế -> Cả hai trang hiển thị "0%", không bị nhầm thành null');
+  const zeroBin = {
+    id: 'bin-2',
+    binCode: 'RECYCLABLE',
+    name: 'Rác tái chế',
+    location: 'Ngăn rác tái chế',
+    capacity: 240,
+    currentFillLevel: 0,
+    status: 'ONLINE' as const,
+    fillCategory: 'NORMAL' as const,
+    isActive: true,
+    lastSeen: new Date(now).toISOString(),
+    createdAt: new Date(now).toISOString(),
+    updatedAt: new Date(now).toISOString(),
+    latitude: null,
+    longitude: null,
+    distanceCm: 50.0
+  };
+
+  const vmZero = computeBinViewModel(zeroBin, now);
   assert.equal(vmZero.isValidReading, true);
+  assert.equal(vmZero.fillPct, 0);
   assert.equal(vmZero.displayPercentage, '0%');
   assert.equal(vmZero.progressWidth, '0%');
   assert.equal(vmZero.hasDistance, true);
-  console.log('  -> PASS: True 0% correctly rendered as "0%", distance 80.5 cm preserved.\n');
+  assert.equal(vmZero.distanceText, '50.0 cm');
+  console.log('  -> PASS: 0% thực tế hiển thị chuẩn xác "0%", không hiển thị "—".\n');
 
-  // Test 6: Valid real sensor readings from Pi Agent / ESP32 (HC1: recyclable, HC2: nonRecyclable, HC3: organic)
-  console.log('Test 6: Valid real sensor readings end-to-end');
-  const nowIso = new Date().toISOString();
-  realDeviceService.recordHeartbeat({
-    deviceId: 'raspberry-pi-5',
-    uptimeSeconds: 120,
-    cpuTempC: 45.2,
-    sentAt: nowIso,
-    sensors: {
-      recyclable: { fillLevel: 32, distanceCm: 48.2, status: 'OK', updatedAt: nowIso },
-      nonRecyclable: { fillLevel: 64, distanceCm: 25.1, status: 'OK', updatedAt: nowIso },
-      organic: { fillLevel: 15, distanceCm: 60.0, status: 'OK', updatedAt: nowIso }
-    }
-  });
-
-  const summaryOnline = demoService.getDashboardSummary();
-  assert.equal(summaryOnline.bins.length, 3);
-
-  const organicBin = summaryOnline.bins.find((b) => b.binCode === 'ORGANIC')!;
-  const recyclableBin = summaryOnline.bins.find((b) => b.binCode === 'RECYCLABLE')!;
-  const nonRecyclableBin = summaryOnline.bins.find((b) => b.binCode === 'NON_RECYCLABLE')!;
-
-  assert.equal(organicBin.currentFillLevel, 15, 'Organic should be 15%');
-  assert.equal(organicBin.distanceCm, 60.0, 'Organic distance should be 60.0');
-  assert.equal(organicBin.status, 'ONLINE');
-
-  assert.equal(recyclableBin.currentFillLevel, 32, 'Recyclable should be 32%');
-  assert.equal(recyclableBin.distanceCm, 48.2, 'Recyclable distance should be 48.2');
-  assert.equal(recyclableBin.status, 'ONLINE');
-
-  assert.equal(nonRecyclableBin.currentFillLevel, 64, 'Non-recyclable should be 64%');
-  assert.equal(nonRecyclableBin.distanceCm, 25.1, 'Non-recyclable distance should be 25.1');
-  assert.equal(nonRecyclableBin.status, 'ONLINE');
-
-  assert.equal(summaryOnline.summary.offline, 0, '0 bins offline');
-  assert.equal(summaryOnline.summary.normal, 2, 'Organic (15) and Recyclable (32) are normal');
-  assert.equal(summaryOnline.summary.warning, 1, 'Non-recyclable (64) is monitor/warning');
-  assert.equal(summaryOnline.summary.full, 0, 'No bins critical');
-  console.log('  -> PASS: All three real sensor readings correctly mapped with exact values.\n');
-
-  // Test 7: Missing one sensor does NOT suppress the other two
-  console.log('Test 7: Missing one sensor retains the other two valid sensors');
-  realDeviceService.recordHeartbeat({
-    deviceId: 'raspberry-pi-5',
-    uptimeSeconds: 125,
-    cpuTempC: 45.4,
-    sentAt: new Date().toISOString(),
-    sensors: {
-      recyclable: { fillLevel: 40, distanceCm: 42.0, status: 'OK', updatedAt: new Date().toISOString() },
-      nonRecyclable: null as any,
-      organic: { fillLevel: 18, distanceCm: 58.0, status: 'OK', updatedAt: new Date().toISOString() }
-    }
-  });
-
-  const partialSummary = demoService.getDashboardSummary();
-  const partialRecyclable = partialSummary.bins.find((b) => b.binCode === 'RECYCLABLE')!;
-  const partialNonRecyclable = partialSummary.bins.find((b) => b.binCode === 'NON_RECYCLABLE')!;
-  const partialOrganic = partialSummary.bins.find((b) => b.binCode === 'ORGANIC')!;
-
-  assert.equal(partialRecyclable.currentFillLevel, 40);
-  assert.equal(partialRecyclable.status, 'ONLINE');
-
-  assert.equal(partialOrganic.currentFillLevel, 18);
-  assert.equal(partialOrganic.status, 'ONLINE');
-
-  assert.equal(partialNonRecyclable.currentFillLevel, null, 'Missing sensor must be null');
-  assert.equal(partialNonRecyclable.status, 'OFFLINE', 'Missing sensor must be OFFLINE');
-  console.log('  -> PASS: Partial sensor availability handled independently without cross-corruption.\n');
-
-  // Test 8: Recovery after OFFLINE restores real sensor data
-  console.log('Test 8: Recovery after Pi OFFLINE restores real sensor data');
-  // Trigger offline
+  // ---------------------------------------------------------------------------------
+  // Case 9: Pi kết nối lại -> Cả hai trang khôi phục dữ liệu thực tế ngay lập tức
+  // ---------------------------------------------------------------------------------
+  console.log('Case 9: Pi kết nối lại -> Cả hai trang khôi phục dữ liệu thực tế');
+  // First simulate offline
   realDeviceService.setLastHeartbeatDateForTest(null);
-  const offlineCheck = demoService.getDashboardSummary();
-  assert.equal(offlineCheck.bins[0].currentFillLevel, null);
-  assert.equal(offlineCheck.bins[1].currentFillLevel, null);
-  assert.equal(offlineCheck.bins[2].currentFillLevel, null);
+  const syncedBefore = syncBinsWithRealDevice(DEMO_BINS, realDeviceService.getStatus());
+  assert.equal(syncedBefore[0].currentFillLevel, null);
 
-  // Restore with new heartbeat
+  // Now restore with new heartbeat
   const restoreIso = new Date().toISOString();
   realDeviceService.recordHeartbeat({
     deviceId: 'raspberry-pi-5',
-    uptimeSeconds: 150,
-    cpuTempC: 44.0,
+    uptimeSeconds: 200,
+    cpuTempC: 44.5,
     sentAt: restoreIso,
     sensors: {
-      recyclable: { fillLevel: 55, distanceCm: 35.0, status: 'OK', updatedAt: restoreIso },
-      nonRecyclable: { fillLevel: 75, distanceCm: 18.0, status: 'OK', updatedAt: restoreIso },
-      organic: { fillLevel: 88, distanceCm: 10.0, status: 'OK', updatedAt: restoreIso }
+      recyclable: { fillLevel: 44, distanceCm: 38.0, status: 'OK', updatedAt: restoreIso },
+      nonRecyclable: { fillLevel: 77, distanceCm: 16.5, status: 'OK', updatedAt: restoreIso },
+      organic: { fillLevel: 22, distanceCm: 52.0, status: 'OK', updatedAt: restoreIso }
     }
   });
 
-  const recoveredSummary = demoService.getDashboardSummary();
-  assert.equal(recoveredSummary.bins.find((b) => b.binCode === 'RECYCLABLE')!.currentFillLevel, 55);
-  assert.equal(recoveredSummary.bins.find((b) => b.binCode === 'NON_RECYCLABLE')!.currentFillLevel, 75);
-  assert.equal(recoveredSummary.bins.find((b) => b.binCode === 'ORGANIC')!.currentFillLevel, 88);
-  console.log('  -> PASS: Reconnection successfully restored real sensor data.\n');
+  const syncedAfter = syncBinsWithRealDevice(DEMO_BINS, realDeviceService.getStatus());
+  assert.equal(syncedAfter.find((b) => b.binCode === 'RECYCLABLE')!.currentFillLevel, 44);
+  assert.equal(syncedAfter.find((b) => b.binCode === 'NON_RECYCLABLE')!.currentFillLevel, 77);
+  assert.equal(syncedAfter.find((b) => b.binCode === 'ORGANIC')!.currentFillLevel, 22);
 
-  console.log('=== ALL 8 REAL SENSOR DATA VERIFICATION TESTS PASSED SUCCESSFULLY! ===\n');
+  // Realtime merge to bins state in bins.tsx
+  const mergedBins = mergeDeviceHeartbeatToBins(syncedBefore as any, realDeviceService.getStatus());
+  assert.equal(mergedBins.find((b) => b.binCode === 'RECYCLABLE')!.currentFillLevel, 44);
+  assert.equal(mergedBins.find((b) => b.binCode === 'NON_RECYCLABLE')!.currentFillLevel, 77);
+  assert.equal(mergedBins.find((b) => b.binCode === 'ORGANIC')!.currentFillLevel, 22);
+  console.log('  -> PASS: Kết nối lại khôi phục đúng 44%, 77%, 22% trên cả hai trang.\n');
 
-  // Test 9: bin:telemetry from simulation CANNOT overwrite real sensor data
-  console.log('Test 9: Simulated bin:telemetry must NOT overwrite real sensor data');
-  function mergeTelemetryTest(data: any, event: any) {
-    const bins = data.bins.map((bin: any) => {
-      if (bin.binCode !== event.binCode) return bin;
-      // Rule: if isReal is true, drop simulation
-      if (bin.isReal) return bin;
-      return { ...bin, currentFillLevel: event.fillLevel, status: 'ONLINE' };
-    });
-    return { ...data, bins };
+  // ---------------------------------------------------------------------------------
+  // Case 10: Không xuất hiện lại các giá trị demo (25%, 58%, 78%, 22cm, 75cm, 42cm) khi Pi Offline
+  // ---------------------------------------------------------------------------------
+  console.log('Case 10: Xác nhận các giá trị demo (25%, 58%, 78%, 22cm, 75cm, 42cm) KHÔNG BAO GIỜ xuất hiện khi Pi Offline');
+  realDeviceService.setLastHeartbeatDateForTest(null);
+  (realDeviceService as any).sensors = null;
+
+  const summaryCheck = demoService.getDashboardSummary();
+  const allBinsCheck = demoService.getAllBins();
+
+  const forbiddenFills = [25, 58, 78];
+  const forbiddenDistances = [22, 42, 75];
+
+  for (const b of [...summaryCheck.bins, ...allBinsCheck]) {
+    assert.equal(forbiddenFills.includes(b.currentFillLevel as number), false, `Forbidden demo fill ${b.currentFillLevel} detected!`);
+    assert.equal(forbiddenDistances.includes(b.distanceCm as number), false, `Forbidden demo distance ${b.distanceCm} detected!`);
+    assert.equal(b.currentFillLevel, null);
+    assert.equal(b.distanceCm, null);
+    assert.equal(b.status, 'OFFLINE');
   }
+  console.log('  -> PASS: Không có bất kỳ giá trị demo nào tồn tại khi Pi Offline.\n');
 
-  const initialRealData = {
-    bins: [
-      { binCode: 'RECYCLABLE', currentFillLevel: 42, isReal: true, status: 'ONLINE' },
-      { binCode: 'NON_RECYCLABLE', currentFillLevel: 68, isReal: true, status: 'ONLINE' },
-      { binCode: 'ORGANIC', currentFillLevel: 12, isReal: true, status: 'ONLINE' }
-    ]
-  };
-
-  const afterSimulatedTelemetry = mergeTelemetryTest(initialRealData, {
-    binCode: 'RECYCLABLE',
-    fillLevel: 99, // Fake simulator spike
-    timestamp: new Date().toISOString()
-  });
-
-  assert.equal(afterSimulatedTelemetry.bins[0].currentFillLevel, 42, 'Real sensor 42% must NOT be overwritten by simulated 99%');
-  console.log('  -> PASS: Simulated telemetry safely dropped without affecting real sensor data.\n');
-
-  // Test 10: Out-of-order heartbeat packets: older packet must NOT overwrite newer data
-  console.log('Test 10: Out-of-order heartbeat packets rejection');
-  function shouldDropIncomingTest(currentTs: number, incomingTs: number): boolean {
-    if (currentTs <= 0) return false;
-    if (incomingTs <= 0) return true;
-    return incomingTs < currentTs;
-  }
-
-  const tNewer = 1700000050000;
-  const tOlder = 1700000010000; // 40 seconds older
-  assert.equal(shouldDropIncomingTest(tNewer, tOlder), true, 'Older incoming heartbeat must be dropped');
-  assert.equal(shouldDropIncomingTest(tOlder, tNewer), false, 'Newer incoming heartbeat must be accepted');
-  console.log('  -> PASS: Out-of-order older heartbeat packet correctly dropped.\n');
-
-  // Test 11: Each sensor has independent timestamp tracking
-  console.log('Test 11: Independent per-sensor timestamps');
-  const sensorHC1Time = '2026-11-06T10:00:10.000Z';
-  const sensorHC2Time = '2026-11-06T10:00:20.000Z';
-  const sensorHC3Time = '2026-11-06T10:00:15.000Z';
-
-  const mockHb = {
-    deviceId: 'raspberry-pi-5',
-    status: 'ONLINE',
-    sensors: {
-      recyclable: { fillLevel: 30, updatedAt: sensorHC1Time },
-      nonRecyclable: { fillLevel: 50, updatedAt: sensorHC2Time },
-      organic: { fillLevel: 70, updatedAt: sensorHC3Time }
-    }
-  };
-
-  assert.notEqual(mockHb.sensors.recyclable.updatedAt, mockHb.sensors.nonRecyclable.updatedAt);
-  assert.notEqual(mockHb.sensors.nonRecyclable.updatedAt, mockHb.sensors.organic.updatedAt);
-  console.log('  -> PASS: Each sensor has independent timestamp tracking.\n');
-
-  // Test 12: Verify mapping HC1 -> Recyclable, HC2 -> Non-recyclable, HC3 -> Organic
-  console.log('Test 12: Verification of hardware-to-compartment sensor mapping');
-  const mapping: Record<string, string> = {
-    hc1: 'RECYCLABLE',
-    hc2: 'NON_RECYCLABLE',
-    hc3: 'ORGANIC'
-  };
-  const categoryLabels: Record<string, string> = {
-    RECYCLABLE: 'Rác tái chế',
-    NON_RECYCLABLE: 'Rác không tái chế',
-    ORGANIC: 'Rác hữu cơ'
-  };
-
-  assert.equal(categoryLabels[mapping['hc1']], 'Rác tái chế', 'HC1 must map to Rác tái chế');
-  assert.equal(categoryLabels[mapping['hc2']], 'Rác không tái chế', 'HC2 must map to Rác không tái chế');
-  assert.equal(categoryLabels[mapping['hc3']], 'Rác hữu cơ', 'HC3 must map to Rác hữu cơ');
-  console.log('  -> PASS: Sensor mapping verified: HC1 -> Tái chế, HC2 -> Không tái chế, HC3 -> Hữu cơ.\n');
-
-  console.log('=== ALL 12 REAL SENSOR DATA VERIFICATION TESTS PASSED! ===\n');
+  console.log('=== ALL 10 REGRESSION TESTS PASSED CLEANLY! ===\n');
 }
 
 runTests().catch((err) => {
-  console.error('TEST FAILED:', err);
+  console.error('TEST SUITE FAILED:', err);
   process.exit(1);
 });

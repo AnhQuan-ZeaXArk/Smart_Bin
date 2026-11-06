@@ -13,6 +13,7 @@ import {
 import { normalizeDeviceId, CANONICAL_DEVICE_ID } from '../config/device-id.config.js';
 import { realDeviceService } from './real-device.service.js';
 import { settingsService } from '../services/settings.service.js';
+import { syncBinsWithRealDevice } from '../services/bin-sync.service.js';
 
 export interface BinQueryFilters {
   search?: string;
@@ -31,41 +32,7 @@ export interface SensorReadingFilters {
 export class DemoService {
   getAllBins(filters?: BinQueryFilters): DemoBin[] {
     const realStatus = realDeviceService.getStatus();
-    const isPiOnline = realStatus.status === 'ONLINE' || realStatus.status === 'WARNING';
-    const sensors = isPiOnline ? realStatus.sensors : null;
-
-    let result = DEMO_BINS.map((b) => {
-      let comp: any = null;
-      if (b.binCode === 'ORGANIC') comp = sensors?.organic;
-      else if (b.binCode === 'RECYCLABLE') comp = sensors?.recyclable;
-      else if (b.binCode === 'NON_RECYCLABLE') comp = sensors?.nonRecyclable;
-
-      if (comp && typeof comp.fillLevel === 'number' && comp.status !== 'STALE' && isPiOnline) {
-        const t = settingsService.getCachedThresholds();
-        let cat: 'NORMAL' | 'MONITOR' | 'NEARLY_FULL' | 'CRITICAL' = 'NORMAL';
-        if (comp.fillLevel >= t.fullThreshold) cat = 'CRITICAL';
-        else if (comp.fillLevel >= t.nearFullThreshold) cat = 'NEARLY_FULL';
-        else if (comp.fillLevel >= t.warningThreshold) cat = 'MONITOR';
-
-        return {
-          ...b,
-          currentFillLevel: comp.fillLevel,
-          distanceCm: typeof comp.distanceCm === 'number' ? comp.distanceCm : null,
-          status: 'ONLINE' as const,
-          lastSeen: comp.updatedAt || realStatus.lastHeartbeat,
-          fillCategory: cat
-        };
-      }
-
-      return {
-        ...b,
-        currentFillLevel: null,
-        distanceCm: null,
-        status: 'OFFLINE' as const,
-        lastSeen: realStatus.lastHeartbeat || null,
-        fillCategory: 'NORMAL' as const
-      };
-    });
+    let result = syncBinsWithRealDevice(DEMO_BINS, realStatus) as DemoBin[];
 
     if (filters?.status) {
       result = result.filter((b) => b.status === filters.status);
