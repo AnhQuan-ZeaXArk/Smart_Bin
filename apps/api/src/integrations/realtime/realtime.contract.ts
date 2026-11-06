@@ -16,7 +16,8 @@ export const REALTIME_EVENTS = {
   DEVICE_TELEMETRY: 'device:telemetry',
   DEVICE_COMMAND: 'device:command',
   DEVICE_COMMAND_ACK: 'device:command:ack',
-  DEVICE_COMMAND_STATUS: 'device:command:status'
+  DEVICE_COMMAND_STATUS: 'device:command:status',
+  SETTINGS_THRESHOLDS_UPDATED: 'settings:thresholds:updated'
 } as const;
 
 export type RealtimeEventName = typeof REALTIME_EVENTS[keyof typeof REALTIME_EVENTS];
@@ -152,4 +153,12 @@ export interface AiDetectionResult {
   timestamp: string;
 }
 
-
+/**
+ * Cấu hình ngưỡng cảnh báo mức đầy SmartBin
+ */
+export interface SystemThresholdsPayload {
+  warningThreshold: number;
+  nearFullThreshold: number;
+  fullThreshold: number;
+  updatedAt: string;
+}

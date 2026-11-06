@@ -267,4 +267,20 @@ export class RealtimeGateway {
     this.io.emit(REALTIME_EVENTS.ALERT_UPDATED, event);
     this.io.emit(REALTIME_EVENTS.ALERT, event);
   }
+
+  emitThresholdsUpdated(thresholds: {
+    warningThreshold: number;
+    nearFullThreshold: number;
+    fullThreshold: number;
+    updatedAt?: string | Date;
+  }): void {
+    const payload = {
+      warningThreshold: thresholds.warningThreshold,
+      nearFullThreshold: thresholds.nearFullThreshold,
+      fullThreshold: thresholds.fullThreshold,
+      updatedAt: (thresholds.updatedAt ? new Date(thresholds.updatedAt) : new Date()).toISOString()
+    };
+    this.io.emit(REALTIME_EVENTS.SETTINGS_THRESHOLDS_UPDATED, payload);
+    this.io.emit('settings:thresholds', payload);
+  }
 }

@@ -6,6 +6,7 @@ import { MqttAdapter } from './integrations/mqtt/mqtt.adapter.js';
 import { RealtimeGateway } from './integrations/realtime/realtime.gateway.js';
 import { deviceHealthService } from './services/device-health.service.js';
 import { realDeviceService } from './demo/real-device.service.js';
+import { settingsService } from './services/settings.service.js';
 
 const httpServer = createServer(app);
 const realtime = new RealtimeGateway(httpServer);
@@ -59,6 +60,9 @@ async function startServer(): Promise<void> {
     console.log('[Server] Connecting to database in Production Mode...');
     try {
       await verifyDatabaseConnection();
+      await settingsService.getThresholds().catch((err) => {
+        console.warn('[Server] Could not initialize settings from DB on startup:', err?.message || err);
+      });
       deviceHealthService.startMonitoring();
       void mqttAdapter.start();
       console.log('[Server] Production background services initialized successfully.');

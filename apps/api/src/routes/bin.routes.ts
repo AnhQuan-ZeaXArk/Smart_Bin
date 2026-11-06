@@ -7,6 +7,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 
 import { env } from '../config/env.js';
 import { demoService } from '../demo/demo.service.js';
+import { settingsService, type SystemThresholds } from '../services/settings.service.js';
 
 const router = Router();
 const idSchema = z.string().min(1);
@@ -35,10 +36,15 @@ const querySchema = z.object({
 
 type FillCategory = 'NORMAL' | 'MONITOR' | 'NEARLY_FULL' | 'CRITICAL';
 
-function getFillCategory(fillLevel: number): FillCategory {
-  if (fillLevel <= 50) return 'NORMAL';
-  if (fillLevel <= 75) return 'MONITOR';
-  if (fillLevel <= 90) return 'NEARLY_FULL';
+function getFillCategory(fillLevel: number, thresholds?: Partial<SystemThresholds>): FillCategory {
+  const t = thresholds ?? settingsService.getCachedThresholds();
+  const warning = t.warningThreshold ?? 50;
+  const nearFull = t.nearFullThreshold ?? 70;
+  const full = t.fullThreshold ?? 90;
+
+  if (fillLevel < warning) return 'NORMAL';
+  if (fillLevel < nearFull) return 'MONITOR';
+  if (fillLevel < full) return 'NEARLY_FULL';
   return 'CRITICAL';
 }
 

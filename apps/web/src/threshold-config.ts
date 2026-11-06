@@ -9,8 +9,8 @@ export type SmartBinThresholds = {
 export const SMARTBIN_SETTINGS_KEY = 'smartbin-demo-settings';
 
 export const DEFAULT_THRESHOLDS: SmartBinThresholds = {
-  warningThreshold: 35,
-  nearFullThreshold: 40,
+  warningThreshold: 50,
+  nearFullThreshold: 70,
   fullThreshold: 90
 };
 

@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRealtime } from './realtime-store';
 import { useAuth } from './auth-context';
+import { apiUrl } from './api-config';
 import {
   DEFAULT_THRESHOLDS,
   readSmartBinThresholds,
@@ -70,12 +71,15 @@ function validateThresholds(value: DemoSettings) {
 }
 
 export function SettingsPage() {
-  const { connected: realtimeConnected } = useRealtime();
+  const { socket, connected: realtimeConnected } = useRealtime();
   const { user, systemMode } = useAuth();
   const [settings, setSettings] = useState<DemoSettings>(() => readSettings());
   const [status, setStatus] = useState('');
   const [thresholdError, setThresholdError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [remoteNotice, setRemoteNotice] = useState('');
   const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+  const latestThresholdsTimestampRef = useRef<number>(0);
 
   useEffect(() => {
     const handleConnectionChange = () => setIsOnline(window.navigator.onLine);
@@ -87,9 +91,91 @@ export function SettingsPage() {
     };
   }, []);
 
+  // 1. Tải cấu hình từ PostgreSQL khi khởi tạo trang và khi Socket.IO khôi phục kết nối
+  useEffect(() => {
+    let active = true;
+    fetch(`${apiUrl}/api/settings/thresholds`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!active || !data?.thresholds) return;
+        const t = data.thresholds;
+        const incomingTime = t.updatedAt ? new Date(t.updatedAt).getTime() : 0;
+        // Chống race condition: bỏ qua response HTTP cũ nếu đã nhận cấu hình mới hơn qua Socket.IO
+        if (incomingTime && incomingTime < latestThresholdsTimestampRef.current) {
+          return;
+        }
+        if (incomingTime) {
+          latestThresholdsTimestampRef.current = incomingTime;
+        }
+
+        const nextThresholds: SmartBinThresholds = {
+          warningThreshold: Number(t.warningThreshold ?? DEFAULT_THRESHOLDS.warningThreshold),
+          nearFullThreshold: Number(t.nearFullThreshold ?? DEFAULT_THRESHOLDS.nearFullThreshold),
+          fullThreshold: Number(t.fullThreshold ?? DEFAULT_THRESHOLDS.fullThreshold)
+        };
+        setSettings((current) => ({
+          ...current,
+          ...nextThresholds
+        }));
+        saveSmartBinThresholds(nextThresholds);
+      })
+      .catch(() => {
+        // Khi mất kết nối máy chủ, giữ nguyên cấu hình hiện tại
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [realtimeConnected]);
+
+  // 2. Lắng nghe sự kiện Socket.IO đồng bộ realtime giữa nhiều người dùng
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleThresholdsUpdated = (payload: unknown) => {
+      if (!payload || typeof payload !== 'object') return;
+      const p = payload as Record<string, unknown>;
+      const incomingTime = p.updatedAt ? new Date(String(p.updatedAt)).getTime() : Date.now();
+      // Chống race condition: bỏ qua event nếu đã xử lý phiên bản mới hơn
+      if (incomingTime && incomingTime < latestThresholdsTimestampRef.current) {
+        return;
+      }
+      latestThresholdsTimestampRef.current = incomingTime;
+
+      const nextThresholds: SmartBinThresholds = {
+        warningThreshold: Number(p.warningThreshold),
+        nearFullThreshold: Number(p.nearFullThreshold),
+        fullThreshold: Number(p.fullThreshold)
+      };
+
+      if (
+        !Number.isFinite(nextThresholds.warningThreshold) ||
+        !Number.isFinite(nextThresholds.nearFullThreshold) ||
+        !Number.isFinite(nextThresholds.fullThreshold)
+      ) {
+        return;
+      }
+
+      setSettings((current) => ({
+        ...current,
+        ...nextThresholds
+      }));
+      setThresholdError('');
+      saveSmartBinThresholds(nextThresholds);
+      setRemoteNotice('Cấu hình đã được cập nhật bởi một thiết bị khác.');
+    };
+
+    socket.on('settings:thresholds:updated', handleThresholdsUpdated);
+    socket.on('settings:thresholds', handleThresholdsUpdated);
+
+    return () => {
+      socket.off('settings:thresholds:updated', handleThresholdsUpdated);
+      socket.off('settings:thresholds', handleThresholdsUpdated);
+    };
+  }, [socket]);
+
   const isWorker = systemMode !== 'demo' && user?.role === 'WORKER';
   const canEdit = !isWorker;
-  const canManageThresholds = !isWorker;
 
   function updateField<K extends keyof DemoSettings>(key: K, value: DemoSettings[K]) {
     setSettings((current) => {
@@ -97,6 +183,7 @@ export function SettingsPage() {
       setThresholdError(validateThresholds(next));
       return next;
     });
+    setRemoteNotice('');
   }
 
   function updateNotification(key: keyof NotificationConfig, value: boolean) {
@@ -106,7 +193,7 @@ export function SettingsPage() {
     }));
   }
 
-  function saveSettings() {
+  async function saveSettings() {
     const validation = validateThresholds(settings);
     if (validation) {
       setThresholdError(validation);
@@ -120,9 +207,49 @@ export function SettingsPage() {
     };
 
     setThresholdError('');
-    setStatus('Lưu thay đổi thành công.');
-    saveSmartBinThresholds(nextThresholds);
-    localStorage.setItem('smartbin-demo-settings', JSON.stringify({ ...settings, ...nextThresholds }));
+    setStatus('');
+    setRemoteNotice('');
+    setIsSaving(true);
+
+    try {
+      // Gửi yêu cầu cập nhật lên Backend lưu vào PostgreSQL
+      const response = await fetch(`${apiUrl}/api/settings/thresholds`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nextThresholds)
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(result?.message || 'Không thể lưu cấu hình lên máy chủ.');
+      }
+
+      const saved: SmartBinThresholds = result?.thresholds
+        ? {
+            warningThreshold: Number(result.thresholds.warningThreshold),
+            nearFullThreshold: Number(result.thresholds.nearFullThreshold),
+            fullThreshold: Number(result.thresholds.fullThreshold)
+          }
+        : nextThresholds;
+
+      setSettings((current) => ({
+        ...current,
+        ...saved
+      }));
+
+      const savedTime = result?.thresholds?.updatedAt ? new Date(result.thresholds.updatedAt).getTime() : Date.now();
+      latestThresholdsTimestampRef.current = savedTime;
+
+      saveSmartBinThresholds(saved);
+      localStorage.setItem('smartbin-demo-settings', JSON.stringify({ ...settings, ...saved }));
+      setStatus('Lưu cấu hình thành công vào cơ sở dữ liệu PostgreSQL.');
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Lỗi kết nối khi lưu cấu hình.';
+      setThresholdError(msg);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   const connectionText = isOnline ? 'Trình duyệt trực tuyến' : 'Trình duyệt ngoại tuyến';
@@ -161,7 +288,7 @@ export function SettingsPage() {
 
             <div className="settings-field">
               <span className="settings-field__label">Lưu cấu hình</span>
-              <div className="settings-readonly settings-readonly--status">Lưu trên thiết bị này</div>
+              <div className="settings-readonly settings-readonly--status">Đồng bộ máy chủ (PostgreSQL)</div>
             </div>
 
             <div className="settings-field">
@@ -186,7 +313,7 @@ export function SettingsPage() {
                 <small>Khởi đầu cảnh báo khi mức độ đầy đạt ngưỡng này.</small>
               </div>
               <div className="range-input-wrap">
-                <input type="number" min={0} max={100} className="settings-input range-value" value={settings.warningThreshold} onChange={(event) => updateField('warningThreshold', Number(event.target.value))} disabled={!canManageThresholds} />
+                <input type="number" min={0} max={100} className="settings-input range-value" value={settings.warningThreshold} onChange={(event) => updateField('warningThreshold', Number(event.target.value))} disabled={isSaving} />
                 <span className="range-unit">%</span>
               </div>
             </div>
@@ -197,7 +324,7 @@ export function SettingsPage() {
                 <small>Hệ thống báo động sớm để lên kế hoạch thu gom.</small>
               </div>
               <div className="range-input-wrap">
-                <input type="number" min={0} max={100} className="settings-input range-value" value={settings.nearFullThreshold} onChange={(event) => updateField('nearFullThreshold', Number(event.target.value))} disabled={!canManageThresholds} />
+                <input type="number" min={0} max={100} className="settings-input range-value" value={settings.nearFullThreshold} onChange={(event) => updateField('nearFullThreshold', Number(event.target.value))} disabled={isSaving} />
                 <span className="range-unit">%</span>
               </div>
             </div>
@@ -208,25 +335,26 @@ export function SettingsPage() {
                 <small>Ngưỡng cần ưu tiên thu gom và nhắc nhở hoạt động.</small>
               </div>
               <div className="range-input-wrap">
-                <input type="number" min={0} max={100} className="settings-input range-value" value={settings.fullThreshold} onChange={(event) => updateField('fullThreshold', Number(event.target.value))} disabled={!canManageThresholds} />
+                <input type="number" min={0} max={100} className="settings-input range-value" value={settings.fullThreshold} onChange={(event) => updateField('fullThreshold', Number(event.target.value))} disabled={isSaving} />
                 <span className="range-unit">%</span>
               </div>
             </div>
           </div>
 
           {thresholdError && <p className="field-error">{thresholdError}</p>}
+          {status && <p className="field-success" style={{ color: '#10b981', marginTop: '10px', fontSize: '14px', fontWeight: 500 }}>{status}</p>}
+          {remoteNotice && <p className="field-info" style={{ color: '#3b82f6', marginTop: '10px', fontSize: '13px' }}>ℹ️ {remoteNotice}</p>}
 
-          {isWorker && (
-            <div className="settings-role-notice" style={{ padding: '10px 14px', background: 'rgba(239, 68, 68, 0.08)', borderRadius: '6px', color: '#f87171', fontSize: '13px', marginTop: '12px' }}>
-              Tài khoản Nhân viên (WORKER) chỉ có quyền xem cấu hình. Chỉ Quản trị viên và Giám sát viên mới có quyền cập nhật ngưỡng cảnh báo.
-            </div>
-          )}
-
-          {canManageThresholds && (
-            <div className="settings-footer">
-              <button type="button" className="button-primary" onClick={saveSettings}>Lưu thay đổi</button>
-            </div>
-          )}
+          <div className="settings-footer">
+            <button
+              type="button"
+              className="button-primary"
+              onClick={saveSettings}
+              disabled={isSaving}
+            >
+              {isSaving ? 'Đang lưu vào PostgreSQL...' : 'Lưu thay đổi'}
+            </button>
+          </div>
         </section>
 
         <section className="settings-card">

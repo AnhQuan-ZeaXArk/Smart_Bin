@@ -9,8 +9,10 @@ import binRoutes from './routes/bin.routes.js';
 import deviceRoutes from './routes/device.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import demoRoutes from './routes/demo.routes.js';
+import settingsRoutes from './routes/settings.routes.js';
 
 export const app = express();
+app.set('trust proxy', 1);
 app.use(helmet());
 
 const allowedOrigins = new Set(env.CORS_ORIGINS.map((o) => o.replace(/\/+$/, '')));
@@ -75,6 +77,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/bins', binRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/settings', settingsRoutes);
 app.use('/api', protectedRoutes);
 app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
   console.error(error);

@@ -154,3 +154,14 @@ model Alert {
 
   @@index([isResolved, createdAt])
 }
+
+model SystemSetting {
+  id                String   @id @default("default")
+  warningThreshold  Int      @default(50) @map("warning_threshold")
+  nearFullThreshold Int      @default(70) @map("near_full_threshold")
+  fullThreshold     Int      @default(90) @map("full_threshold")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
