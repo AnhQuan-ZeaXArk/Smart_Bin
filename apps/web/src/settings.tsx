@@ -285,37 +285,7 @@ export function SettingsPage() {
         <section className="settings-card">
           <div className="settings-card__header">
             <div>
-              <h2 className="settings-card__title">5. Chế độ vận hành</h2>
-              <p className="settings-card__description">
-                {systemMode === 'production'
-                  ? 'Thông tin môi trường vận hành thực tế kết nối cơ sở dữ liệu PostgreSQL.'
-                  : 'Thông tin chế độ Demo độc lập của SmartBin.'}
-              </p>
-            </div>
-          </div>
-
-          <div className="settings-grid">
-            <div className="settings-field">
-              <span className="settings-field__label">Chế độ</span>
-              <div className="settings-readonly settings-readonly--success">
-                <span className="status-dot" />
-                {systemMode === 'production' ? 'Production Mode (PostgreSQL Database)' : 'Demo Mode (Độc lập, không Database)'}
-              </div>
-            </div>
-
-            <div className="settings-field">
-              <span className="settings-field__label">Xác thực tài khoản</span>
-              <div className="settings-readonly">
-                {systemMode === 'production' ? 'Đã kích hoạt (JWT & Phân quyền RBAC)' : 'Vô hiệu hóa (Mở trực tiếp)'}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="settings-card">
-          <div className="settings-card__header">
-            <div>
-              <h2 className="settings-card__title">6. Thông tin hệ thống</h2>
+              <h2 className="settings-card__title">5. Thông tin hệ thống</h2>
               <p className="settings-card__description">Thông tin kỹ thuật cơ bản của SmartBin.</p>
             </div>
           </div>

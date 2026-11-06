@@ -476,22 +476,15 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
   return (
     <section className={`real-device-container ${compact ? 'compact' : ''} ${pulse ? 'has-pulse' : ''}`}>
       <div className="real-device-card">
-        {/* Header with Title and Hardware Tag */}
+        {/* Header with Title */}
         <div className="real-device-card__head">
           <div className="real-device-card__title-box">
-            <div className="real-hardware-pill">
-              <span className="real-hardware-dot" />
-              <span>PHẦN CỨNG THỰC TẾ (REAL HARDWARE)</span>
-            </div>
             <div className="real-device-card__main-title">
               <div className="real-device-icon-wrapper">
                 <IconCpu />
               </div>
               <div>
                 <h3>{data?.deviceName || 'Raspberry Pi 5'}</h3>
-                <p className="real-device-subtitle">
-                  Giao tiếp thời gian thực hai chiều qua Socket.IO &amp; HTTP Heartbeat. Độc lập với dữ liệu mô phỏng.
-                </p>
               </div>
             </div>
           </div>
