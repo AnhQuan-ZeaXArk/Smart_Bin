@@ -16,6 +16,9 @@
     "db:generate:postgres": "node ../../node_modules/prisma/build/index.js generate --schema=prisma/schema.prisma",
     "db:migrate": "node --env-file=./.env ../../node_modules/prisma/build/index.js migrate dev --name init",
     "db:migrate:deploy": "node ../../node_modules/prisma/build/index.js migrate deploy --schema=prisma/schema.prisma",
+    "migration:verify": "node scripts/verify-migration-packaging.js",
+    "migration:promote-contract": "node scripts/promote-contract-migration.js",
+    "migration:demote-contract": "node scripts/demote-contract-migration.js",
     "db:seed": "node --env-file=./.env ../../node_modules/tsx/dist/cli.mjs prisma/seed.ts",
     "mqtt:simulator": "node --env-file=./.env ../../node_modules/tsx/dist/cli.mjs src/integrations/mqtt/simulator.ts"
   },

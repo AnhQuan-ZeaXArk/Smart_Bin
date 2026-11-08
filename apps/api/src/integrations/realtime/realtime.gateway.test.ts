@@ -8,6 +8,7 @@ import { env } from '../../config/env.js';
 import { RealtimeGateway, REALTIME_EVENTS, type DeviceStatusPayload, type RealtimeAlertPayload, type RealtimeTelemetryPayload } from './realtime.gateway.js';
 import { DeviceHealthService } from '../../services/device-health.service.js';
 import { MqttAdapter } from '../mqtt/mqtt.adapter.js';
+import { assertIsolatedTestDb } from '../../test-utils/test-db-guard.js';
 
 class MockMqttClient extends EventEmitter {
   connected = true;
@@ -57,6 +58,7 @@ function waitForEvent<T = unknown>(socket: ClientSocketType, event: string, time
 }
 
 async function runRealtimeTests() {
+  assertIsolatedTestDb('Realtime Gateway Phase 6 Tests');
   console.log('=== RUNNING PHASE 6 BACKEND REALTIME & SOCKET.IO TESTS (R1 - R12) ===\n');
 
   // Find admin user for auth token
@@ -232,7 +234,7 @@ async function runRealtimeTests() {
       throw new Error(`R5 Failed: Compatibility aliases (currentFillLevel/distance) missing in telemetry payload`);
     }
 
-    const organicBin = await prisma.bin.findUnique({ where: { binCode: 'ORGANIC' } });
+    const organicBin = await prisma.bin.findFirst({ where: { binCode: 'ORGANIC' } });
     if (organicBin?.currentFillLevel !== 58) {
       throw new Error(`R5 Failed: Bin.currentFillLevel in DB was not updated to 58, got ${organicBin?.currentFillLevel}`);
     }

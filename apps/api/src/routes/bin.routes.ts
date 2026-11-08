@@ -14,22 +14,28 @@ const router = Router();
 const idSchema = z.string().min(1);
 const coordinateSchema = z.number().finite().optional().nullable();
 const createBinSchema = z.object({
+  stationId: z.string().trim().optional(),
+  stationCode: z.string().trim().optional(),
   binCode: z.string().trim().min(1).max(40),
   name: z.string().trim().min(1).max(120),
   location: z.string().trim().min(1).max(200),
   latitude: coordinateSchema,
   longitude: coordinateSchema,
   capacity: z.coerce.number().int().positive(),
-  currentFillLevel: z.coerce.number().int().min(0).max(100).default(0)
+  currentFillLevel: z.coerce.number().int().min(0).max(100).default(0),
+  installed: z.boolean().optional().default(true)
 });
 const updateBinSchema = z.object({
   name: z.string().trim().min(1).max(120),
   location: z.string().trim().min(1).max(200),
   latitude: coordinateSchema,
   longitude: coordinateSchema,
-  capacity: z.coerce.number().int().positive()
+  capacity: z.coerce.number().int().positive(),
+  installed: z.boolean().optional()
 });
 const querySchema = z.object({
+  stationId: z.string().trim().optional(),
+  stationCode: z.string().trim().optional(),
   search: z.string().trim().optional(),
   status: z.nativeEnum(BinStatus).optional(),
   fillCategory: z.enum(['NORMAL', 'MONITOR', 'NEARLY_FULL', 'CRITICAL']).optional()
@@ -80,16 +86,24 @@ router.get('/', async (request, response, next) => {
     }
 
     const query = queryResult.data;
+    let targetStationId = query.stationId;
+    if (!targetStationId && query.stationCode) {
+      const station = await prisma.station.findUnique({ where: { code: query.stationCode } });
+      if (station) targetStationId = station.id;
+    }
+
     const bins = await prisma.bin.findMany({
       where: {
         isActive: true,
+        ...(targetStationId ? { stationId: targetStationId } : {}),
         ...(query.search ? { OR: [{ binCode: { contains: query.search } }, { name: { contains: query.search } }, { location: { contains: query.search } }] } : {})
       },
-      orderBy: { binCode: 'asc' }
+      include: { station: true },
+      orderBy: [{ stationId: 'asc' }, { binCode: 'asc' }]
     });
 
     // Đồng bộ hóa trạng thái cảm biến phần cứng thực tế với Database Bins
-    const synchronized = syncBinsWithRealDevice(bins);
+    const synchronized = syncBinsWithRealDevice(bins, undefined, targetStationId);
     let filtered = synchronized;
     if (query.status) {
       filtered = filtered.filter((b) => b.status === query.status);
@@ -113,11 +127,14 @@ router.get('/:id', async (request, response, next) => {
       return bin ? response.json({ bin }) : notFound(response);
     }
 
+    const stationId = typeof request.query.stationId === 'string' ? request.query.stationId : undefined;
     const bin = await prisma.bin.findFirst({
       where: {
         isActive: true,
+        ...(stationId ? { stationId } : {}),
         OR: [{ id }, { binCode: id }]
-      }
+      },
+      include: { station: true }
     });
     if (!bin) return notFound(response);
 
@@ -142,10 +159,29 @@ router.post('/', requireAuth, requireRole('ADMIN', 'SUPERVISOR'), async (request
     const inputResult = createBinSchema.safeParse(request.body);
     if (!inputResult.success) return validationError(response, 'Invalid bin data');
     const input = inputResult.data;
-    const bin = await prisma.bin.create({ data: { ...input, status: BinStatus.OFFLINE } });
+
+    let resolvedStationId = input.stationId;
+    if (!resolvedStationId && input.stationCode) {
+      const station = await prisma.station.findUnique({ where: { code: input.stationCode } });
+      if (station) resolvedStationId = station.id;
+    }
+    if (!resolvedStationId) {
+      const stationA = await prisma.station.findFirst({ where: { code: 'STATION_A' } });
+      resolvedStationId = stationA?.id;
+    }
+
+    const { stationCode: _sc, ...binData } = input;
+    const bin = await prisma.bin.create({
+      data: {
+        ...binData,
+        stationId: resolvedStationId,
+        status: input.installed === false ? BinStatus.MAINTENANCE : BinStatus.OFFLINE
+      },
+      include: { station: true }
+    });
     return response.status(201).json({ bin: serializeBin(bin) });
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return response.status(409).json({ error: { code: 'BIN_CODE_EXISTS', message: 'binCode must be unique' } });
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return response.status(409).json({ error: { code: 'BIN_CODE_EXISTS', message: 'binCode must be unique per station' } });
     return next(error);
   }
 });

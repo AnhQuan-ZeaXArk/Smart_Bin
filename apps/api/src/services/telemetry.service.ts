@@ -4,11 +4,29 @@ import type { UltrasonicTelemetry } from '../integrations/mqtt/contracts.js';
 import { updateFillAlert } from './alert.service.js';
 import type { DeviceHealthService } from './device-health.service.js';
 
-export type TelemetryIngestResult = { accepted: boolean; reason: 'ACCEPTED' | 'UNKNOWN_BIN' | 'OUT_OF_ORDER'; binCode: string; alert?: Awaited<ReturnType<typeof updateFillAlert>> };
+export type TelemetryIngestResult = { accepted: boolean; reason: 'ACCEPTED' | 'UNKNOWN_BIN' | 'OUT_OF_ORDER' | 'NOT_INSTALLED'; binCode: string; alert?: Awaited<ReturnType<typeof updateFillAlert>> };
 
-export async function ingestUltrasonicTelemetry(message: UltrasonicTelemetry, deviceHealthService?: DeviceHealthService): Promise<TelemetryIngestResult> {
-  const bin = await prisma.bin.findUnique({ where: { binCode: message.binCode } });
+export async function ingestUltrasonicTelemetry(
+  message: UltrasonicTelemetry & { stationId?: string; stationCode?: string },
+  deviceHealthService?: DeviceHealthService
+): Promise<TelemetryIngestResult> {
+  let bin = null;
+  if (message.stationId) {
+    bin = await prisma.bin.findFirst({ where: { stationId: message.stationId, binCode: message.binCode } });
+  } else if (message.stationCode) {
+    const station = await prisma.station.findUnique({ where: { code: message.stationCode } });
+    if (station) {
+      bin = await prisma.bin.findFirst({ where: { stationId: station.id, binCode: message.binCode } });
+    }
+  }
+
+  if (!bin) {
+    // Default fallback to Station A canonical bin
+    bin = await prisma.bin.findFirst({ where: { binCode: message.binCode, isActive: true } });
+  }
+
   if (!bin || !bin.isActive) return { accepted: false, reason: 'UNKNOWN_BIN', binCode: message.binCode };
+  if (!bin.installed) return { accepted: false, reason: 'NOT_INSTALLED', binCode: message.binCode };
 
   const timestamp = new Date(message.timestamp);
   const latest = await prisma.sensorReading.findFirst({ where: { binId: bin.id }, orderBy: { timestamp: 'desc' } });

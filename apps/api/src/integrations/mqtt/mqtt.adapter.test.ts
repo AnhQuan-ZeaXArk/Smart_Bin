@@ -7,6 +7,7 @@ import { MqttAdapter, MQTT_SUBSCRIPTIONS } from './mqtt.adapter.js';
 import { DeviceHealthService } from '../../services/device-health.service.js';
 import { RealtimeGateway } from '../realtime/realtime.gateway.js';
 import { app } from '../../app.js';
+import { assertIsolatedTestDb } from '../../test-utils/test-db-guard.js';
 
 class MockMqttClient extends EventEmitter {
   connected = true;
@@ -41,6 +42,7 @@ class MockMqttClient extends EventEmitter {
 }
 
 async function runMqttTests() {
+  assertIsolatedTestDb('MQTT Device Health Tests');
   console.log('=== RUNNING PHASE 5 MQTT DEVICE HEALTH TESTS (M1 - M12) ===\n');
 
   const httpServer = createServer();
@@ -143,7 +145,7 @@ async function runMqttTests() {
     // M5: Ultrasonic telemetry -> SensorReading created
     // ----------------------------------------------------
     console.log('Test M5: Ultrasonic telemetry -> SensorReading created');
-    const organicBin = await prisma.bin.findUnique({ where: { binCode: 'ORGANIC' } });
+    const organicBin = await prisma.bin.findFirst({ where: { binCode: 'ORGANIC' } });
     if (!organicBin) throw new Error('M5 Failed: ORGANIC bin not found in DB');
 
     const readingsBefore = await prisma.sensorReading.count({ where: { binId: organicBin.id } });
@@ -170,7 +172,7 @@ async function runMqttTests() {
     // M6: Ultrasonic telemetry -> Bin.fillLevel updated correctly
     // ----------------------------------------------------
     console.log('Test M6: Ultrasonic telemetry -> Bin.fillLevel updated correctly');
-    const updatedBin = await prisma.bin.findUnique({ where: { binCode: 'ORGANIC' } });
+    const updatedBin = await prisma.bin.findFirst({ where: { binCode: 'ORGANIC' } });
     if (updatedBin?.currentFillLevel !== 64) {
       throw new Error(`M6 Failed: Expected currentFillLevel 64, got ${updatedBin?.currentFillLevel}`);
     }

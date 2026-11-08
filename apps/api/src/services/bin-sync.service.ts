@@ -19,15 +19,17 @@ export function computeFillCategory(fillLevel: number | null | undefined): FillC
 }
 
 /**
- * Hàm chuẩn hóa duy nhất kết nối thực tế giữa Raspberry Pi 5 / ESP32 với mọi thực thể Bin.
- * Được sử dụng thống nhất bởi:
- * - GET /api/bins
- * - GET /api/bins/:id
- * - GET /api/dashboard/summary
- * - demoService.getAllBins()
+ * Hàm chuẩn hóa kết nối thực tế giữa Raspberry Pi 5 / ESP32 với mọi thực thể Bin.
+ * ĐẢM BẢO CÁCH LY TRẠM:
+ * - Cảm biến thực tế của Raspberry Pi 5 (Serial A / YOLO IPC) CHỈ đồng bộ cho Trạm A.
+ * - Tuyệt đối không ghi đè dữ liệu lên các thùng rác của Trạm B.
+ * - Thùng rác chưa lắp đặt (installed: false) được giữ nguyên trạng thái MAINTENANCE và không có mức đầy.
  */
 export function syncBinWithRealDevice<T extends {
   binCode: string;
+  stationId?: string | null;
+  installed?: boolean;
+  station?: { id?: string; code?: string } | null;
   currentFillLevel?: number | null;
   status?: any;
   lastSeen?: any;
@@ -35,14 +37,44 @@ export function syncBinWithRealDevice<T extends {
   fillCategory?: any;
 }>(
   bin: T,
-  realStatus: RealDeviceStatus = realDeviceService.getStatus()
+  realStatus: RealDeviceStatus = realDeviceService.getStatus(),
+  targetStationId?: string
 ): T & {
   currentFillLevel: number | null;
   distanceCm: number | null;
-  status: 'ONLINE' | 'OFFLINE';
+  status: 'ONLINE' | 'OFFLINE' | 'MAINTENANCE';
   fillCategory: FillCategory;
   lastSeen: string | null;
 } {
+  // 1. Nếu thùng rác chưa lắp đặt phần cứng (NOT_INSTALLED)
+  if (bin.installed === false) {
+    return {
+      ...bin,
+      currentFillLevel: null,
+      distanceCm: null,
+      fillCategory: 'NORMAL' as const,
+      status: 'MAINTENANCE' as const,
+      lastSeen: bin.lastSeen ? new Date(bin.lastSeen).toISOString() : null
+    };
+  }
+
+  // 2. Kiểm tra quyền sở hữu Trạm A: Chỉ đồng bộ cảm biến Serial A cho Trạm A
+  const isStationB = bin.station?.code === 'STATION_B' || bin.stationId === 'station_b_canonical_id';
+  if (isStationB) {
+    const rawFill = typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel)
+      ? bin.currentFillLevel
+      : null;
+    return {
+      ...bin,
+      currentFillLevel: rawFill,
+      distanceCm: bin.distanceCm ?? null,
+      fillCategory: computeFillCategory(rawFill),
+      status: bin.status === 'ONLINE' ? 'ONLINE' : 'OFFLINE',
+      lastSeen: bin.lastSeen ? new Date(bin.lastSeen).toISOString() : null
+    };
+  }
+
+  // 3. Xử lý đồng bộ Trạm A từ phần cứng thực tế (Serial A / YOLO IPC)
   const isPiOnline = realStatus.status === 'ONLINE' || realStatus.status === 'WARNING';
   const sensors = isPiOnline ? realStatus.sensors : null;
 
@@ -75,12 +107,15 @@ export function syncBinWithRealDevice<T extends {
     distanceCm: null,
     fillCategory: 'NORMAL' as const,
     status: 'OFFLINE' as const,
-    lastSeen: comp?.updatedAt || realStatus.lastHeartbeat || null
+    lastSeen: comp?.updatedAt || realStatus.lastHeartbeat || (bin.lastSeen ? new Date(bin.lastSeen).toISOString() : null)
   };
 }
 
 export function syncBinsWithRealDevice<T extends {
   binCode: string;
+  stationId?: string | null;
+  installed?: boolean;
+  station?: { id?: string; code?: string } | null;
   currentFillLevel?: number | null;
   status?: any;
   lastSeen?: any;
@@ -88,8 +123,8 @@ export function syncBinsWithRealDevice<T extends {
   fillCategory?: any;
 }>(
   bins: T[],
-  realStatus: RealDeviceStatus = realDeviceService.getStatus()
+  realStatus: RealDeviceStatus = realDeviceService.getStatus(),
+  targetStationId?: string
 ) {
-  return bins.map((bin) => syncBinWithRealDevice(bin, realStatus));
+  return bins.map((bin) => syncBinWithRealDevice(bin, realStatus, targetStationId));
 }
-

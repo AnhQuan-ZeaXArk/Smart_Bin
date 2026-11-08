@@ -1,5 +1,5 @@
 import bcrypt from 'bcrypt';
-import { PrismaClient, RoleName, BinStatus, CollectionStatus, AlertType, AlertSeverity, DeviceType, DeviceStatusEnum } from '@prisma/client';
+import { PrismaClient, RoleName, BinStatus, StationStatus, CollectionStatus, AlertType, AlertSeverity, DeviceType, DeviceStatusEnum } from '@prisma/client';
 import { env } from '../src/config/env.js';
 
 const prisma = new PrismaClient();
@@ -11,6 +11,9 @@ async function main() {
   await prisma.deviceStatus.deleteMany();
   await prisma.user.deleteMany();
   await prisma.bin.deleteMany();
+  await prisma.stationWatermark.deleteMany();
+  await prisma.telemetryIdempotencyLedger.deleteMany();
+  await prisma.station.deleteMany();
   await prisma.role.deleteMany();
 
   const roles = await Promise.all([
@@ -82,26 +85,66 @@ async function main() {
     ]
   });
 
-  const sharedBins = [
-    { binCode: 'ORGANIC', name: 'Rác hữu cơ', location: 'Ngăn rác hữu cơ', capacity: 240, currentFillLevel: 25, status: BinStatus.ONLINE, lastSeen: now },
-    { binCode: 'RECYCLABLE', name: 'Rác tái chế', location: 'Ngăn rác tái chế', capacity: 240, currentFillLevel: 58, status: BinStatus.ONLINE, lastSeen: now },
-    { binCode: 'NON_RECYCLABLE', name: 'Rác không tái chế', location: 'Ngăn rác không tái chế', capacity: 360, currentFillLevel: 78, status: BinStatus.ONLINE, lastSeen: now }
-  ];
-  const bins = await Promise.all(sharedBins.map((bin) => prisma.bin.create({ data: bin })));
+  // 1. Khởi tạo Trạm A và Trạm B
+  const stationA = await prisma.station.upsert({
+    where: { code: 'STATION_A' },
+    create: {
+      id: 'station_a_canonical_id',
+      code: 'STATION_A',
+      name: 'Trạm Thu gom Trung tâm A',
+      status: StationStatus.ONLINE,
+      isActive: true,
+      location: 'Khuôn viên chính'
+    },
+    update: {}
+  });
 
-  for (const [index, bin] of bins.entries()) {
-    await prisma.sensorReading.createMany({
-      data: [
-        { binId: bin.id, distance: [75, 42, 22][index], fillLevel: bin.currentFillLevel, timestamp: new Date(now.getTime() - 1000 * 60 * 20) },
-        { binId: bin.id, distance: [68, 36, 18][index], fillLevel: Math.max(0, bin.currentFillLevel - 8), timestamp: new Date(now.getTime() - 1000 * 60 * 10) },
-        { binId: bin.id, distance: [75, 42, 22][index], fillLevel: bin.currentFillLevel, timestamp: now }
-      ]
-    });
+  const stationB = await prisma.station.upsert({
+    where: { code: 'STATION_B' },
+    create: {
+      id: 'station_b_canonical_id',
+      code: 'STATION_B',
+      name: 'Trạm Thu gom Mở rộng B',
+      status: StationStatus.OFFLINE,
+      isActive: false,
+      location: 'Khuôn viên phía Đông'
+    },
+    update: {}
+  });
+
+  // 2. Khởi tạo các ngăn rác Trạm A (Đầy đủ 3 ngăn hoạt động)
+  const stationABins = [
+    { stationId: stationA.id, binCode: 'ORGANIC', name: 'Rác hữu cơ', location: 'Ngăn rác hữu cơ Trạm A', capacity: 240, currentFillLevel: 25, status: BinStatus.ONLINE, installed: true, lastSeen: now },
+    { stationId: stationA.id, binCode: 'RECYCLABLE', name: 'Rác tái chế', location: 'Ngăn rác tái chế Trạm A', capacity: 240, currentFillLevel: 58, status: BinStatus.ONLINE, installed: true, lastSeen: now },
+    { stationId: stationA.id, binCode: 'NON_RECYCLABLE', name: 'Rác không tái chế', location: 'Ngăn rác không tái chế Trạm A', capacity: 360, currentFillLevel: 78, status: BinStatus.ONLINE, installed: true, lastSeen: now }
+  ];
+  const binsA = await Promise.all(stationABins.map((bin) => prisma.bin.create({ data: bin })));
+
+  // 3. Khởi tạo các ngăn rác Trạm B (Chỉ có RECYCLABLE được lắp; NON_RECYCLABLE và ORGANIC là NOT_INSTALLED)
+  const stationBBins = [
+    { stationId: stationB.id, binCode: 'RECYCLABLE', name: 'Rác tái chế Trạm B', location: 'Ngăn rác tái chế Trạm B', capacity: 240, currentFillLevel: 0, status: BinStatus.OFFLINE, installed: true, lastSeen: null },
+    { stationId: stationB.id, binCode: 'NON_RECYCLABLE', name: 'Rác không tái chế Trạm B', location: 'Ngăn rác không tái chế Trạm B', capacity: 360, currentFillLevel: null, status: BinStatus.MAINTENANCE, installed: false, lastSeen: null },
+    { stationId: stationB.id, binCode: 'ORGANIC', name: 'Rác hữu cơ Trạm B', location: 'Ngăn rác hữu cơ Trạm B', capacity: 240, currentFillLevel: null, status: BinStatus.MAINTENANCE, installed: false, lastSeen: null }
+  ];
+  await Promise.all(stationBBins.map((bin) => prisma.bin.create({ data: bin })));
+
+  // 4. Khởi tạo dữ liệu đo cảm biến cho các ngăn đã lắp đặt của Trạm A
+  for (const [index, bin] of binsA.entries()) {
+    if (bin.currentFillLevel !== null && bin.installed) {
+      const fill = bin.currentFillLevel;
+      await prisma.sensorReading.createMany({
+        data: [
+          { binId: bin.id, distance: [75, 42, 22][index], fillLevel: fill, timestamp: new Date(now.getTime() - 1000 * 60 * 20), isLate: false },
+          { binId: bin.id, distance: [68, 36, 18][index], fillLevel: Math.max(0, fill - 8), timestamp: new Date(now.getTime() - 1000 * 60 * 10), isLate: false },
+          { binId: bin.id, distance: [75, 42, 22][index], fillLevel: fill, timestamp: now, isLate: false }
+        ]
+      });
+    }
   }
 
   await prisma.collectionRecord.create({
     data: {
-      binId: bins[2].id,
+      binId: binsA[2].id,
       collectedBy: 'Le Van Binh',
       collectedAt: new Date(now.getTime() - 1000 * 60 * 30),
       fillLevelBefore: 82,
@@ -113,12 +156,12 @@ async function main() {
 
   await prisma.alert.createMany({
     data: [
-      { binId: bins[1].id, type: AlertType.NEARLY_FULL, severity: AlertSeverity.WARNING, message: 'Ngăn rác tái chế đang ở mức cảnh báo' },
-      { binId: bins[2].id, type: AlertType.CRITICAL, severity: AlertSeverity.CRITICAL, message: 'Ngăn rác không tái chế cần thu gom ngay' }
+      { binId: binsA[1].id, type: AlertType.NEARLY_FULL, severity: AlertSeverity.WARNING, message: 'Ngăn rác tái chế đang ở mức cảnh báo' },
+      { binId: binsA[2].id, type: AlertType.CRITICAL, severity: AlertSeverity.CRITICAL, message: 'Ngăn rác không tái chế cần thu gom ngay' }
     ]
   });
 
-  console.log('Seed completed: 3 users, 4 IoT devices, 3 SmartBin compartments and collection record created.');
+  console.log('Seed completed: 2 Stations (A & B), 3 users, 4 IoT devices, 6 SmartBin compartments (Station B configured with only Recyclable installed).');
 }
 
 main().catch((error) => {

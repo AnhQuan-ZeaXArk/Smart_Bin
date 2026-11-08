@@ -6,6 +6,7 @@ export interface BinViewModel {
   isValidReading: boolean;
   isOffline: boolean;
   isStale: boolean;
+  isUninstalled?: boolean;
   hasValidFillLevel: boolean;
   fillPct: number;
   displayPercentage: string;
@@ -40,6 +41,7 @@ export function computeBinViewModel(
       isValidReading: false,
       isOffline: true,
       isStale: false,
+      isUninstalled: false,
       hasValidFillLevel: false,
       fillPct: 0,
       displayPercentage: '—',
@@ -52,6 +54,28 @@ export function computeBinViewModel(
       hasCapacity: false,
       capacityText: null,
       lastSeenText: 'Chưa có dữ liệu'
+    };
+  }
+
+  // Ngăn rác chưa được lắp đặt (ví dụ: Trạm B chỉ có ngăn Rác tái chế)
+  if (bin.installed === false) {
+    return {
+      isValidReading: false,
+      isOffline: false,
+      isStale: false,
+      isUninstalled: true,
+      hasValidFillLevel: false,
+      fillPct: 0,
+      displayPercentage: '—',
+      progressWidth: '0%',
+      tone: 'unavailable',
+      statusBadgeText: 'Chưa lắp đặt',
+      fillCategoryBadgeText: 'Chưa lắp đặt',
+      hasDistance: false,
+      distanceText: null,
+      hasCapacity: false,
+      capacityText: null,
+      lastSeenText: 'Chưa lắp đặt'
     };
   }
 
@@ -166,6 +190,27 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
   };
 
   return bins.map((bin) => {
+    // Ngăn rác chưa lắp đặt không nhận dữ liệu cảm biến
+    if (bin.installed === false) {
+      return {
+        ...bin,
+        currentFillLevel: null,
+        distanceCm: null,
+        status: 'MAINTENANCE' as BinStatus,
+        isReal: true
+      };
+    }
+
+    // Cách ly Telemetry theo Station: Nếu có stationCode, chỉ cập nhật Bin thuộc đúng Station đó
+    const binStationCode = bin.stationCode || (bin as any).station?.code;
+    if (hb.stationCode && binStationCode && hb.stationCode !== binStationCode) {
+      return {
+        ...bin,
+        distanceCm: typeof bin.distanceCm === 'number' ? bin.distanceCm : null,
+        isReal: true
+      };
+    }
+
     let sensorKey: string | null = null;
     for (const [sKey, bCode] of Object.entries(mapping)) {
       if (bCode === bin.binCode) {

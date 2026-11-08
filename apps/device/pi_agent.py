@@ -16,8 +16,10 @@ import time
 import signal
 import logging
 import threading
+import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional, Dict, Any, List
 
 # Nạp biến môi trường từ .env
 try:
@@ -42,6 +44,8 @@ except ImportError:
 
 # Import giao diện đọc trạng thái YOLO; Agent không điều khiển camera hoặc ESP32.
 from smartbin_yolo_bridge import read_yolo_state
+from station_b_worker import StationBSerialWorker
+from offline_buffer import OfflineBuffer
 
 # Cấu hình logging bảo mật (không ghi token)
 logging.basicConfig(
@@ -68,6 +72,8 @@ if configured_device_id != DEVICE_ID:
 # Biến cờ điều khiển
 running = True
 start_time = time.time()
+station_b_worker: Optional[StationBSerialWorker] = None
+offline_buffer: Optional[OfflineBuffer] = None
 SOCKET_RETRY_INITIAL_SEC = 2.0
 SOCKET_RETRY_MAX_SEC = 60.0
 _socket_retry_delay = SOCKET_RETRY_INITIAL_SEC
@@ -272,6 +278,7 @@ def build_telemetry_payload() -> dict:
     ai_detection_payload = yolo_info.get('latestDetection')
 
     payload = {
+        'stationCode': 'STATION_A',
         'deviceId': DEVICE_ID,
         'deviceName': DEVICE_NAME,
         'status': 'ONLINE',
@@ -370,26 +377,143 @@ def ensure_socket_connection(now: float | None = None) -> bool:
         _socket_connect_lock.release()
 
 
-def send_telemetry():
-    """Gửi gói tin Telemetry lên Backend qua Socket.IO hoặc HTTP fallback."""
-    payload = build_telemetry_payload()
+def drain_offline_buffer():
+    """
+    Dọn và gửi tuần tự các gói tin đệm ngoại tuyến khi có mạng trở lại.
+    QUY TẮC BẤT BIẾN: Chỉ đánh dấu ACKED và prune khỏi SQLite SAU KHI nhận
+    xác nhận ACK thành công từ Backend qua callback Socket.IO.
+    """
+    if not offline_buffer or not sio or not sio.connected:
+        return
 
-    # 1. Ưu tiên gửi qua Socket.IO
-    if sio and sio.connected:
+    batch = offline_buffer.peek_batch(limit=10)
+    if not batch:
+        return
+
+    # Đánh dấu các gói đang xử lý
+    batch_ids = [item['id'] for item in batch]
+    offline_buffer.mark_in_flight(batch_ids)
+
+    for item in batch:
+        msg_id = item['client_message_id']
         try:
-            sio.emit('device:telemetry', payload)
-            logger.info(
-                "Socket.IO telemetry -> uptime: %ss | temp: %s°C | Subsystems: [YOLO: %s, Cam: %s]",
-                payload['uptimeSeconds'],
-                payload['cpuTempC'],
-                payload['subsystems']['yolo'],
-                payload['subsystems']['camera']
-            )
-            return True
-        except Exception as e:
-            logger.error("Socket.IO telemetry emit failed (%s).", type(e).__name__)
+            payload = json.loads(item['payload_json'])
+        except Exception as err:
+            logger.error("Dữ liệu payload hỏng cho gói %s: %s", msg_id, err)
+            offline_buffer.mark_acked([msg_id])
+            offline_buffer.prune_acked()
+            continue
 
-    # 2. Fallback qua HTTP POST nếu Socket.IO chưa kết nối
+        ack_received = threading.Event()
+        ack_result = {'success': False, 'data': None}
+
+        def on_ack(response=None):
+            ack_result['data'] = response
+            if isinstance(response, dict) and response.get('success'):
+                ack_result['success'] = True
+            elif response is True:
+                ack_result['success'] = True
+            ack_received.set()
+
+        try:
+            # Gửi gói tin kèm callback xác nhận
+            sio.emit('device:telemetry', payload, callback=on_ack)
+
+            # Chờ xác nhận từ Backend với thời gian chờ tối đa 5 giây
+            if ack_received.wait(timeout=5.0):
+                if ack_result['success']:
+                    offline_buffer.mark_acked([msg_id])
+                    offline_buffer.prune_acked()
+                    logger.info("Backend đã xác nhận ACK & Commit dữ liệu cho gói %s: %s", msg_id, ack_result['data'])
+                else:
+                    logger.warning("Backend từ chối gói %s: %s -> Giữ lại trong buffer", msg_id, ack_result['data'])
+                    offline_buffer.mark_failed([msg_id])
+            else:
+                logger.warning("Timeout 5s chờ ACK cho gói %s -> Giữ lại trong buffer để thử lại", msg_id)
+                offline_buffer.mark_failed([msg_id])
+                break # Mạng có thể không ổn định, dừng lô hiện tại
+        except Exception as e:
+            logger.warning("Lỗi phát Socket.IO cho gói %s: %s -> Giữ lại", msg_id, e)
+            offline_buffer.mark_failed([msg_id])
+            break
+
+
+def send_telemetry():
+    """Gửi gói tin Telemetry lên Backend qua Socket.IO hoặc HTTP fallback cho cả Station A và Station B."""
+    # 1. Thu thập dữ liệu Station A
+    payload_a = build_telemetry_payload()
+
+    # 2. Thu thập dữ liệu Station B nếu Worker đang hoạt động
+    payload_b = None
+    if station_b_worker:
+        payload_b = station_b_worker.get_latest_data()
+
+    station_a_sent = False
+
+    # Gửi qua Socket.IO nếu đã kết nối
+    if sio and sio.connected:
+        # Gửi dữ liệu tồn đọng trong Offline Buffer trước
+        drain_offline_buffer()
+
+        # Gửi Station A
+        try:
+            sio.emit('device:telemetry', payload_a)
+            logger.info(
+                "[Station A] Socket.IO telemetry -> uptime: %ss | temp: %s°C | Subsystems: [YOLO: %s, Cam: %s]",
+                payload_a['uptimeSeconds'],
+                payload_a['cpuTempC'],
+                payload_a['subsystems']['yolo'],
+                payload_a['subsystems']['camera']
+            )
+            station_a_sent = True
+        except Exception as e:
+            logger.error("Station A Socket.IO telemetry emit failed (%s).", type(e).__name__)
+
+        # Gửi Station B nếu có dữ liệu mới
+        if payload_b:
+            msg_id = f"STATION_B-{payload_b.get('bootCount', 0)}-{payload_b.get('sampleSeq', 0)}-{int(time.time()*1000)}"
+            payload_b['clientMessageId'] = msg_id
+
+            b_ack_received = threading.Event()
+            b_ack_result = {'success': False, 'data': None}
+
+            def on_b_ack(response=None):
+                b_ack_result['data'] = response
+                if isinstance(response, dict) and response.get('success'):
+                    b_ack_result['success'] = True
+                elif response is True:
+                    b_ack_result['success'] = True
+                b_ack_received.set()
+
+            try:
+                sio.emit('device:telemetry', payload_b, callback=on_b_ack)
+                if b_ack_received.wait(timeout=3.0) and b_ack_result['success']:
+                    logger.info(
+                        "[Station B] Socket.IO live telemetry ACK OK -> Boot: %s | Seq: %s | Sensors: %s",
+                        payload_b.get('bootCount'),
+                        payload_b.get('sampleSeq'),
+                        list(payload_b.get('sensors', {}).keys())
+                    )
+                else:
+                    logger.warning("[Station B] Live emit ACK failed/timed out -> Lưu vào OfflineBuffer để đảm bảo không mất")
+                    if offline_buffer:
+                        offline_buffer.enqueue(msg_id, 'STATION_B', 'RECYCLABLE', json.dumps(payload_b))
+            except Exception as e:
+                logger.error("Station B Socket.IO live emit error (%s) -> Lưu vào buffer", type(e).__name__)
+                if offline_buffer:
+                    offline_buffer.enqueue(msg_id, 'STATION_B', 'RECYCLABLE', json.dumps(payload_b))
+
+        # Nếu Station A đã gửi thành công qua Socket.IO thì không cần fallback HTTP
+        if station_a_sent:
+            return True
+
+    # Nếu Socket.IO chưa kết nối: Đệm dữ liệu Station B vào OfflineBuffer
+    if payload_b and offline_buffer and not (sio and sio.connected):
+        msg_id = f"STATION_B-{payload_b.get('bootCount', 0)}-{payload_b.get('sampleSeq', 0)}-{int(time.time()*1000)}"
+        offline_buffer.enqueue(msg_id, 'STATION_B', 'RECYCLABLE', json.dumps(payload_b))
+        logger.info("Đã lưu gói Station B vào Offline Buffer do mất kết nối.")
+
+    # 3. Fallback qua HTTP POST nếu Socket.IO chưa kết nối hoặc emit Station A thất bại (Chỉ hỗ trợ Station A Legacy Heartbeat)
     if requests and DEVICE_INGEST_TOKEN:
         try:
             url = f"{SERVER_URL}/api/demo/device-heartbeat"
@@ -397,9 +521,9 @@ def send_telemetry():
                 'Authorization': f'Bearer {DEVICE_INGEST_TOKEN}',
                 'Content-Type': 'application/json'
             }
-            resp = requests.post(url, json=payload, headers=headers, timeout=5)
+            resp = requests.post(url, json=payload_a, headers=headers, timeout=5)
             if resp.status_code == 200:
-                logger.info("Fallback HTTP Heartbeat thành công -> uptime: %ss | temp: %s°C", payload['uptimeSeconds'], payload['cpuTempC'])
+                logger.info("Fallback HTTP Heartbeat thành công -> uptime: %ss | temp: %s°C", payload_a['uptimeSeconds'], payload_a['cpuTempC'])
                 return True
             else:
                 logger.warning("Fallback HTTP heartbeat returned status %s.", resp.status_code)
@@ -411,13 +535,25 @@ def send_telemetry():
 
 def handle_exit(signum, frame):
     """Dừng tiến trình và các driver an toàn."""
-    global running
+    global running, station_b_worker, offline_buffer
     logger.info("Đang dừng Pi Agent và các hệ thống con...")
     running = False
+
+    if station_b_worker:
+        try:
+            station_b_worker.stop()
+        except Exception:
+            pass
 
     if sio and sio.connected:
         try:
             sio.disconnect()
+        except Exception:
+            pass
+
+    if offline_buffer:
+        try:
+            offline_buffer.prune_acked()
         except Exception:
             pass
 
@@ -428,7 +564,7 @@ def handle_exit(signum, frame):
 
 def main():
     """Hàm khởi động chính của SmartBin Pi Agent."""
-    global running
+    global running, station_b_worker, offline_buffer
     acquire_pid_lock()
 
     signal.signal(signal.SIGINT, handle_exit)
@@ -447,6 +583,17 @@ def main():
         logger.error("Vui lòng thiết lập DEVICE_INGEST_TOKEN=<token> trước khi chạy.")
         release_pid_lock()
         sys.exit(1)
+
+    # Khởi tạo Offline Buffer SQLite
+    db_path = os.getenv('SMARTBIN_OFFLINE_BUFFER_DB')
+    offline_buffer = OfflineBuffer(db_path=db_path)
+
+    # Khởi tạo Station B Serial Worker (ESP32-C6)
+    enable_station_b = os.getenv('ENABLE_STATION_B', 'true').lower() in ('1', 'true', 'yes')
+    if enable_station_b:
+        station_b_port = os.getenv('STATION_B_SERIAL_PORT')
+        station_b_worker = StationBSerialWorker(port=station_b_port)
+        station_b_worker.start()
 
     # Read-only IPC monitoring; the existing YOLO process owns its camera and inference.
     state_file = os.getenv('SMARTBIN_YOLO_STATE_FILE', '/tmp/smartbin_yolo_state.json')

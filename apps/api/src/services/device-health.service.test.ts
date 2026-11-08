@@ -2,8 +2,10 @@ import { DeviceStatusEnum, DeviceType, AlertType } from '@prisma/client';
 import { DeviceHealthService, computeDeviceStatus } from './device-health.service.js';
 import { DEVICE_HEALTH_CONFIG } from '../config/device-health.config.js';
 import { prisma } from '../lib/prisma.js';
+import { assertIsolatedTestDb } from '../test-utils/test-db-guard.js';
 
 async function runTests() {
+  assertIsolatedTestDb('Device Health Service Tests');
   console.log('=== STARTING DEVICE HEALTH SERVICE TESTS ===\n');
 
   const testDeviceId = 'test-rpi-unit-01';

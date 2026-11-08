@@ -13,6 +13,13 @@ enum RoleName {
   WORKER
 }
 
+enum StationStatus {
+  ONLINE
+  WARNING
+  OFFLINE
+  MAINTENANCE
+}
+
 enum BinStatus {
   ONLINE
   OFFLINE
@@ -31,6 +38,7 @@ enum AlertType {
   CRITICAL
   DEVICE_OFFLINE
   SENSOR_ABNORMAL
+  COMMISSIONING_REQUIRED
 }
 
 enum AlertSeverity {
@@ -92,25 +100,45 @@ model DeviceStatus {
   @@index([lastSeen])
 }
 
+model Station {
+  id                 String                      @id @default(cuid())
+  code               String                      @unique
+  name               String
+  status             StationStatus               @default(OFFLINE)
+  isActive           Boolean                     @default(true)
+  location           String?
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
+  bins               Bin[]
+  watermarks         StationWatermark[]
+  idempotencyLedgers TelemetryIdempotencyLedger[]
+}
+
 model Bin {
   id                String             @id @default(cuid())
-  binCode           String             @unique
+  stationId         String?
+  binCode           String
   name              String
   location          String
   latitude          Float?
   longitude         Float?
   capacity          Int
-  currentFillLevel  Int                @default(0)
+  currentFillLevel  Int?               @default(0)
   status            BinStatus          @default(OFFLINE)
   isActive          Boolean            @default(true)
+  installed         Boolean            @default(true)
   lastSeen          DateTime?
+  station           Station?           @relation(fields: [stationId], references: [id], onDelete: Restrict)
   sensorReadings    SensorReading[]
   collectionRecords CollectionRecord[]
   alerts            Alert[]
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
+  @@unique([stationId, binCode])
+  @@index([stationId, isActive])
   @@index([isActive, status])
+  @@index([binCode])
 }
 
 model SensorReading {
@@ -118,11 +146,54 @@ model SensorReading {
   binId     String
   distance  Float
   fillLevel Int
+  isLate    Boolean  @default(false)
   timestamp DateTime @default(now())
   bin       Bin      @relation(fields: [binId], references: [id])
   createdAt DateTime @default(now())
 
   @@index([binId, timestamp])
+  @@index([isLate])
+}
+
+model StationWatermark {
+  id              String   @id @default(cuid())
+  stationCode     String
+  binCode         String
+  bootCount       BigInt   @default(0)
+  bootId          String
+  lastSampleSeq   Int      @default(0)
+  lastPayloadHash String
+  updatedAt       DateTime @default(now()) @updatedAt
+  station         Station? @relation(fields: [stationCode], references: [code])
+
+  @@unique([stationCode, binCode])
+  @@index([stationCode, updatedAt])
+}
+
+model TelemetryIdempotencyLedger {
+  id          String   @id @default(cuid())
+  stationCode String
+  bootId      String
+  sampleSeq   Int
+  payloadHash String
+  receivedAt  DateTime @default(now())
+  station     Station? @relation(fields: [stationCode], references: [code])
+
+  @@unique([stationCode, bootId, sampleSeq])
+  @@index([receivedAt])
+}
+
+model MigrationProvenance {
+  id           Int       @id @default(autoincrement())
+  phase        String
+  action       String
+  target       String
+  status       String    @default("APPLIED")
+  appliedAt    DateTime  @default(now())
+  rolledBackAt DateTime?
+  notes        String?
+
+  @@map("_migration_provenance")
 }
 
 model CollectionRecord {

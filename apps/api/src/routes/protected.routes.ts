@@ -190,6 +190,13 @@ router.patch('/users/:id/status', requireAuth, requireRole('ADMIN'), async (requ
       include: { role: true }
     });
 
+    if (!parsed.data.isActive) {
+      const realtime = request.app.get('realtime');
+      if (realtime && typeof realtime.revokeUserSessions === 'function') {
+        realtime.revokeUserSessions(userId, 'ACCOUNT_DISABLED');
+      }
+    }
+
     return response.json({ user: serializeUser(updated), message: parsed.data.isActive ? 'Tài khoản đã được kích hoạt.' : 'Tài khoản đã được vô hiệu hóa.' });
   } catch (error) {
     return next(error);
@@ -239,14 +246,35 @@ router.patch('/users/:id/password', requireAuth, requireRole('ADMIN'), async (re
   }
 });
 
-router.get('/collections', async (_request, response, next) => {
+router.get('/collections', requireAuth, async (request, response, next) => {
   try {
     if (env.isDemoMode) {
       return response.json({ collections: demoService.getCollections() });
     }
 
+    const rawStationId = typeof request.query.stationId === 'string' ? request.query.stationId : undefined;
+    const rawStationCode = typeof request.query.stationCode === 'string' ? request.query.stationCode : undefined;
+
+    let targetStationId = rawStationId;
+    if (!targetStationId && rawStationCode) {
+      const station = await prisma.station.findUnique({ where: { code: rawStationCode } });
+      if (station) targetStationId = station.id;
+    }
+
     const collections = await prisma.collectionRecord.findMany({
-      include: { bin: { select: { binCode: true, name: true } } },
+      include: {
+        bin: {
+          select: {
+            binCode: true,
+            name: true,
+            stationId: true,
+            station: { select: { code: true, name: true } }
+          }
+        }
+      },
+      where: {
+        ...(targetStationId ? { bin: { stationId: targetStationId } } : {})
+      },
       orderBy: { collectedAt: 'desc' },
       take: 200
     });

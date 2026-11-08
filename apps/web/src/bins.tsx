@@ -31,6 +31,14 @@ export interface Bin {
   updatedAt: string;
   distanceCm?: number | null;
   isReal?: boolean;
+  stationId?: string | null;
+  stationCode?: string | null;
+  installed?: boolean;
+  station?: {
+    id: string;
+    code: string;
+    name: string;
+  } | null;
 }
 
 type SensorReading = {
@@ -395,7 +403,13 @@ export function BinDetailPage() {
           </div>
           <button className="button-secondary" type="button" onClick={refreshDetail} disabled={loading}><IconRefresh /> Làm mới</button>
         </div>
-        {historyError ? (
+        {bin.installed === false ? (
+          <div className="state-panel state-panel--inline">
+            <IconActivity />
+            <strong>Ngăn rác chưa được lắp đặt (NOT_INSTALLED)</strong>
+            <span>Ngăn rác này chưa được gắn cảm biến vật lý nên không có dữ liệu đo lường.</span>
+          </div>
+        ) : historyError ? (
           <div className="state-panel state-panel--inline state-panel--error">
             <IconActivity />
             <strong>Không thể tải lịch sử cảm biến</strong>

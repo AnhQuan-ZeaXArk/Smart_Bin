@@ -197,6 +197,13 @@ function mergeDeviceHeartbeat(data: DashboardData, hb: any): DashboardData {
   };
 }
 
+interface StationOption {
+  id: string;
+  code: string;
+  name: string;
+  status: string;
+}
+
 export function DashboardPage() {
   const { token } = useAuth();
   const { socket: realtime, connected } = useRealtime();
@@ -207,6 +214,8 @@ export function DashboardPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
+  const [stations, setStations] = useState<StationOption[]>([]);
+  const [selectedStationCode, setSelectedStationCode] = useState<string>('');
 
   function refreshDashboard() {
     setError('');
@@ -222,11 +231,23 @@ export function DashboardPage() {
     return () => clearInterval(timer);
   }, []);
 
-  // Load Dashboard summary data
+  // Load danh sách Stations
+  useEffect(() => {
+    getData<{ stations: StationOption[] }>('/api/stations', token)
+      .then((res) => {
+        if (res && Array.isArray(res.stations)) {
+          setStations(res.stations);
+        }
+      })
+      .catch(() => {});
+  }, [token]);
+
+  // Load Dashboard summary data (hỗ trợ lọc theo Station)
   useEffect(() => {
     let active = true;
+    const query = selectedStationCode ? `?stationCode=${encodeURIComponent(selectedStationCode)}` : '';
 
-    getData<DashboardData>('/api/dashboard/summary', token)
+    getData<DashboardData>(`/api/dashboard/summary${query}`, token)
       .then((result) => {
         if (active) {
           const initialized: DashboardData = {
@@ -247,11 +268,15 @@ export function DashboardPage() {
     return () => {
       active = false;
     };
-  }, [token, refreshKey]);
+  }, [token, refreshKey, selectedStationCode]);
 
   // Realtime subscriptions for both simulator telemetry and real Raspberry Pi heartbeat/status
   useEffect(() => {
     if (!realtime) return;
+
+    if (selectedStationCode) {
+      realtime.emit('subscribe:station', { stationCode: selectedStationCode });
+    }
 
     const onTelemetry = (event: RealtimeTelemetry) => {
       setData((current) => (current ? mergeTelemetry(current, event) : current));
@@ -284,11 +309,14 @@ export function DashboardPage() {
     realtime.on('device:status', onStatus);
 
     return () => {
+      if (selectedStationCode) {
+        realtime.emit('unsubscribe:station', { stationCode: selectedStationCode });
+      }
       realtime.off('bin:telemetry', onTelemetry);
       realtime.off('device:heartbeat', onHeartbeat);
       realtime.off('device:status', onStatus);
     };
-  }, [realtime]);
+  }, [realtime, selectedStationCode]);
 
   if (loading) {
     return (
@@ -334,6 +362,29 @@ export function DashboardPage() {
           <p>Giám sát tình trạng thùng rác và thiết bị theo thời gian thực.</p>
         </div>
         <div className="dashboard-heading-actions">
+          <select
+            className="station-filter-select"
+            value={selectedStationCode}
+            onChange={(e) => setSelectedStationCode(e.target.value)}
+            aria-label="Chọn trạm giám sát"
+            style={{
+              padding: '6px 12px',
+              borderRadius: '6px',
+              border: '1px solid var(--border-color, #cbd5e1)',
+              background: 'var(--card-bg, #ffffff)',
+              color: 'var(--text-color, #1e293b)',
+              fontSize: '14px',
+              fontWeight: 500,
+              cursor: 'pointer'
+            }}
+          >
+            <option value="">Tất cả các trạm (Toàn hệ thống)</option>
+            {stations.map((st) => (
+              <option key={st.id} value={st.code}>
+                {st.name} ({st.code}) - {st.status}
+              </option>
+            ))}
+          </select>
           <div className={`realtime-indicator ${connected ? 'connected' : 'disconnected'}`}><span className="status-dot" />{connected ? 'Realtime: Đã kết nối' : 'Realtime: Mất kết nối'}</div>
           <button className={`button-primary${refreshing ? ' is-refreshing' : ''}`} type="button" onClick={refreshDashboard} disabled={refreshing}><IconRefresh />{refreshing ? 'Đang làm mới' : 'Làm mới dữ liệu'}</button>
         </div>
@@ -416,7 +467,7 @@ export function WasteCard({
           <h3>{label}</h3>
           <span className="device-id-code">{bin.binCode}</span>
         </div>
-        <span className={`status-badge status-badge--${!vm.isValidReading ? 'offline' : bin.status.toLowerCase()}`}>
+        <span className={`status-badge status-badge--${vm.isUninstalled ? 'uninstalled' : !vm.isValidReading ? 'offline' : bin.status.toLowerCase()}`}>
           {vm.statusBadgeText}
         </span>
       </div>

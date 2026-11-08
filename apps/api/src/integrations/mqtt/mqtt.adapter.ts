@@ -203,7 +203,7 @@ export class MqttAdapter {
           return;
         }
         const message = parsed.data;
-        const bin = await prisma.bin.findUnique({ where: { binCode: message.binCode } });
+        const bin = await prisma.bin.findFirst({ where: { binCode: message.binCode, isActive: true } });
         if (bin?.isActive) {
           await prisma.bin.update({
             where: { id: bin.id },

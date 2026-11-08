@@ -8,6 +8,7 @@ import { settingsService } from '../services/settings.service.js';
 import { prisma } from '../lib/prisma.js';
 import { getFillCategory } from './bin.routes.js';
 import { updateFillAlert } from '../services/alert.service.js';
+import { assertIsolatedTestDb } from '../test-utils/test-db-guard.js';
 
 function waitForEvent<T = unknown>(
   socket: ClientSocketType,
@@ -35,6 +36,7 @@ function waitForEvent<T = unknown>(
 }
 
 async function runSettingsTests() {
+  assertIsolatedTestDb('Settings Threshold Integration Tests');
   console.log('=== RUNNING SMARTBIN SETTINGS THRESHOLD INTEGRATION TESTS ===\n');
 
   const httpServer = createServer(app);
