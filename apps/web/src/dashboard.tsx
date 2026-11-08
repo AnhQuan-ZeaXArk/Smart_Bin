@@ -8,7 +8,6 @@ import { getCompartments, WASTE_CATEGORY_LABEL, WASTE_CATEGORY_ORDER, type Waste
 import {
   IconCpu,
   IconCheckCircle,
-  IconAlertTriangle,
   IconXCircle,
   IconActivity,
   IconRefresh
@@ -23,7 +22,8 @@ import {
 } from './device-utils';
 import {
   computeBinViewModel,
-  mergeDeviceHeartbeatToBins
+  mergeDeviceHeartbeatToBins,
+  groupBinsByStation
 } from './bin-view-model';
 
 type RealtimeTelemetry = {
@@ -216,6 +216,14 @@ export function DashboardPage() {
   const [clock, setClock] = useState(() => Date.now());
   const [stations, setStations] = useState<StationOption[]>([]);
   const [selectedStationCode, setSelectedStationCode] = useState<string>('');
+  const [collapsedStations, setCollapsedStations] = useState<Record<string, boolean>>({});
+
+  const toggleStationCollapse = (code: string) => {
+    setCollapsedStations((prev) => ({
+      ...prev,
+      [code]: !prev[code]
+    }));
+  };
 
   function refreshDashboard() {
     setError('');
@@ -318,6 +326,28 @@ export function DashboardPage() {
     };
   }, [realtime, selectedStationCode]);
 
+  const dataBins = data?.bins;
+
+  const stationGroups = useMemo(() => {
+    if (!dataBins) return [];
+    return groupBinsByStation(dataBins, stations, clock);
+  }, [dataBins, stations, clock]);
+
+  const visibleStationGroups = useMemo(() => {
+    if (!selectedStationCode) return stationGroups;
+    return stationGroups.filter((g) => g.code === selectedStationCode);
+  }, [stationGroups, selectedStationCode]);
+
+  const stationFilterOptions = useMemo(() => {
+    if (stations && stations.length > 0) return stations;
+    return stationGroups.map((g) => ({
+      id: g.id,
+      code: g.code,
+      name: g.name,
+      status: g.status
+    }));
+  }, [stations, stationGroups]);
+
   if (loading) {
     return (
       <section className="page dashboard-page">
@@ -342,16 +372,23 @@ export function DashboardPage() {
     );
   }
 
-  const compartments = getCompartments(data.bins);
-  const onlineNumericBins = data.bins.filter(
-    (bin) => typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel) && bin.status !== 'OFFLINE'
-  );
-  const normalCount = onlineNumericBins.filter((bin) => bin.fillCategory === 'NORMAL').length;
-  const needsAttentionCount = onlineNumericBins.filter((bin) => bin.fillCategory === 'MONITOR').length;
-  const nearlyFullCount = onlineNumericBins.filter(
-    (bin) => bin.fillCategory === 'NEARLY_FULL' || bin.fillCategory === 'CRITICAL'
-  ).length;
-  const offlineCount = data.bins.length - onlineNumericBins.length;
+  // Round 19: KPI counts computed strictly from real data
+  const totalStationsCount = stationGroups.length;
+  const totalInstalledBins = stationGroups.reduce((acc, g) => acc + g.installedCount, 0);
+  const onlineStationsCount = stationGroups.filter((g) => g.status === 'ONLINE').length;
+
+  // Crucial: bins with installed === false are NOT offline and MUST NOT trigger false offline alerts
+  const offlineBinsCount = (data?.bins || []).filter((bin) => {
+    if (bin.installed === false) return false;
+    const vm = computeBinViewModel(bin, clock);
+    return !vm.isValidReading || bin.status === 'OFFLINE';
+  }).length;
+
+  const nearlyFullCount = (data?.bins || []).filter((bin) => {
+    if (bin.installed === false) return false;
+    const vm = computeBinViewModel(bin, clock);
+    return vm.isValidReading && (vm.tone === 'nearly_full' || vm.tone === 'critical');
+  }).length;
 
   return (
     <section className="page dashboard-page">
@@ -359,7 +396,7 @@ export function DashboardPage() {
         <div>
           <div className="eyebrow">VẬN HÀNH TRỰC TIẾP</div>
           <h1>Tổng quan hệ thống</h1>
-          <p>Giám sát tình trạng thùng rác và thiết bị theo thời gian thực.</p>
+          <p>Giám sát tình trạng thùng rác và thiết bị theo thời gian thực theo từng trạm thu gom.</p>
         </div>
         <div className="dashboard-heading-actions">
           <select
@@ -379,7 +416,7 @@ export function DashboardPage() {
             }}
           >
             <option value="">Tất cả các trạm (Toàn hệ thống)</option>
-            {stations.map((st) => (
+            {stationFilterOptions.map((st) => (
               <option key={st.id} value={st.code}>
                 {st.name} ({st.code}) - {st.status}
               </option>
@@ -390,25 +427,129 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {/* Summary KPI Grid */}
+      {/* Summary KPI Grid - Round 19 real-calculated metrics */}
       <div className="summary-grid overview-grid">
-        <SummaryCard label="Tổng số thùng" value={data.bins.length} icon={<IconActivity />} />
-        <SummaryCard label="Bình thường" value={normalCount} tone="normal" icon={<IconCheckCircle />} />
-        <SummaryCard label="Cần chú ý" value={needsAttentionCount} tone="warning" icon={<IconAlertTriangle />} />
-        <SummaryCard label="Gần đầy / Đầy" value={nearlyFullCount} tone="critical" icon={<IconXCircle />} />
-        <SummaryCard label="Thiết bị offline" value={offlineCount} tone="offline" icon={<IconCpu />} />
+        <SummaryCard label="Tổng số trạm" value={totalStationsCount} icon={<IconActivity />} />
+        <SummaryCard label="Thùng đã lắp đặt" value={totalInstalledBins} tone="normal" icon={<IconCheckCircle />} />
+        <SummaryCard
+          label="Trạm trực tuyến"
+          value={`${onlineStationsCount}/${totalStationsCount}`}
+          tone={onlineStationsCount === totalStationsCount && totalStationsCount > 0 ? 'normal' : 'warning'}
+          icon={<IconCheckCircle />}
+        />
+        <SummaryCard
+          label="Gần đầy / Cần thu gom"
+          value={nearlyFullCount}
+          tone={nearlyFullCount > 0 ? 'critical' : 'normal'}
+          icon={<IconXCircle />}
+        />
+        <SummaryCard
+          label="Thiết bị OFFLINE"
+          value={offlineBinsCount}
+          tone={offlineBinsCount > 0 ? 'critical' : 'offline'}
+          icon={<IconCpu />}
+        />
       </div>
 
-      {/* Waste Compartments Grid */}
-      <div className="system-heading">
-        <h2>Hệ thống SmartBin</h2>
-        <p>Một hệ thống duy nhất gồm ba ngăn phân loại rác, mỗi ngăn có cảm biến siêu âm riêng đo mức độ đầy.</p>
-      </div>
+      {/* Multi-Station Monitoring Sections */}
+      <div className="stations-container">
+        {visibleStationGroups.map((group) => {
+          const isCollapsed = Boolean(collapsedStations[group.code]);
+          return (
+            <section
+              className={`station-section station-section--${group.code.toLowerCase()}`}
+              key={group.code}
+              data-station-code={group.code}
+            >
+              <div className="station-header">
+                <div className="station-header-main">
+                  <div className="station-title-row">
+                    <span className="station-code-chip">{group.code}</span>
+                    <h2 className="station-name">{group.name}</h2>
+                    <span className={`station-status-badge status-badge--${group.status.toLowerCase()}`}>
+                      <span className="status-dot" />
+                      {group.status === 'ONLINE'
+                        ? 'Trực tuyến'
+                        : group.status === 'WARNING'
+                        ? 'Cảnh báo'
+                        : group.status === 'MAINTENANCE'
+                        ? 'Bảo trì'
+                        : 'Mất kết nối'}
+                    </span>
+                  </div>
 
-      <div className="waste-grid">
-        {compartments.map((compartment) => (
-          <WasteCard key={compartment.key} label={compartment.label} bin={compartment.bin} now={clock} />
-        ))}
+                  <div className="station-meta-row">
+                    <span className="station-meta-item">
+                      <span className="meta-label">Vị trí:</span>
+                      <span className="meta-value">{group.location || 'Chưa thiết lập'}</span>
+                    </span>
+                    <span className="station-meta-divider">•</span>
+                    <span className="station-meta-item">
+                      <span className="meta-label">Gateway:</span>
+                      <span className="meta-value">{group.gatewayInfo}</span>
+                    </span>
+                    <span className="station-meta-divider">•</span>
+                    <span className="station-meta-item">
+                      <span className="meta-label">Controller:</span>
+                      <span className="meta-value">{group.controllerInfo}</span>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="station-header-right">
+                  <div className="station-stats-pills">
+                    <span className="station-stat-pill" title="Số lượng thùng rác đã kích hoạt trên tổng loại thùng">
+                      <span className="stat-label">Đã lắp:</span>
+                      <strong className="stat-value">
+                        {group.installedCount}/{group.totalBinsCount} thùng
+                      </strong>
+                    </span>
+                    <span className="station-stat-pill" title="Mức độ đầy trung bình của các thùng đang hoạt động">
+                      <span className="stat-label">Mức đầy TB:</span>
+                      <strong className="stat-value">
+                        {group.averageFillPct !== null ? `${group.averageFillPct}%` : '—'}
+                      </strong>
+                    </span>
+                    <span className="station-stat-pill" title="Thời gian nhận dữ liệu cảm biến gần nhất">
+                      <span className="stat-label">Cập nhật:</span>
+                      <strong className="stat-value">{group.lastSeenText}</strong>
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="station-collapse-btn"
+                    onClick={() => toggleStationCollapse(group.code)}
+                    aria-expanded={!isCollapsed}
+                    aria-label={`${isCollapsed ? 'Mở rộng' : 'Thu gọn'} ${group.name}`}
+                  >
+                    {isCollapsed ? 'Mở rộng ▼' : 'Thu gọn ▲'}
+                  </button>
+                </div>
+              </div>
+
+              {!isCollapsed && (
+                <div className="waste-grid">
+                  {group.compartments.map((compartment) => (
+                    <WasteCard
+                      key={`${group.code}-${compartment.key}`}
+                      label={compartment.label}
+                      bin={compartment.bin}
+                      stationCode={group.code}
+                      now={clock}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          );
+        })}
+
+        {visibleStationGroups.length === 0 && (
+          <div className="empty-state">
+            <p>Không tìm thấy trạm thu gom rác nào phù hợp với bộ lọc hiện tại.</p>
+          </div>
+        )}
       </div>
 
       {/* Device Health Summary Section */}
@@ -443,10 +584,12 @@ function SummaryCard({ label, value, tone = '', icon }: { label: string; value: 
 export function WasteCard({
   label,
   bin,
+  stationCode,
   now
 }: {
   label: string;
   bin: (Bin & { distanceCm: number | null }) | undefined;
+  stationCode?: string;
   now?: number;
 }) {
   if (!bin) {
@@ -461,13 +604,21 @@ export function WasteCard({
   const vm = computeBinViewModel(bin, now);
 
   return (
-    <article className={`waste-card waste-tone-${vm.tone}`}>
+    <article
+      className={`waste-card waste-tone-${vm.tone} ${vm.isUninstalled ? 'waste-card--uninstalled' : ''}`}
+      data-station={stationCode || (bin as any).stationCode || (bin as any).station?.code}
+      data-installed={bin.installed !== false}
+    >
       <div className="waste-card-header">
         <div className="waste-card-identity">
           <h3>{label}</h3>
           <span className="device-id-code">{bin.binCode}</span>
         </div>
-        <span className={`status-badge status-badge--${vm.isUninstalled ? 'uninstalled' : !vm.isValidReading ? 'offline' : bin.status.toLowerCase()}`}>
+        <span
+          className={`status-badge status-badge--${
+            vm.isUninstalled ? 'uninstalled' : !vm.isValidReading ? 'offline' : bin.status.toLowerCase()
+          }`}
+        >
           {vm.statusBadgeText}
         </span>
       </div>
@@ -490,20 +641,24 @@ export function WasteCard({
       </div>
 
       <div className="waste-card-footer">
-        <span className={`badge badge-${vm.tone}`}>
+        <span className={`badge badge-${vm.isUninstalled ? 'uninstalled' : vm.tone}`}>
           {vm.fillCategoryBadgeText}
         </span>
         <small>{vm.lastSeenText}</small>
       </div>
 
-      {vm.hasDistance && (
+      {vm.isUninstalled ? (
+        <div className="waste-card-uninstalled-note">
+          <span>Ngăn này chưa gắn cảm biến đo mức đầy. Sẵn sàng cấu hình mở rộng phần cứng.</span>
+        </div>
+      ) : vm.hasDistance ? (
         <dl className="waste-card-facts">
           <div>
             <dt>Khoảng cách</dt>
             <dd>{vm.distanceText}</dd>
           </div>
         </dl>
-      )}
+      ) : null}
     </article>
   );
 }

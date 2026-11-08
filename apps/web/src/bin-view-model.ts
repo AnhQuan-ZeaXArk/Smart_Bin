@@ -1,6 +1,7 @@
 import type { Bin, FillCategory, BinStatus } from './bins';
 import { translateBinStatus, translateFillCategory } from './i18n-labels';
 import { parseTimestamp, shouldDropIncoming, isRaspberryPiDevice } from './device-utils';
+import { WASTE_CATEGORY_ORDER, WASTE_CATEGORY_LABEL, type WasteCategoryKey } from './waste-category';
 
 export interface BinViewModel {
   isValidReading: boolean;
@@ -253,6 +254,199 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
       status: 'OFFLINE' as BinStatus,
       lastSeen: comp?.updatedAt || hb.lastHeartbeat || (sensorUpdatedAtMs > 0 ? new Date(sensorUpdatedAtMs).toISOString() : bin.lastSeen),
       isReal: true
+    };
+  });
+}
+
+export interface StationGroup<T extends Bin = Bin> {
+  id: string;
+  code: string;
+  name: string;
+  location: string | null;
+  status: 'ONLINE' | 'WARNING' | 'OFFLINE' | 'MAINTENANCE';
+  gatewayInfo: string;
+  controllerInfo: string;
+  installedCount: number;
+  totalBinsCount: number;
+  lastSeenText: string;
+  averageFillPct: number | null;
+  bins: T[];
+  compartments: {
+    key: WasteCategoryKey;
+    label: string;
+    bin: T | undefined;
+  }[];
+}
+
+export function groupBinsByStation<T extends Bin & { distanceCm?: number | null; isReal?: boolean }>(
+  bins: T[],
+  knownStations: { id: string; code: string; name: string; status?: string; location?: string | null }[] = [],
+  now?: number
+): StationGroup<T>[] {
+  const currentNow = typeof now === 'number' && now > 0 ? now : Date.now();
+
+  const DEFAULT_HARDWARE_METADATA: Record<string, { name: string; location: string; gateway: string; controller: string }> = {
+    STATION_A: {
+      name: 'Trạm Thu gom Trung tâm A',
+      location: 'Khuôn viên chính',
+      gateway: 'Raspberry Pi 5',
+      controller: 'ESP32 A'
+    },
+    STATION_B: {
+      name: 'Trạm Thu gom Mở rộng B',
+      location: 'Khuôn viên phía Đông',
+      gateway: 'Raspberry Pi 5 (Dùng chung)',
+      controller: 'ESP32-C6'
+    }
+  };
+
+  let stationDefs: { id: string; code: string; name: string; status: string; location: string | null }[] = [];
+
+  if (knownStations && knownStations.length > 0) {
+    stationDefs = knownStations.map((st) => ({
+      id: st.id,
+      code: st.code || (st.id === 'station_a_canonical_id' ? 'STATION_A' : 'STATION_B'),
+      name: st.name || DEFAULT_HARDWARE_METADATA[st.code]?.name || `Trạm ${st.code}`,
+      status: (st.status as any) || 'OFFLINE',
+      location: st.location || DEFAULT_HARDWARE_METADATA[st.code]?.location || null
+    }));
+  } else {
+    const foundCodes = new Set<string>();
+    for (const bin of bins) {
+      const code = bin.station?.code || bin.stationCode || (bin.stationId === 'station_b_canonical_id' ? 'STATION_B' : 'STATION_A');
+      foundCodes.add(code);
+    }
+    if (foundCodes.size === 0) foundCodes.add('STATION_A');
+
+    stationDefs = Array.from(foundCodes).map((code) => {
+      const meta = DEFAULT_HARDWARE_METADATA[code] || {
+        name: `Trạm ${code}`,
+        location: null,
+        gateway: 'Raspberry Pi 5',
+        controller: 'Bộ điều khiển trạm'
+      };
+      return {
+        id: code === 'STATION_B' ? 'station_b_canonical_id' : 'station_a_canonical_id',
+        code,
+        name: meta.name,
+        status: code === 'STATION_A' ? 'ONLINE' : 'OFFLINE',
+        location: meta.location
+      };
+    });
+  }
+
+  stationDefs.sort((a, b) => a.code.localeCompare(b.code));
+
+  return stationDefs.map((st) => {
+    const meta = DEFAULT_HARDWARE_METADATA[st.code] || {
+      name: st.name,
+      location: st.location,
+      gateway: 'Raspberry Pi 5',
+      controller: 'Bộ điều khiển trạm'
+    };
+
+    const stationBins = bins.filter((b) => {
+      const bCode = b.station?.code || b.stationCode;
+      const bId = b.station?.id || b.stationId;
+      if (st.code === 'STATION_A') {
+        return bCode === 'STATION_A' || bId === st.id || (!bCode && !bId);
+      }
+      return bCode === st.code || bId === st.id;
+    });
+
+    const compartments = WASTE_CATEGORY_ORDER.map((key) => {
+      const existing = stationBins.find((b) => b.binCode === key);
+      if (existing) {
+        return {
+          key,
+          label: WASTE_CATEGORY_LABEL[key],
+          bin: existing
+        };
+      }
+
+      const placeholderBin = {
+        id: `uninstalled-${st.code}-${key}`,
+        binCode: key,
+        name: key === 'ORGANIC' ? 'Rác hữu cơ' : key === 'RECYCLABLE' ? 'Rác tái chế' : 'Rác không tái chế',
+        location: st.location || `Ngăn ${WASTE_CATEGORY_LABEL[key]}`,
+        latitude: null,
+        longitude: null,
+        capacity: key === 'NON_RECYCLABLE' ? 360 : 240,
+        currentFillLevel: null,
+        distanceCm: null,
+        fillCategory: 'NORMAL' as const,
+        status: 'MAINTENANCE' as const,
+        isActive: false,
+        installed: false,
+        lastSeen: null,
+        createdAt: '',
+        updatedAt: '',
+        stationId: st.id,
+        stationCode: st.code,
+        station: { id: st.id, code: st.code, name: st.name }
+      } as unknown as T;
+
+      return {
+        key,
+        label: WASTE_CATEGORY_LABEL[key],
+        bin: placeholderBin
+      };
+    });
+
+    const installedBins = compartments
+      .map((c) => c.bin)
+      .filter((b): b is T => Boolean(b && b.installed !== false));
+
+    const installedCount = installedBins.length;
+    const totalBinsCount = compartments.length;
+
+    let latestSeenTime: string | null = null;
+    let latestMs = 0;
+    for (const b of installedBins) {
+      if (b.lastSeen) {
+        const ms = new Date(b.lastSeen).getTime();
+        if (ms > latestMs) {
+          latestMs = ms;
+          latestSeenTime = b.lastSeen;
+        }
+      }
+    }
+    const lastSeenText = latestSeenTime ? secondsAgoLabel(latestSeenTime, currentNow) : 'Chưa có dữ liệu';
+
+    const numericLevels = installedBins
+      .map((b) => b.currentFillLevel)
+      .filter((lvl): lvl is number => typeof lvl === 'number' && !Number.isNaN(lvl));
+
+    const averageFillPct = numericLevels.length > 0
+      ? Math.round(numericLevels.reduce((a, b) => a + b, 0) / numericLevels.length)
+      : null;
+
+    let stationStatus: 'ONLINE' | 'WARNING' | 'OFFLINE' | 'MAINTENANCE' = (st.status as any) || 'OFFLINE';
+    const anyOnlineBin = installedBins.some((b) => b.status === 'ONLINE' && b.currentFillLevel !== null);
+    if (anyOnlineBin) {
+      stationStatus = 'ONLINE';
+    } else if (installedBins.every((b) => b.status === 'OFFLINE' || b.currentFillLevel === null)) {
+      if (st.status === 'ONLINE' && latestMs === 0) {
+        stationStatus = 'ONLINE';
+      } else {
+        stationStatus = (st.status as any) || 'OFFLINE';
+      }
+    }
+
+    return {
+      id: st.id,
+      code: st.code,
+      name: st.name,
+      location: st.location,
+      status: stationStatus,
+      gatewayInfo: meta.gateway,
+      controllerInfo: meta.controller,
+      installedCount,
+      totalBinsCount,
+      lastSeenText,
+      averageFillPct,
+      bins: stationBins,
+      compartments
     };
   });
 }
