@@ -18,9 +18,20 @@ function getSha256(filePath) {
 console.log('=== VERIFYING TWO-PHASE MIGRATION PACKAGING ===\n');
 
 // 1. Kiểm tra thư mục active migrations
-const activeMigrations = fs.readdirSync(migrationsDir).filter(name => {
-  return fs.statSync(path.join(migrationsDir, name)).isDirectory() && name !== 'rollback';
+const allSubdirs = fs.readdirSync(migrationsDir).filter(name => {
+  return fs.statSync(path.join(migrationsDir, name)).isDirectory();
 });
+
+// Chặn đứng lỗi P3015: Bắt buộc 100% thư mục con trong migrations/ phải khớp định dạng ^\d{12}_.*$
+const invalidDirs = allSubdirs.filter(name => !/^\d{12}_.*$/.test(name));
+if (invalidDirs.length > 0) {
+  console.error('\n❌ ERROR: prisma/migrations/ contains invalid non-migration subdirectories:');
+  invalidDirs.forEach(d => console.error(`   - ${d} (Causes Prisma error P3015!)`));
+  console.error('   All non-migration folders (e.g. rollback, staged) MUST reside OUTSIDE prisma/migrations/!\n');
+  process.exit(1);
+}
+
+const activeMigrations = allSubdirs;
 
 console.log('1. Active migrations in prisma/migrations/:');
 activeMigrations.forEach(m => console.log(`   - ${m}`));
@@ -92,6 +103,18 @@ if (!hasPreChecks || !hasTransaction || !hasPostChecks || !hasNoOverwrite) {
 console.log('\n4. Backfill SQL script:');
 console.log(`   - Location: prisma/backfill/backfill_station_a.sql`);
 console.log('  -> PASS: Pre-checks, Atomic Transaction, Non-overwriting condition, and Post-checks verified.');
+
+// 5. Kiểm tra thư mục rollback scripts (bắt buộc nằm ngoài prisma/migrations)
+const rollbackDir = path.join(apiDir, 'prisma', 'rollback');
+const hasRollbackP1 = fs.existsSync(path.join(rollbackDir, 'rollback_phase_1.sql'));
+const hasRollbackP5 = fs.existsSync(path.join(rollbackDir, 'rollback_phase_5.sql'));
+if (!hasRollbackP1 || !hasRollbackP5) {
+  console.error('\n❌ ERROR: Rollback SQL scripts missing in prisma/rollback/!');
+  process.exit(1);
+}
+console.log('\n5. Rollback SQL scripts:');
+console.log(`   - Location: prisma/rollback/ (isolated outside prisma/migrations)`);
+console.log('  -> PASS: rollback_phase_1.sql and rollback_phase_5.sql verified.');
 
 console.log('\n===========================================================');
 console.log('STATUS: RELEASE 1 (EXPAND ONLY) PACKAGING IS 100% READY & VERIFIED!');
