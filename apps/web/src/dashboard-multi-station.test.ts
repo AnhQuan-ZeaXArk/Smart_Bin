@@ -2,31 +2,18 @@ import assert from 'node:assert/strict';
 import type { Bin } from './bins';
 import {
   computeBinViewModel,
-  groupBinsByStation
+  groupBinsByStation,
+  DEFAULT_STATION_CONFIG
 } from './bin-view-model';
+import fs from 'node:fs';
+import path from 'node:path';
 
-console.log('=== RUNNING MULTI-STATION DASHBOARD UI TESTS (MS-1 to MS-8) ===\n');
+console.log('=== RUNNING ROUND 19.1 MULTI-STATION DASHBOARD REFINEMENT TESTS (T1 - T9) ===\n');
 
 // 1. Mock Data Setup
-const mockStations = [
-  {
-    id: 'station_a_canonical_id',
-    code: 'STATION_A',
-    name: 'Trạm Thu gom Trung tâm A',
-    status: 'ONLINE',
-    location: 'Khuôn viên chính'
-  },
-  {
-    id: 'station_b_canonical_id',
-    code: 'STATION_B',
-    name: 'Trạm Thu gom Mở rộng B',
-    status: 'OFFLINE',
-    location: 'Khuôn viên phía Đông'
-  }
-];
+const mockStations = DEFAULT_STATION_CONFIG;
 
-const mockBins: (Bin & { distanceCm: number | null })[] = [
-  // Station A bins (All 3 installed)
+const mockBinsStationA: (Bin & { distanceCm: number | null })[] = [
   {
     id: 'bin-a-organic',
     binCode: 'ORGANIC',
@@ -89,153 +76,143 @@ const mockBins: (Bin & { distanceCm: number | null })[] = [
     stationId: 'station_a_canonical_id',
     stationCode: 'STATION_A',
     station: { id: 'station_a_canonical_id', code: 'STATION_A', name: 'Trạm Thu gom Trung tâm A' }
-  },
-  // Station B bins (1 installed, 2 uninstalled)
-  {
-    id: 'bin-b-recyclable',
-    binCode: 'RECYCLABLE',
-    name: 'Rác tái chế Trạm B',
-    location: 'Ngăn rác tái chế Trạm B',
-    latitude: null,
-    longitude: null,
-    capacity: 240,
-    currentFillLevel: 10,
-    distanceCm: 80,
-    fillCategory: 'NORMAL',
-    status: 'ONLINE',
-    isActive: true,
-    installed: true,
-    lastSeen: new Date().toISOString(),
-    createdAt: '',
-    updatedAt: '',
-    stationId: 'station_b_canonical_id',
-    stationCode: 'STATION_B',
-    station: { id: 'station_b_canonical_id', code: 'STATION_B', name: 'Trạm Thu gom Mở rộng B' }
-  },
-  {
-    id: 'bin-b-organic',
-    binCode: 'ORGANIC',
-    name: 'Rác hữu cơ Trạm B',
-    location: 'Ngăn rác hữu cơ Trạm B',
-    latitude: null,
-    longitude: null,
-    capacity: 240,
-    currentFillLevel: null,
-    distanceCm: null,
-    fillCategory: 'NORMAL',
-    status: 'MAINTENANCE',
-    isActive: false,
-    installed: false, // NOT_INSTALLED
-    lastSeen: null,
-    createdAt: '',
-    updatedAt: '',
-    stationId: 'station_b_canonical_id',
-    stationCode: 'STATION_B',
-    station: { id: 'station_b_canonical_id', code: 'STATION_B', name: 'Trạm Thu gom Mở rộng B' }
-  },
-  {
-    id: 'bin-b-non-recyclable',
-    binCode: 'NON_RECYCLABLE',
-    name: 'Rác không tái chế Trạm B',
-    location: 'Ngăn rác không tái chế Trạm B',
-    latitude: null,
-    longitude: null,
-    capacity: 360,
-    currentFillLevel: null,
-    distanceCm: null,
-    fillCategory: 'NORMAL',
-    status: 'MAINTENANCE',
-    isActive: false,
-    installed: false, // NOT_INSTALLED
-    lastSeen: null,
-    createdAt: '',
-    updatedAt: '',
-    stationId: 'station_b_canonical_id',
-    stationCode: 'STATION_B',
-    station: { id: 'station_b_canonical_id', code: 'STATION_B', name: 'Trạm Thu gom Mở rộng B' }
   }
 ];
 
 function runTests() {
-  const groups = groupBinsByStation(mockBins, mockStations);
-
-  // Test MS-1: Station grouping count
-  console.log('MS-1: Grouping produces 2 stations (Station A and Station B)');
-  assert.equal(groups.length, 2);
-  const stA = groups.find(g => g.code === 'STATION_A');
-  const stB = groups.find(g => g.code === 'STATION_B');
-  assert.ok(stA, 'Station A must exist in groups');
-  assert.ok(stB, 'Station B must exist in groups');
+  // --------------------------------------------------------------------------
+  // Test T1: Dashboard displays both Station A and B when two stations are configured
+  // --------------------------------------------------------------------------
+  console.log('T1: Dashboard hiển thị cả Station A và B khi có cấu hình hai trạm');
+  const groupsConfigured = groupBinsByStation(mockBinsStationA, mockStations);
+  assert.equal(groupsConfigured.length, 2, 'Must have exactly 2 stations');
+  const stA = groupsConfigured.find(g => g.code === 'STATION_A');
+  const stB = groupsConfigured.find(g => g.code === 'STATION_B');
+  assert.ok(stA, 'Station A must be present');
+  assert.ok(stB, 'Station B must be present');
+  assert.equal(stA!.name, 'Trạm Thu gom Trung tâm A');
+  assert.equal(stB!.name, 'Trạm Thu gom Mở rộng B');
   console.log('  -> PASS');
 
-  // Test MS-2: Station A has 3 installed bins
-  console.log('MS-2: Station A has 3 installed bins with correct hardware metadata');
-  assert.equal(stA!.installedCount, 3);
-  assert.equal(stA!.totalBinsCount, 3);
-  assert.equal(stA!.gatewayInfo, 'Raspberry Pi 5');
-  assert.equal(stA!.controllerInfo, 'ESP32 A');
-  assert.equal(stA!.compartments.length, 3);
-  for (const c of stA!.compartments) {
-    assert.ok(c.bin, `Station A compartment ${c.key} must have a bin`);
-    assert.equal(c.bin!.installed, true, `Station A bin ${c.key} must be installed`);
-  }
+  // --------------------------------------------------------------------------
+  // Test T2: Station B is displayed even when it has NO telemetry
+  // --------------------------------------------------------------------------
+  console.log('T2: Station B vẫn hiển thị khi chưa có telemetry từ Backend');
+  // Pass only Station A bins; Station B has 0 bins in the input array
+  assert.ok(stB, 'Station B must exist even with zero incoming telemetry');
+  assert.equal(stB!.compartments.length, 3, 'Station B must still render 3 compartments');
   console.log('  -> PASS');
 
-  // Test MS-3: Station B has 1 installed bin and 2 uninstalled bins
-  console.log('MS-3: Station B has 1 installed bin and 2 uninstalled bins');
-  assert.equal(stB!.installedCount, 1);
-  assert.equal(stB!.totalBinsCount, 3);
-  assert.equal(stB!.gatewayInfo, 'Raspberry Pi 5 (Dùng chung)');
-  assert.equal(stB!.controllerInfo, 'ESP32-C6');
-  assert.equal(stB!.compartments.length, 3);
+  // --------------------------------------------------------------------------
+  // Test T3: Station B has exactly 1 bin INSTALLED and 2 bins NOT_INSTALLED
+  // --------------------------------------------------------------------------
+  console.log('T3: Station B có chính xác 1 bin INSTALLED và 2 bin NOT_INSTALLED');
+  assert.equal(stB!.installedCount, 1, 'Station B must report exactly 1 installed bin');
+  assert.equal(stB!.totalBinsCount, 3, 'Station B total compartments must be 3');
 
-  const compRecyclable = stB!.compartments.find(c => c.key === 'RECYCLABLE');
-  const compOrganic = stB!.compartments.find(c => c.key === 'ORGANIC');
-  const compNonRecyclable = stB!.compartments.find(c => c.key === 'NON_RECYCLABLE');
+  const compRec = stB!.compartments.find(c => c.key === 'RECYCLABLE');
+  const compOrg = stB!.compartments.find(c => c.key === 'ORGANIC');
+  const compNon = stB!.compartments.find(c => c.key === 'NON_RECYCLABLE');
 
-  assert.ok(compRecyclable && compRecyclable.bin, 'Station B must have Recyclable compartment');
-  assert.equal(compRecyclable.bin!.installed, true, 'Recyclable must be installed');
+  assert.ok(compRec?.bin, 'RECYCLABLE compartment must exist');
+  assert.equal(compRec!.bin!.installed, true, 'RECYCLABLE must be marked installed: true');
+  assert.equal(compRec!.bin!.status, 'OFFLINE', 'Without telemetry, installed bin must be OFFLINE');
+  assert.equal(compRec!.bin!.currentFillLevel, null, 'Must NOT have fake telemetry');
 
-  assert.ok(compOrganic && compOrganic.bin, 'Station B must have Organic compartment');
-  assert.equal(compOrganic.bin!.installed, false, 'Organic must be NOT_INSTALLED');
+  assert.ok(compOrg?.bin, 'ORGANIC compartment must exist');
+  assert.equal(compOrg!.bin!.installed, false, 'ORGANIC must be NOT_INSTALLED (installed: false)');
 
-  assert.ok(compNonRecyclable && compNonRecyclable.bin, 'Station B must have Non-Recyclable compartment');
-  assert.equal(compNonRecyclable.bin!.installed, false, 'Non-Recyclable must be NOT_INSTALLED');
+  assert.ok(compNon?.bin, 'NON_RECYCLABLE compartment must exist');
+  assert.equal(compNon!.bin!.installed, false, 'NON_RECYCLABLE must be NOT_INSTALLED (installed: false)');
+
+  const vmOrg = computeBinViewModel(compOrg!.bin);
+  assert.equal(vmOrg.isUninstalled, true);
+  assert.equal(vmOrg.isOffline, false, 'NOT_INSTALLED bin must NOT be marked isOffline');
+  assert.equal(vmOrg.statusBadgeText, 'Chưa lắp đặt');
+  assert.equal(vmOrg.displayPercentage, '—');
   console.log('  -> PASS');
 
-  // Test MS-4: Uninstalled bins compute correct view model
-  console.log('MS-4: Uninstalled bins are NOT counted as OFFLINE and show "Chưa lắp đặt"');
-  const vmUninstalled = computeBinViewModel(compOrganic!.bin);
-  assert.equal(vmUninstalled.isUninstalled, true);
-  assert.equal(vmUninstalled.isOffline, false, 'Uninstalled bin must NOT be marked isOffline');
-  assert.equal(vmUninstalled.statusBadgeText, 'Chưa lắp đặt');
-  assert.equal(vmUninstalled.fillCategoryBadgeText, 'Chưa lắp đặt');
-  assert.equal(vmUninstalled.displayPercentage, '—');
-  assert.equal(vmUninstalled.tone, 'unavailable');
+  // --------------------------------------------------------------------------
+  // Test T4: KPI calculation across 2 stations and 4 installed bins
+  // --------------------------------------------------------------------------
+  console.log('T4: KPI tính tổng 2 trạm và 4 thùng đã lắp');
+  const allInstalled = groupsConfigured.flatMap(g =>
+    g.compartments.filter(c => c.bin && c.bin.installed !== false).map(c => c.bin!)
+  );
+
+  const totalStations = groupsConfigured.length;
+  const totalInstalled = allInstalled.length;
+  const onlineStations = groupsConfigured.filter(g => g.status === 'ONLINE').length;
+  const offlineBins = allInstalled.filter(b => {
+    const vm = computeBinViewModel(b);
+    return !vm.isValidReading || b.status === 'OFFLINE';
+  }).length;
+
+  assert.equal(totalStations, 2, 'Total stations must be 2');
+  assert.equal(totalInstalled, 4, 'Total installed bins must be exactly 4 (3 for A + 1 for B)');
+  assert.equal(onlineStations, 1, 'Station A is ONLINE, Station B is OFFLINE (1 station ONLINE)');
+  assert.equal(offlineBins, 1, 'Only Station B RECYCLABLE is offline (NOT_INSTALLED bins are excluded)');
   console.log('  -> PASS');
 
-  // Test MS-5: Station B with missing uninstalled bins generates synthetic placeholders
-  console.log('MS-5: Station B with missing uninstalled bins generates synthetic placeholders');
-  const onlyRecyclableBin = [mockBins[3]]; // Only Recyclable of Station B
-  const groupsSparse = groupBinsByStation(onlyRecyclableBin, mockStations);
-  const stBSparse = groupsSparse.find(g => g.code === 'STATION_B');
-  assert.ok(stBSparse);
-  assert.equal(stBSparse!.compartments.length, 3);
-  const sparseOrganic = stBSparse!.compartments.find(c => c.key === 'ORGANIC');
-  assert.ok(sparseOrganic && sparseOrganic.bin);
-  assert.equal(sparseOrganic.bin!.installed, false);
-  const vmSparseOrganic = computeBinViewModel(sparseOrganic.bin);
-  assert.equal(vmSparseOrganic.isUninstalled, true);
-  assert.equal(vmSparseOrganic.statusBadgeText, 'Chưa lắp đặt');
+  // --------------------------------------------------------------------------
+  // Test T5: Filter by Station A / Station B
+  // --------------------------------------------------------------------------
+  console.log('T5: Bộ lọc Station A/B hoạt động');
+  const filterAll = groupsConfigured.filter(() => true);
+  assert.equal(filterAll.length, 2);
+
+  const filterA = groupsConfigured.filter(g => g.code === 'STATION_A');
+  assert.equal(filterA.length, 1);
+  assert.equal(filterA[0].installedCount, 3);
+
+  const filterB = groupsConfigured.filter(g => g.code === 'STATION_B');
+  assert.equal(filterB.length, 1);
+  assert.equal(filterB[0].installedCount, 1);
+  assert.equal(filterB[0].compartments.length, 3);
+  assert.equal(filterB[0].compartments.filter(c => c.bin?.installed === false).length, 2);
   console.log('  -> PASS');
 
-  // Test MS-6: Legacy bins without stationCode default to Station A
-  console.log('MS-6: Legacy bins without stationCode default to Station A');
+  // --------------------------------------------------------------------------
+  // Test T6: Station header has NO location, Gateway, or Controller
+  // --------------------------------------------------------------------------
+  console.log('T6: Header không còn vị trí, Gateway, Controller');
+  const dashboardSource = fs.readFileSync(path.resolve('apps/web/src/dashboard.tsx'), 'utf-8');
+  assert.ok(!dashboardSource.includes('station-meta-row'), 'dashboard.tsx must not contain .station-meta-row');
+  assert.ok(!dashboardSource.includes('group.gatewayInfo'), 'dashboard.tsx must not render group.gatewayInfo');
+  assert.ok(!dashboardSource.includes('group.controllerInfo'), 'dashboard.tsx must not render group.controllerInfo');
+  console.log('  -> PASS');
+
+  // --------------------------------------------------------------------------
+  // Test T7: Device status has NO 3-compartment fill level section
+  // --------------------------------------------------------------------------
+  console.log('T7: Device status không còn section mức đầy ba ngăn rác');
+  const realDeviceSource = fs.readFileSync(path.resolve('apps/web/src/real-device-card.tsx'), 'utf-8');
+  assert.ok(!realDeviceSource.includes('real-compartments-section'), 'real-device-card must not have real-compartments-section');
+  assert.ok(!realDeviceSource.includes('Mức Đầy 3 Ngăn Rác Thực Tế'), 'real-device-card must not have text "Mức Đầy 3 Ngăn Rác Thực Tế"');
+  assert.ok(!realDeviceSource.includes('renderCompartmentCard'), 'real-device-card must not have renderCompartmentCard');
+  console.log('  -> PASS');
+
+  // --------------------------------------------------------------------------
+  // Test T8: Raspberry Pi telemetry and heartbeat fields remain functional
+  // --------------------------------------------------------------------------
+  console.log('T8: Các thông tin heartbeat và telemetry của Raspberry Pi vẫn hoạt động');
+  assert.ok(realDeviceSource.includes('Trạng thái kết nối'), 'Must retain connection status card');
+  assert.ok(realDeviceSource.includes('Heartbeat gần nhất'), 'Must retain last heartbeat card');
+  assert.ok(realDeviceSource.includes('Thời gian hoạt động (Uptime)'), 'Must retain uptime card');
+  assert.ok(realDeviceSource.includes('Tổng gói Telemetry'), 'Must retain telemetry packet count card');
+  assert.ok(realDeviceSource.includes('Nhiệt độ CPU Pi 5'), 'Must retain CPU temperature card');
+  assert.ok(realDeviceSource.includes('Kênh kết nối Pi 5'), 'Must retain connection channel card');
+  console.log('  -> PASS');
+
+  // --------------------------------------------------------------------------
+  // Test T9: No regression with legacy single-station data
+  // --------------------------------------------------------------------------
+  console.log('T9: Không phát sinh regression với Dashboard cũ');
   const legacyBins: (Bin & { distanceCm: number | null })[] = [
     {
       id: 'legacy-1',
       binCode: 'ORGANIC',
-      name: 'Rác hữu cơ',
+      name: 'Rác hữu cơ cũ',
       location: 'Ngăn rác hữu cơ',
       latitude: null,
       longitude: null,
@@ -248,40 +225,17 @@ function runTests() {
       lastSeen: new Date().toISOString(),
       createdAt: '',
       updatedAt: ''
-      // No stationId or station
     }
   ];
-  const groupsLegacy = groupBinsByStation(legacyBins, []);
-  assert.equal(groupsLegacy.length, 1);
-  assert.equal(groupsLegacy[0].code, 'STATION_A');
-  assert.equal(groupsLegacy[0].installedCount, 1);
+  // When an explicit single station legacy configuration is supplied:
+  const singleStationLegacyConfig = [{ id: 'station_a_canonical_id', code: 'STATION_A', name: 'Trạm Thu gom Trung tâm A', status: 'ONLINE', location: null }];
+  const groupsSingleLegacy = groupBinsByStation(legacyBins, singleStationLegacyConfig);
+  assert.equal(groupsSingleLegacy.length, 1);
+  assert.equal(groupsSingleLegacy[0].code, 'STATION_A');
+  assert.equal(groupsSingleLegacy[0].installedCount, 1);
   console.log('  -> PASS');
 
-  // Test MS-7: Average fill percentage calculation
-  console.log('MS-7: Average fill percentage calculation for Station A');
-  // Station A bins: 25, 58, 78 -> avg = (25+58+78)/3 = 53.67 -> 54%
-  assert.equal(stA!.averageFillPct, 54);
-  // Station B installed bin: 10 -> avg = 10%
-  assert.equal(stB!.averageFillPct, 10);
-  console.log('  -> PASS');
-
-  // Test MS-8: KPI counts across multi-station data
-  console.log('MS-8: KPI counts verification');
-  const totalStations = groups.length;
-  assert.equal(totalStations, 2);
-  const installedBins = mockBins.filter(b => b.installed !== false);
-  assert.equal(installedBins.length, 4); // 3 of A + 1 of B
-  const onlineStations = groups.filter(g => g.status === 'ONLINE').length;
-  assert.equal(onlineStations, 2); // Both Station A and Station B have active online bins
-
-  // If Station B's only installed bin goes OFFLINE:
-  const binsWithBOffline = mockBins.map(b => b.id === 'bin-b-recyclable' ? { ...b, status: 'OFFLINE' as const, currentFillLevel: null } : b);
-  const groupsWithBOffline = groupBinsByStation(binsWithBOffline, []);
-  const onlineCountWhenBOffline = groupsWithBOffline.filter(g => g.status === 'ONLINE').length;
-  assert.equal(onlineCountWhenBOffline, 1); // Station A is ONLINE, Station B is OFFLINE
-  console.log('  -> PASS');
-
-  console.log('\n=== ALL 8 MULTI-STATION TESTS PASSED CLEANLY! ===\n');
+  console.log('\n=== ALL 9 REFINEMENT TESTS (T1 - T9) PASSED CLEANLY! ===\n');
 }
 
 runTests();

@@ -6,8 +6,7 @@ import {
   IconCheckCircle,
   IconAlertTriangle,
   IconXCircle,
-  IconRefresh,
-  IconRadio
+  IconRefresh
 } from './icons';
 import {
   type DeviceStatusEnum,
@@ -408,71 +407,6 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
     }
   }, [liveStatus]);
 
-  const renderCompartmentCard = (
-    key: string,
-    label: string,
-    comp?: CompartmentFillData | null
-  ) => {
-    const isStale = comp?.status === 'STALE';
-    const isError = comp?.status === 'SENSOR_ERROR' || comp?.status === 'OUT_OF_RANGE';
-    const isNotAttached = !comp || comp.status === 'NOT_ATTACHED' || comp.status === undefined;
-    const hasReading = comp && comp.fillLevel !== null && comp.fillLevel !== undefined && !isStale && !isError && !isNotAttached;
-    const fillPct = hasReading ? Math.min(100, Math.max(0, comp.fillLevel!)) : 0;
-
-    let tone = 'normal';
-    if (fillPct >= 90) tone = 'critical';
-    else if (fillPct >= 70) tone = 'warning';
-
-    return (
-      <div key={key} className={`compartment-gauge-card ${!hasReading ? 'is-unavailable' : ''}`}>
-        <div className="compartment-gauge-head">
-          <span className="compartment-name">{label}</span>
-          {isStale ? (
-            <span className="compartment-status-tag tag-stale">Dữ liệu cũ (STALE)</span>
-          ) : isError ? (
-            <span className="compartment-status-tag tag-error">Lệch tầm đo</span>
-          ) : isNotAttached ? (
-            <span className="compartment-status-tag tag-stale">Chưa có dữ liệu</span>
-          ) : (
-            <span className="compartment-status-tag tag-ok">HOẠT ĐỘNG</span>
-          )}
-        </div>
-
-        <div className="compartment-fill-display">
-          <span className={`compartment-fill-pct ${!hasReading ? 'text-unavailable' : ''}`}>
-            {hasReading ? `${fillPct}%` : '—'}
-          </span>
-          {hasReading && comp?.distanceCm !== null && comp?.distanceCm !== undefined && (
-            <span className="compartment-distance">
-              {comp.distanceCm.toFixed(1)} cm
-            </span>
-          )}
-        </div>
-
-        <div className={`compartment-progress-bar ${!hasReading ? 'is-unavailable' : ''}`}>
-          {hasReading ? (
-            <div
-              className={`compartment-progress-fill fill-tone-${tone}`}
-              style={{ width: `${fillPct}%` }}
-            />
-          ) : (
-            <div
-              className="compartment-progress-fill is-unavailable"
-              style={{ width: '0%' }}
-            />
-          )}
-        </div>
-
-        {isStale && (
-          <div className="compartment-stale-banner">
-            <IconAlertTriangle />
-            <span>Cảm biến không gửi dữ liệu mới &gt; 15s (Stale)</span>
-          </div>
-        )}
-      </div>
-    );
-  };
-
   return (
     <section className={`real-device-container ${compact ? 'compact' : ''} ${pulse ? 'has-pulse' : ''}`}>
       <div className="real-device-card">
@@ -609,23 +543,6 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
                 <span className="metric-hint">
                   {data?.isSocketConnected ? 'Duy trì kết nối hai chiều' : 'Đang ở chế độ nhịp HTTP'}
                 </span>
-              </div>
-            </div>
-
-            {/* 3-Compartment Fill Level Grid */}
-            <div className="real-compartments-section">
-              <div className="real-compartments-title">
-                <h4>
-                  <IconRadio />
-                  <span>Mức Đầy 3 Ngăn Rác Thực Tế</span>
-                </h4>
-                <span className="metric-hint">Hiệu chuẩn: 50cm (Trống) → 5cm (Đầy)</span>
-              </div>
-
-              <div className="real-compartments-grid">
-                {renderCompartmentCard('RECYCLABLE', 'Rác tái chế', data?.sensors?.recyclable)}
-                {renderCompartmentCard('NON_RECYCLABLE', 'Rác không tái chế', data?.sensors?.nonRecyclable)}
-                {renderCompartmentCard('ORGANIC', 'Rác hữu cơ', data?.sensors?.organic)}
               </div>
             </div>
           </>

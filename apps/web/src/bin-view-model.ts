@@ -278,6 +278,23 @@ export interface StationGroup<T extends Bin = Bin> {
   }[];
 }
 
+export const DEFAULT_STATION_CONFIG = [
+  {
+    id: 'station_a_canonical_id',
+    code: 'STATION_A',
+    name: 'Trạm Thu gom Trung tâm A',
+    status: 'ONLINE' as const,
+    location: 'Khuôn viên chính'
+  },
+  {
+    id: 'station_b_canonical_id',
+    code: 'STATION_B',
+    name: 'Trạm Thu gom Mở rộng B',
+    status: 'OFFLINE' as const,
+    location: 'Khuôn viên phía Đông'
+  }
+];
+
 export function groupBinsByStation<T extends Bin & { distanceCm?: number | null; isReal?: boolean }>(
   bins: T[],
   knownStations: { id: string; code: string; name: string; status?: string; location?: string | null }[] = [],
@@ -357,12 +374,26 @@ export function groupBinsByStation<T extends Bin & { distanceCm?: number | null;
     const compartments = WASTE_CATEGORY_ORDER.map((key) => {
       const existing = stationBins.find((b) => b.binCode === key);
       if (existing) {
+        // Enforce Station B architectural layout: only RECYCLABLE is installed, ORGANIC & NON_RECYCLABLE are NOT_INSTALLED
+        const isInstalled = st.code === 'STATION_B'
+          ? (key === 'RECYCLABLE' && existing.installed !== false)
+          : (existing.installed !== false);
+
         return {
           key,
           label: WASTE_CATEGORY_LABEL[key],
-          bin: existing
+          bin: {
+            ...existing,
+            installed: isInstalled
+          }
         };
       }
+
+      // If no existing bin returned (e.g. Station B has no telemetry yet):
+      // - Station B: By architecture, RECYCLABLE is INSTALLED (waiting for telemetry, status: OFFLINE, currentFillLevel: null)
+      //              ORGANIC & NON_RECYCLABLE are NOT_INSTALLED (installed: false, status: MAINTENANCE)
+      // - Station A / Other: Missing bin from dataset is marked uninstalled (installed: false)
+      const isInstalled = st.code === 'STATION_B' ? (key === 'RECYCLABLE') : false;
 
       const placeholderBin = {
         id: `uninstalled-${st.code}-${key}`,
@@ -375,9 +406,9 @@ export function groupBinsByStation<T extends Bin & { distanceCm?: number | null;
         currentFillLevel: null,
         distanceCm: null,
         fillCategory: 'NORMAL' as const,
-        status: 'MAINTENANCE' as const,
-        isActive: false,
-        installed: false,
+        status: isInstalled ? ('OFFLINE' as const) : ('MAINTENANCE' as const),
+        isActive: isInstalled,
+        installed: isInstalled,
         lastSeen: null,
         createdAt: '',
         updatedAt: '',

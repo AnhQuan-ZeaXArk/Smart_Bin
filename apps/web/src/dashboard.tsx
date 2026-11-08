@@ -23,7 +23,8 @@ import {
 import {
   computeBinViewModel,
   mergeDeviceHeartbeatToBins,
-  groupBinsByStation
+  groupBinsByStation,
+  DEFAULT_STATION_CONFIG
 } from './bin-view-model';
 
 type RealtimeTelemetry = {
@@ -214,7 +215,7 @@ export function DashboardPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
-  const [stations, setStations] = useState<StationOption[]>([]);
+  const [stations, setStations] = useState<StationOption[]>(DEFAULT_STATION_CONFIG);
   const [selectedStationCode, setSelectedStationCode] = useState<string>('');
   const [collapsedStations, setCollapsedStations] = useState<Record<string, boolean>>({});
 
@@ -239,11 +240,11 @@ export function DashboardPage() {
     return () => clearInterval(timer);
   }, []);
 
-  // Load danh sách Stations
+  // Load danh sách Stations từ API (nếu Backend có cấu hình trạm mới hơn, cập nhật; nếu không dùng cấu hình trạm mặc định)
   useEffect(() => {
     getData<{ stations: StationOption[] }>('/api/stations', token)
       .then((res) => {
-        if (res && Array.isArray(res.stations)) {
+        if (res && Array.isArray(res.stations) && res.stations.length > 0) {
           setStations(res.stations);
         }
       })
@@ -372,20 +373,22 @@ export function DashboardPage() {
     );
   }
 
-  // Round 19: KPI counts computed strictly from real data
+  // Round 19.1: KPI counts computed strictly across all configured stations from real data
+  const allInstalledCompartments = stationGroups.flatMap((g) =>
+    g.compartments.filter((c) => c.bin && c.bin.installed !== false).map((c) => c.bin!)
+  );
+
   const totalStationsCount = stationGroups.length;
-  const totalInstalledBins = stationGroups.reduce((acc, g) => acc + g.installedCount, 0);
+  const totalInstalledBins = allInstalledCompartments.length;
   const onlineStationsCount = stationGroups.filter((g) => g.status === 'ONLINE').length;
 
   // Crucial: bins with installed === false are NOT offline and MUST NOT trigger false offline alerts
-  const offlineBinsCount = (data?.bins || []).filter((bin) => {
-    if (bin.installed === false) return false;
+  const offlineBinsCount = allInstalledCompartments.filter((bin) => {
     const vm = computeBinViewModel(bin, clock);
     return !vm.isValidReading || bin.status === 'OFFLINE';
   }).length;
 
-  const nearlyFullCount = (data?.bins || []).filter((bin) => {
-    if (bin.installed === false) return false;
+  const nearlyFullCount = allInstalledCompartments.filter((bin) => {
     const vm = computeBinViewModel(bin, clock);
     return vm.isValidReading && (vm.tone === 'nearly_full' || vm.tone === 'critical');
   }).length;
@@ -475,23 +478,6 @@ export function DashboardPage() {
                         : group.status === 'MAINTENANCE'
                         ? 'Bảo trì'
                         : 'Mất kết nối'}
-                    </span>
-                  </div>
-
-                  <div className="station-meta-row">
-                    <span className="station-meta-item">
-                      <span className="meta-label">Vị trí:</span>
-                      <span className="meta-value">{group.location || 'Chưa thiết lập'}</span>
-                    </span>
-                    <span className="station-meta-divider">•</span>
-                    <span className="station-meta-item">
-                      <span className="meta-label">Gateway:</span>
-                      <span className="meta-value">{group.gatewayInfo}</span>
-                    </span>
-                    <span className="station-meta-divider">•</span>
-                    <span className="station-meta-item">
-                      <span className="meta-label">Controller:</span>
-                      <span className="meta-value">{group.controllerInfo}</span>
                     </span>
                   </div>
                 </div>
