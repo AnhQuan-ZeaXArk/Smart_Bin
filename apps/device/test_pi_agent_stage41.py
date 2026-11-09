@@ -90,6 +90,10 @@ class TestTelemetryFallback(unittest.TestCase):
     def setUp(self):
         self.client = mock.Mock()
         self.client.connected = False
+        def mock_emit(event, payload, callback=None):
+            if callable(callback):
+                callback({'success': True, 'status': 'COMMITTED'})
+        self.client.emit.side_effect = mock_emit
         self.requests = mock.Mock()
         self.response = mock.Mock(status_code=200)
         self.requests.post.return_value = self.response
@@ -132,7 +136,8 @@ class TestTelemetryFallback(unittest.TestCase):
         self.assertTrue(pi_agent.send_telemetry())
         self.client.emit.assert_called_once_with(
             'device:telemetry',
-            mock.ANY
+            mock.ANY,
+            callback=mock.ANY
         )
         self.requests.post.assert_not_called()
 

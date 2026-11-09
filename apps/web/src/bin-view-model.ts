@@ -10,6 +10,8 @@ export interface BinViewModel {
   isUninstalled?: boolean;
   hasValidFillLevel: boolean;
   fillPct: number;
+  lastKnownFillPct?: number | null;
+  lastKnownText?: string | null;
   displayPercentage: string;
   progressWidth: string;
   tone: 'normal' | 'monitor' | 'nearly_full' | 'critical' | 'unavailable';
@@ -91,6 +93,12 @@ export function computeBinViewModel(
   const isValidReading = hasValidFillLevel && !isOffline && !isStale;
   const fillPct = hasValidFillLevel ? Math.max(0, Math.min(100, Math.round(bin.currentFillLevel!))) : 0;
 
+  const lastKnownFillPct = typeof (bin as any).lastKnownFillLevel === 'number' && !Number.isNaN((bin as any).lastKnownFillLevel)
+    ? Math.max(0, Math.min(100, Math.round((bin as any).lastKnownFillLevel)))
+    : (hasValidFillLevel ? fillPct : null);
+
+  const lastKnownText = !isValidReading && lastKnownFillPct !== null ? `Gần nhất: ${lastKnownFillPct}%` : null;
+
   const tone = !isValidReading
     ? 'unavailable'
     : fillPct >= 90
@@ -132,6 +140,8 @@ export function computeBinViewModel(
     isStale,
     hasValidFillLevel,
     fillPct,
+    lastKnownFillPct,
+    lastKnownText,
     displayPercentage: isValidReading ? `${fillPct}%` : '—',
     progressWidth: isValidReading ? `${fillPct}%` : '0%',
     tone,
@@ -212,9 +222,12 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
       };
     }
 
-    // Cách ly Telemetry theo Station: Nếu có stationCode, chỉ cập nhật Bin thuộc đúng Station đó
-    const binStationCode = bin.stationCode || (bin as any).station?.code || (bin.stationId === 'station_b_canonical_id' ? 'STATION_B' : (bin.stationId === 'station_a_canonical_id' ? 'STATION_A' : undefined));
-    if (hb.stationCode && binStationCode && hb.stationCode !== binStationCode) {
+    // Cách ly Telemetry theo Station: Tuyệt đối không cho phép dữ liệu Trạm A ghi đè Trạm B và ngược lại
+    const isStationB = bin.stationCode === 'STATION_B' || (bin as any).station?.code === 'STATION_B' || bin.stationId === 'station_b_canonical_id';
+    const binStationCode = isStationB ? 'STATION_B' : 'STATION_A';
+    const incomingStationCode = (hb.stationCode || 'STATION_A').toUpperCase();
+
+    if (incomingStationCode !== binStationCode) {
       return {
         ...bin,
         distanceCm: typeof bin.distanceCm === 'number' ? bin.distanceCm : null,
@@ -248,6 +261,7 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
       return {
         ...bin,
         currentFillLevel: comp.fillLevel,
+        lastKnownFillLevel: comp.fillLevel,
         distanceCm: typeof comp.distanceCm === 'number' ? comp.distanceCm : null,
         fillCategory: getFillCategoryForLevel(comp.fillLevel),
         status: 'ONLINE' as BinStatus,
@@ -256,9 +270,13 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
       };
     }
 
+    // Khi offline hoặc không có reading hợp lệ:
+    // GIỮ LẠI lastKnownFillLevel và không xóa sạch lịch sử
+    const preservedLastKnown = (bin as any).lastKnownFillLevel ?? (typeof bin.currentFillLevel === 'number' ? bin.currentFillLevel : null);
     return {
       ...bin,
       currentFillLevel: null,
+      lastKnownFillLevel: preservedLastKnown,
       distanceCm: null,
       fillCategory: 'NORMAL' as FillCategory,
       status: 'OFFLINE' as BinStatus,

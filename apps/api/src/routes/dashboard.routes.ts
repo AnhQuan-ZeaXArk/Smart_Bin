@@ -37,10 +37,21 @@ router.get('/summary', async (request, response, next) => {
       return response.json(demoService.getDashboardSummary());
     }
 
+    const isStationAFilter = targetStationId === 'station_a_canonical_id' || rawStationCode?.toUpperCase() === 'STATION_A';
+
     const bins = await prisma.bin.findMany({
       where: {
         isActive: true,
-        ...(targetStationId ? { stationId: targetStationId } : {})
+        ...(targetStationId
+          ? isStationAFilter
+            ? {
+                OR: [
+                  { stationId: targetStationId },
+                  { stationId: null }
+                ]
+              }
+            : { stationId: targetStationId }
+          : {})
       },
       include: { station: true },
       orderBy: [{ stationId: 'asc' }, { binCode: 'asc' }]
@@ -57,7 +68,16 @@ router.get('/summary', async (request, response, next) => {
       include: { bin: { select: { binCode: true, stationId: true } } },
       where: {
         isResolved: false,
-        ...(targetStationId ? { bin: { stationId: targetStationId } } : {})
+        ...(targetStationId
+          ? isStationAFilter
+            ? {
+                OR: [
+                  { bin: { stationId: targetStationId } },
+                  { bin: { stationId: null } }
+                ]
+              }
+            : { bin: { stationId: targetStationId } }
+          : {})
       },
       orderBy: { createdAt: 'desc' },
       take: 8

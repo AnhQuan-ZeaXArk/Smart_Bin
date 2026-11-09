@@ -26,6 +26,44 @@ VALID_SENSOR_KEYS = frozenset({'hc1', 'hc2', 'hc3'})
 HC_VALID_TIMEOUT_SEC = 15.0
 
 
+def normalize_fill_level(value: Any) -> Optional[int]:
+    """
+    Safely normalize fill level to an integer between 0 and 100.
+    - Accepts int, finite float, numeric strings (e.g. '45', '45.7', '45%').
+    - Rejects booleans (True/False).
+    - Rejects None, NaN, Infinity, empty strings, non-numeric strings.
+    - Rejects values < 0 or > 100.
+    - Normalizes accepted values to int using round().
+    - Returns None if invalid (never converts invalid or missing data to 0).
+    """
+    if value is None or isinstance(value, bool):
+        return None
+
+    num: float
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            return None
+        num = float(value)
+    elif isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if cleaned.endswith('%'):
+            cleaned = cleaned[:-1].strip()
+        try:
+            num = float(cleaned)
+            if not math.isfinite(num):
+                return None
+        except (ValueError, TypeError):
+            return None
+    else:
+        return None
+
+    if 0.0 <= num <= 100.0:
+        return int(round(num))
+    return None
+
+
 def normalize_class(raw_class: str) -> str:
     """Keep the legacy label helper available to existing local tooling."""
     if not raw_class:
@@ -82,17 +120,16 @@ def _sanitize_sensors_for_publish(sensors: Any) -> Optional[Dict[str, Optional[D
             continue
         if isinstance(entry, dict):
             fill = entry.get('fillPercent')
+            norm_fill = normalize_fill_level(fill)
             epoch = entry.get('updatedAtEpoch')
             if (
-                isinstance(fill, int)
-                and not isinstance(fill, bool)
-                and 0 <= fill <= 100
+                norm_fill is not None
                 and isinstance(epoch, (int, float))
                 and not isinstance(epoch, bool)
                 and math.isfinite(epoch)
             ):
                 sanitized[key] = {
-                    'fillPercent': fill,
+                    'fillPercent': norm_fill,
                     'updatedAtEpoch': float(epoch)
                 }
             else:
@@ -226,11 +263,10 @@ def read_yolo_state() -> Dict[str, Any]:
             entry = data['sensors'].get(key)
             if isinstance(entry, dict):
                 fill = entry.get('fillPercent')
+                norm_fill = normalize_fill_level(fill)
                 epoch = entry.get('updatedAtEpoch')
                 if (
-                    isinstance(fill, int)
-                    and not isinstance(fill, bool)
-                    and 0 <= fill <= 100
+                    norm_fill is not None
                     and isinstance(epoch, (int, float))
                     and not isinstance(epoch, bool)
                     and math.isfinite(epoch)
@@ -238,7 +274,7 @@ def read_yolo_state() -> Dict[str, Any]:
                     and 0 <= (now - epoch) <= HC_VALID_TIMEOUT_SEC
                 ):
                     validated_sensors[key] = {
-                        'fillPercent': fill,
+                        'fillPercent': norm_fill,
                         'updatedAtEpoch': float(epoch)
                     }
                 else:

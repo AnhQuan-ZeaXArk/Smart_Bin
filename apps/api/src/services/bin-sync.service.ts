@@ -105,6 +105,20 @@ export function syncBinWithRealDevice<T extends {
     };
   }
 
+  // 4. Nếu RAM không có reading nhưng Database có reading còn tươi (<= 15s)
+  const binLastSeenMs = bin.lastSeen ? new Date(bin.lastSeen).getTime() : 0;
+  const isDbFresh = binLastSeenMs > 0 && (Date.now() - binLastSeenMs <= DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_MS);
+  if (isDbFresh && typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel)) {
+    return {
+      ...bin,
+      currentFillLevel: bin.currentFillLevel,
+      distanceCm: bin.distanceCm ?? null,
+      fillCategory: computeFillCategory(bin.currentFillLevel),
+      status: (bin.status === 'ONLINE' ? 'ONLINE' : 'OFFLINE') as any,
+      lastSeen: new Date(binLastSeenMs).toISOString()
+    };
+  }
+
   return {
     ...bin,
     currentFillLevel: null,

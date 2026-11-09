@@ -525,25 +525,22 @@ class TestFrontendStaleSensorContract(unittest.TestCase):
     """Verify that frontend source code strictly satisfies the unavailable-state contract."""
 
     def test_real_device_card_contract(self):
-        card_path = DEVICE_DIR.parent / "web" / "src" / "real-device-card.tsx"
-        content = card_path.read_text(encoding="utf-8")
+        vm_path = DEVICE_DIR.parent / "web" / "src" / "bin-view-model.ts"
+        content = vm_path.read_text(encoding="utf-8")
 
-        # 1. Verify placeholder '—' is displayed when !hasReading
-        self.assertIn("{hasReading ? `${fillPct}%` : '—'}", content)
+        # 1. Verify placeholder '—' is displayed when !isValidReading
+        self.assertIn("displayPercentage: isValidReading ? `${fillPct}%` : '—'", content)
 
-        # 2. Verify hasReading requires !isStale
+        # 2. Verify isValidReading requires !isStale
         self.assertIn("!isStale", content)
 
-        # 3. Verify progress bar has is-unavailable class when !hasReading
-        self.assertIn("compartment-progress-bar ${!hasReading ? 'is-unavailable' : ''}", content)
+        # 3. Verify tone is unavailable when !isValidReading
+        self.assertIn("const tone = !isValidReading", content)
 
-        # 4. Verify progress fill uses is-unavailable class when not reading
-        self.assertIn("compartment-progress-fill is-unavailable", content)
-
-        # 5. Verify 3-compartment mapping order and new simplified labels
-        self.assertIn("renderCompartmentCard('RECYCLABLE', 'Rác tái chế'", content)
-        self.assertIn("renderCompartmentCard('NON_RECYCLABLE', 'Rác không tái chế'", content)
-        self.assertIn("renderCompartmentCard('ORGANIC', 'Rác hữu cơ'", content)
+        # 4. Verify 3-compartment mapping order and simplified labels
+        self.assertIn("recyclable: 'RECYCLABLE'", content)
+        self.assertIn("nonRecyclable: 'NON_RECYCLABLE'", content)
+        self.assertIn("organic: 'ORGANIC'", content)
 
 
 if __name__ == "__main__":

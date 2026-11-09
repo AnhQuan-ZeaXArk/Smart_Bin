@@ -231,9 +231,15 @@ export class RealtimeGateway {
               realDeviceService.recordHeartbeat(normalizedData, this.io);
             }
 
-            // 2. Broadcast nhịp tim vào phòng riêng của trạm, phòng admin, và toàn cục (cho Station B)
-            this.io.to(`station:${stationCode}:telemetry`).emit('device:heartbeat', normalizedData);
-            this.io.to('admin:all_stations').emit('device:heartbeat', normalizedData);
+            // 2. Broadcast nhịp tim vào phòng riêng của trạm, phòng tổng quan dashboard, và phòng admin
+            // Sử dụng chained .to() để Socket.IO tự động khử trùng lặp (deduplicate):
+            // Một client thuộc nhiều phòng chỉ nhận được đúng 1 sự kiện duy nhất.
+            this.io
+              .to(`station:${stationCode}:telemetry`)
+              .to('dashboard:all_stations')
+              .to('admin:all_stations')
+              .emit('device:heartbeat', normalizedData);
+
             if (stationCode === 'STATION_B') {
               this.io.emit('device:heartbeat', normalizedData);
             }
@@ -357,6 +363,9 @@ export class RealtimeGateway {
           void socket.join(`user:${userId}`);
         }
 
+        // Tự động gia nhập phòng tổng quan xem tất cả các trạm
+        void socket.join('dashboard:all_stations');
+
         // Người dùng quản trị gia nhập phòng tổng quan
         if (role === 'ADMIN' || role === 'SUPERVISOR') {
           void socket.join('admin:all_stations');
@@ -371,7 +380,16 @@ export class RealtimeGateway {
 
         // Xử lý đăng ký / hủy đăng ký theo dõi trạm
         const handleSubscribeStation = async (data: { stationCode?: string }, cb?: (res: any) => void) => {
-          const rawCode = String(data?.stationCode || 'STATION_A').trim().toUpperCase();
+          const rawCode = String(data?.stationCode || '').trim().toUpperCase();
+
+          // Khi chọn xem "Tất cả các trạm" hoặc không truyền stationCode (hoặc truyền 'ALL')
+          if (!rawCode || rawCode === 'ALL') {
+            void socket.join('dashboard:all_stations');
+            socket.emit('subscribed:station', { stationCode: 'ALL' });
+            socket.emit('subscribed_station', { stationCode: 'ALL' });
+            if (typeof cb === 'function') cb({ success: true, stationCode: 'ALL' });
+            return;
+          }
 
           // 1. Kiểm tra tính hợp lệ và quyền truy cập trạm
           if (rawCode !== 'STATION_A' && rawCode !== 'STATION_B') {

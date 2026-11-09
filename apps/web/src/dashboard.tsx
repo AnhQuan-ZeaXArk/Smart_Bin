@@ -295,7 +295,50 @@ export function DashboardPage() {
             ...result,
             bins: resolvedBins
           };
-          setData(initialized);
+
+          setData((currentData) => {
+            if (!currentData || !currentData.bins || currentData.bins.length === 0) {
+              return initialized;
+            }
+
+            // Hợp nhất từng bin: nếu bin hiện tại trong client có lastSeen MỚI HƠN bin từ API,
+            // và bin hiện tại có currentFillLevel hợp lệ, GIỮ NGUYÊN dữ liệu realtime mới hơn!
+            const mergedBins = resolvedBins.map((apiBin) => {
+              const existingBin = currentData.bins.find(
+                (b) => b.id === apiBin.id || (b.binCode === apiBin.binCode && (b.stationCode === apiBin.stationCode || b.stationId === apiBin.stationId))
+              );
+              if (!existingBin) return apiBin;
+
+              const existingTs = existingBin.lastSeen ? new Date(existingBin.lastSeen).getTime() : 0;
+              const apiTs = apiBin.lastSeen ? new Date(apiBin.lastSeen).getTime() : 0;
+
+              // Nếu dữ liệu hiện tại trên client mới hơn dữ liệu API trả về:
+              if (existingTs > apiTs && typeof existingBin.currentFillLevel === 'number') {
+                return {
+                  ...apiBin,
+                  currentFillLevel: existingBin.currentFillLevel,
+                  status: existingBin.status,
+                  distanceCm: existingBin.distanceCm ?? apiBin.distanceCm,
+                  lastSeen: existingBin.lastSeen,
+                  fillCategory: existingBin.fillCategory,
+                  lastKnownFillLevel: (existingBin as any).lastKnownFillLevel ?? existingBin.currentFillLevel
+                };
+              }
+              // Bảo toàn lastKnownFillLevel nếu API trả về null
+              if (apiBin.currentFillLevel === null && typeof (existingBin as any).lastKnownFillLevel === 'number') {
+                return {
+                  ...apiBin,
+                  lastKnownFillLevel: (existingBin as any).lastKnownFillLevel
+                };
+              }
+              return apiBin;
+            });
+
+            return {
+              ...result,
+              bins: mergedBins
+            };
+          });
         }
       })
       .catch((loadError) => {
@@ -317,6 +360,8 @@ export function DashboardPage() {
 
     if (selectedStationCode) {
       realtime.emit('subscribe:station', { stationCode: selectedStationCode });
+    } else {
+      realtime.emit('subscribe:station', { stationCode: 'ALL' });
     }
 
     const onTelemetry = (event: RealtimeTelemetry) => {
@@ -641,9 +686,16 @@ export function WasteCard({
         </span>
       </div>
 
-      <strong className={`waste-percentage ${!vm.isValidReading ? 'text-unavailable' : ''}`}>
-        {vm.displayPercentage}
-      </strong>
+      <div className="waste-percentage-row" style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+        <strong className={`waste-percentage ${!vm.isValidReading ? 'text-unavailable' : ''}`}>
+          {vm.displayPercentage}
+        </strong>
+        {vm.lastKnownText && (
+          <span className="last-known-hint" style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: 500 }}>
+            ({vm.lastKnownText})
+          </span>
+        )}
+      </div>
 
       <div
         className={`waste-progress-track ${!vm.isValidReading ? 'is-unavailable' : ''}`}

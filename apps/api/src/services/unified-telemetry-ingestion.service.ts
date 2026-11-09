@@ -87,7 +87,8 @@ export class UnifiedTelemetryIngestionService {
       return { accepted: false, status: 'UNKNOWN_STATION', stationCode, binCode };
     }
 
-    const bin = await prisma.bin.findFirst({
+    // 2.1. Tìm thùng rác theo đúng stationId và binCode chuẩn
+    let bin = await prisma.bin.findFirst({
       where: {
         stationId: station.id,
         binCode,
@@ -95,7 +96,19 @@ export class UnifiedTelemetryIngestionService {
       }
     });
 
+    // 2.2. Fallback cho Station A nếu database Production chưa chạy script gán stationId (stationId IS NULL)
+    if (!bin && stationCode === 'STATION_A') {
+      bin = await prisma.bin.findFirst({
+        where: {
+          stationId: null,
+          binCode,
+          isActive: true
+        }
+      });
+    }
+
     if (!bin) {
+      console.warn(`[UnifiedTelemetryIngestion] UNKNOWN_BIN: Station '${stationCode}' has no active bin '${binCode}'`);
       return { accepted: false, status: 'UNKNOWN_BIN', stationCode, binCode };
     }
 

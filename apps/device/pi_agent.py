@@ -17,6 +17,7 @@ import signal
 import logging
 import threading
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -260,6 +261,44 @@ def on_device_command(payload):
         logger.warning("<<< Lệnh '%s' bị từ chối do chính sách an toàn phần cứng.", action)
 
 
+def normalize_fill_level(value: Any) -> Optional[int]:
+    """
+    Safely normalize fill level to an integer between 0 and 100.
+    - Accepts int, finite float, numeric strings (e.g. '45', '45.7', '45%').
+    - Rejects booleans (True/False).
+    - Rejects None, NaN, Infinity, empty strings, non-numeric strings.
+    - Rejects values < 0 or > 100.
+    - Normalizes accepted values to int using round().
+    - Returns None if invalid (never converts invalid or missing data to 0).
+    """
+    if value is None or isinstance(value, bool):
+        return None
+
+    num: float
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            return None
+        num = float(value)
+    elif isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if cleaned.endswith('%'):
+            cleaned = cleaned[:-1].strip()
+        try:
+            num = float(cleaned)
+            if not math.isfinite(num):
+                return None
+        except (ValueError, TypeError):
+            return None
+    else:
+        return None
+
+    if 0.0 <= num <= 100.0:
+        return int(round(num))
+    return None
+
+
 def build_telemetry_payload() -> dict:
     """Tập hợp gói tin Telemetry đầy đủ từ tất cả các subsystem."""
     uptime = get_uptime_seconds()
@@ -287,6 +326,7 @@ def build_telemetry_payload() -> dict:
         'firmwareVersion': FIRMWARE_VERSION,
         'ipAddress': local_ip,
         'sentAt': sent_at,
+        'clientMessageId': f"STATION_A-{uptime}-{int(time.time() * 1000)}",
         'subsystems': subsystems_payload,
         'metadata': {
             'platform': 'Raspberry Pi 5 (Debian 13 ARM64)'
@@ -308,11 +348,12 @@ def build_telemetry_payload() -> dict:
         for hc_key, compartment_key in mapping.items():
             reading = sensors_info.get(hc_key)
             if reading and isinstance(reading, dict):
-                fill_pct = reading.get('fillPercent')
+                raw_fill = reading.get('fillPercent')
+                fill_pct = normalize_fill_level(raw_fill)
                 epoch = reading.get('updatedAtEpoch')
-                if isinstance(fill_pct, int) and not isinstance(fill_pct, bool) and 0 <= fill_pct <= 100:
+                if fill_pct is not None:
                     iso_ts = None
-                    if isinstance(epoch, (int, float)) and not isinstance(epoch, bool):
+                    if isinstance(epoch, (int, float)) and not isinstance(epoch, bool) and math.isfinite(epoch):
                         iso_ts = datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
                     sensors_payload[compartment_key] = {
                         'fillLevel': fill_pct,
@@ -459,13 +500,16 @@ def send_telemetry():
             if not payload_b.get('sentAt'):
                 payload_b['sentAt'] = datetime.now(timezone.utc).isoformat()
 
-            # Chuẩn hóa cảm biến Trạm B: map fillPercent sang fillLevel
+            # Chuẩn hóa cảm biến Trạm B: map fillPercent/fillLevel an toàn bằng normalize_fill_level
             sensors_b = payload_b.get('sensors')
             if isinstance(sensors_b, dict):
                 for comp_key, comp_data in sensors_b.items():
                     if isinstance(comp_data, dict):
-                        if 'fillLevel' not in comp_data and 'fillPercent' in comp_data:
-                            comp_data['fillLevel'] = comp_data['fillPercent']
+                        raw_val = comp_data.get('fillLevel') if 'fillLevel' in comp_data else comp_data.get('fillPercent')
+                        norm_val = normalize_fill_level(raw_val)
+                        if norm_val is not None:
+                            comp_data['fillLevel'] = norm_val
+                            comp_data['fillPercent'] = norm_val
 
             msg_id = f"STATION_B-{payload_b.get('bootCount', 0)}-{payload_b.get('sampleSeq', 0)}-{payload_b.get('bootId', 'default')}"
             payload_b['clientMessageId'] = msg_id
@@ -477,16 +521,31 @@ def send_telemetry():
         # Gửi dữ liệu tồn đọng trong Offline Buffer trước
         drain_offline_buffer()
 
-        # Gửi Station A
+        # Gửi Station A kèm ACK callback để xác thực trạng thái ghi nhận từ Backend
+        a_ack_received = threading.Event()
+        a_ack_result = {'success': False, 'data': None}
+
+        def on_a_ack(response=None):
+            a_ack_result['data'] = response
+            if isinstance(response, dict) and response.get('success'):
+                a_ack_result['success'] = True
+            elif response is True:
+                a_ack_result['success'] = True
+            a_ack_received.set()
+
         try:
-            sio.emit('device:telemetry', payload_a)
-            logger.info(
-                "[Station A] Socket.IO telemetry -> uptime: %ss | temp: %s°C | Subsystems: [YOLO: %s, Cam: %s]",
-                payload_a['uptimeSeconds'],
-                payload_a['cpuTempC'],
-                payload_a['subsystems']['yolo'],
-                payload_a['subsystems']['camera']
-            )
+            sio.emit('device:telemetry', payload_a, callback=on_a_ack)
+            if a_ack_received.wait(timeout=3.0):
+                resp_data = a_ack_result.get('data') or {}
+                ack_status = resp_data.get('status') if isinstance(resp_data, dict) else ('COMMITTED' if a_ack_result['success'] else 'UNKNOWN')
+                logger.info(
+                    "[Station A] Socket.IO live telemetry ACK -> Status: %s | Success: %s | Sensors: %s",
+                    ack_status,
+                    a_ack_result['success'],
+                    list(payload_a.get('sensors', {}).keys()) if payload_a.get('sensors') else 'None'
+                )
+            else:
+                logger.warning("[Station A] Socket.IO live telemetry ACK timed out sau 3.0s")
             station_a_sent = True
         except Exception as e:
             logger.error("Station A Socket.IO telemetry emit failed (%s).", type(e).__name__)
