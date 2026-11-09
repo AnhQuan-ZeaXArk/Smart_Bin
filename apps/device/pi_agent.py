@@ -354,7 +354,8 @@ def build_telemetry_payload() -> dict:
                 if fill_pct is not None:
                     iso_ts = None
                     if isinstance(epoch, (int, float)) and not isinstance(epoch, bool) and math.isfinite(epoch):
-                        iso_ts = datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+                        sec_epoch = float(epoch) / 1000.0 if float(epoch) > 1e11 else float(epoch)
+                        iso_ts = datetime.fromtimestamp(sec_epoch, tz=timezone.utc).isoformat()
                     sensors_payload[compartment_key] = {
                         'fillLevel': fill_pct,
                         'distanceCm': None,

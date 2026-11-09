@@ -265,17 +265,17 @@ def read_yolo_state() -> Dict[str, Any]:
                 fill = entry.get('fillPercent')
                 norm_fill = normalize_fill_level(fill)
                 epoch = entry.get('updatedAtEpoch')
+                raw_epoch = float(epoch) if isinstance(epoch, (int, float)) and not isinstance(epoch, bool) and math.isfinite(epoch) else None
+                sec_epoch = (raw_epoch / 1000.0 if raw_epoch > 1e11 else raw_epoch) if raw_epoch is not None else None
                 if (
                     norm_fill is not None
-                    and isinstance(epoch, (int, float))
-                    and not isinstance(epoch, bool)
-                    and math.isfinite(epoch)
-                    and epoch <= now
-                    and 0 <= (now - epoch) <= HC_VALID_TIMEOUT_SEC
+                    and sec_epoch is not None
+                    and sec_epoch <= now
+                    and 0 <= (now - sec_epoch) <= HC_VALID_TIMEOUT_SEC
                 ):
                     validated_sensors[key] = {
                         'fillPercent': norm_fill,
-                        'updatedAtEpoch': float(epoch)
+                        'updatedAtEpoch': sec_epoch
                     }
                 else:
                     validated_sensors[key] = None

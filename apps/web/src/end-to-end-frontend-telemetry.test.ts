@@ -208,6 +208,7 @@ function runFrontendEndToEndTests() {
     stationCode: 'STATION_A',
     deviceId: 'raspberry-pi-5',
     status: 'ONLINE',
+    sentAt: new Date(piClockSkewTime).toISOString(), // Giờ Pi gửi bản tin (trễ 25s)
     lastHeartbeat: new Date(now).toISOString(), // Server nhận gói tin ngay lúc này (fresh)
     receivedAt: new Date(now).toISOString(),
     sensors: {
@@ -230,6 +231,7 @@ function runFrontendEndToEndTests() {
     stationCode: 'STATION_A',
     deviceId: 'raspberry-pi-5',
     status: 'ONLINE',
+    sentAt: new Date(now - 60000).toISOString(),
     lastHeartbeat: new Date(now - 60000).toISOString(), // 60s trước
     sensors: {
       recyclable: { fillLevel: 99, distanceCm: 2.0, status: 'OK', updatedAt: new Date(now - 60000).toISOString() }
@@ -240,8 +242,39 @@ function runFrontendEndToEndTests() {
   assert.strictEqual(binDroppedCheck.currentFillLevel, 45, 'Must keep 45% and drop 99% from older heartbeat');
   console.log('  -> PASS: Gói tin cũ hơn không ghi đè dữ liệu mới\n');
 
+  // Test 13: Cảm biến riêng lẻ bị STALE (>15s) trong khi nhịp tim Pi vẫn trực tuyến
+  console.log('Test 13: Single sensor STALE while Pi heartbeat is fresh (Sensor measurement time != Heartbeat time)');
+  const hbPartialStale = {
+    stationCode: 'STATION_A',
+    deviceId: 'raspberry-pi-5',
+    status: 'ONLINE',
+    sentAt: new Date(now).toISOString(),
+    lastHeartbeat: new Date(now).toISOString(),
+    receivedAt: new Date(now).toISOString(),
+    sensors: {
+      recyclable: { fillLevel: 0, distanceCm: 50.0, status: 'OK', updatedAt: new Date(now).toISOString() }, // Fresh
+      nonRecyclable: { fillLevel: 60, distanceCm: 20.0, status: 'OK', updatedAt: new Date(now).toISOString() }, // Fresh
+      organic: { fillLevel: 3, distanceCm: 48.0, status: 'OK', updatedAt: new Date(now - 20000).toISOString() } // 20s old measurement!
+    }
+  };
+  const afterPartialStale = mergeDeviceHeartbeatToBins(initialBins, hbPartialStale);
+  const binRecCheck = afterPartialStale.find((b) => b.binCode === 'RECYCLABLE' && (b.stationCode === 'STATION_A' || !b.stationCode))!;
+  const binOrgCheck = afterPartialStale.find((b) => b.binCode === 'ORGANIC' && (b.stationCode === 'STATION_A' || !b.stationCode))!;
+
+  const vmRecFresh = computeBinViewModel(binRecCheck, now);
+  const vmOrgStale = computeBinViewModel(binOrgCheck, now);
+
+  assert.strictEqual(vmRecFresh.isValidReading, true, 'Recyclable must remain valid ONLINE');
+  assert.strictEqual(vmRecFresh.displayPercentage, '0%');
+
+  assert.strictEqual(vmOrgStale.isStale, true, 'Organic must be detected as STALE based on sensor measurement delay (>15s)');
+  assert.strictEqual(vmOrgStale.isValidReading, false);
+  assert.strictEqual(vmOrgStale.displayPercentage, '—');
+  assert.strictEqual(vmOrgStale.lastKnownFillPct, 3, 'Preserves last known 3%');
+  console.log('  -> PASS: Cảm biến riêng lẻ quá hạn (>15s) chuyển thành STALE chính xác, không bị nhầm bởi thời gian nhịp tim\n');
+
   console.log('================================================================');
-  console.log('  ALL 12 END-TO-END FRONTEND TELEMETRY TESTS PASSED CLEANLY (12/12)!');
+  console.log('  ALL 13 END-TO-END FRONTEND TELEMETRY TESTS PASSED CLEANLY (13/13)!');
   console.log('================================================================\n');
 }
 

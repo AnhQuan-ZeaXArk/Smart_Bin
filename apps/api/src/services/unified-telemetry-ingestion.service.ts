@@ -165,7 +165,7 @@ export class UnifiedTelemetryIngestionService {
         data: {
           currentFillLevel: fill,
           status: 'ONLINE',
-          lastSeen: now
+          lastSeen: packetTimestamp
         }
       });
 
@@ -368,7 +368,7 @@ export class UnifiedTelemetryIngestionService {
         data: {
           currentFillLevel: fill,
           status: 'ONLINE',
-          lastSeen: now
+          lastSeen: packetTimestamp
         }
       });
 

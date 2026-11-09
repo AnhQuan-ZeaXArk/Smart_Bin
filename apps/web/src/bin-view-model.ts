@@ -269,7 +269,16 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
     }
 
     if (comp && typeof comp.fillLevel === 'number' && comp.status !== 'STALE' && !isOffline) {
-      const authoritativeLastSeen = hb.lastHeartbeat || (typeof hb.receivedAt === 'string' ? hb.receivedAt : null) || comp.updatedAt || (incomingTs > 0 ? new Date(incomingTs).toISOString() : new Date().toISOString());
+      // Chuẩn hóa thời gian đo lường của cảm biến để bảo đảm tính chính xác của cờ STALE mà không bị ảnh hưởng bởi clock skew
+      const packetSentMs = parseTimestamp(hb.sentAt || hb.lastHeartbeat || hb.receivedAt);
+      const sensorMeasurementMs = parseTimestamp(comp.updatedAt);
+      const delayOnPiMs = (packetSentMs > 0 && sensorMeasurementMs > 0)
+        ? Math.max(0, packetSentMs - sensorMeasurementMs)
+        : 0;
+      const serverReceiveMs = parseTimestamp(hb.lastHeartbeat || hb.receivedAt || hb.sentAt) || Date.now();
+      const effectiveSensorMs = Math.max(0, serverReceiveMs - delayOnPiMs);
+      const authoritativeLastSeen = effectiveSensorMs > 0 ? new Date(effectiveSensorMs).toISOString() : new Date().toISOString();
+
       return {
         ...bin,
         currentFillLevel: comp.fillLevel,

@@ -271,7 +271,7 @@ export class RealtimeGateway {
                       bootId: parsed.data.bootId,
                       sampleSeq: parsed.data.sampleSeq,
                       payloadHash: parsed.data.payloadHash,
-                      timestamp: parsed.data.sentAt ? new Date(parsed.data.sentAt) : new Date()
+                      timestamp: comp.data.updatedAt ? new Date(comp.data.updatedAt) : (parsed.data.sentAt ? new Date(parsed.data.sentAt) : new Date())
                     });
 
                     if (!result.accepted) {

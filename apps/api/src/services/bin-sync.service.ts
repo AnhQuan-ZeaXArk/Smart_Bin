@@ -95,7 +95,14 @@ export function syncBinWithRealDevice<T extends {
     isPiOnline;
 
   if (hasValidReading) {
-    const effectiveLastSeen = realStatus.lastHeartbeat || (typeof realStatus.sentAt === 'string' ? realStatus.sentAt : null) || comp.updatedAt || new Date().toISOString();
+    const packetSentMs = realStatus.sentAt ? new Date(realStatus.sentAt).getTime() : 0;
+    const sensorMeasurementMs = comp.updatedAt ? new Date(comp.updatedAt).getTime() : 0;
+    const delayOnPiMs = (packetSentMs > 0 && sensorMeasurementMs > 0)
+      ? Math.max(0, packetSentMs - sensorMeasurementMs)
+      : 0;
+    const serverReceiveMs = realStatus.lastHeartbeat ? new Date(realStatus.lastHeartbeat).getTime() : Date.now();
+    const effectiveSensorMs = Math.max(0, serverReceiveMs - delayOnPiMs);
+    const effectiveLastSeen = effectiveSensorMs > 0 ? new Date(effectiveSensorMs).toISOString() : new Date().toISOString();
     return {
       ...bin,
       currentFillLevel: comp.fillLevel,
