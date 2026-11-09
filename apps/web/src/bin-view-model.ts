@@ -205,7 +205,11 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
   // (ví dụ: device:status cập nhật nhiệt độ/uptime), bảo toàn nguyên vẹn dữ liệu ngăn rác hiện tại,
   // tuyệt đối không xóa mức đầy thành null.
   if (!sensors && !isOffline) {
-    return workingBins;
+    return workingBins.map((b) => ({
+      ...b,
+      distanceCm: typeof b.distanceCm === 'number' ? b.distanceCm : null,
+      isReal: true
+    }));
   }
 
   // Timestamp toàn cục của gói heartbeat (ưu tiên thời gian nhận từ server)

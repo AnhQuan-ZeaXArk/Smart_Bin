@@ -6,7 +6,6 @@ import { translateBinStatus, translateFillCategory } from './i18n-labels';
 import { IconActivity, IconRefresh, IconTrash } from './icons';
 import { ErrorBoundary } from './error-boundary';
 import { apiUrl } from './api-config';
-import { isRaspberryPiDevice } from './device-utils';
 import { computeBinViewModel, mergeDeviceHeartbeatToBins } from './bin-view-model';
 
 const SensorHistoryChart = lazy(() => import('./sensor-history-chart'));

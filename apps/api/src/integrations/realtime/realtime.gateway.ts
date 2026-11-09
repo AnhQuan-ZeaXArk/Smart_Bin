@@ -277,7 +277,7 @@ export class RealtimeGateway {
                     if (!result.accepted) {
                       ingestionSuccess = false;
                       ingestionStatus = result.status;
-                    } else if (result.status === 'ACCEPTED_IN_ORDER' || result.status === 'COMMITTED') {
+                    } else if (result.status === 'ACCEPTED_IN_ORDER' || result.status === 'ACCEPTED_LATE') {
                       ingestionStatus = 'COMMITTED';
                     } else if (ingestionStatus !== 'COMMITTED' && result.status === 'FAST_ACK_DUPLICATE') {
                       ingestionStatus = 'FAST_ACK_DUPLICATE';
