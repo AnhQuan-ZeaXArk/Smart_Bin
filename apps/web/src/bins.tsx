@@ -199,19 +199,10 @@ export function BinListPage() {
       setBins((current) => mergeDeviceHeartbeatToBins(current, payload));
     };
 
-    const onStatus = (payload: any) => {
-      if (!payload) return;
-      if (isRaspberryPiDevice(payload.deviceId, payload.deviceType)) {
-        setBins((current) => mergeDeviceHeartbeatToBins(current, payload));
-      }
-    };
-
     realtime.on('device:heartbeat', onHeartbeat);
-    realtime.on('device:status', onStatus);
 
     return () => {
       realtime.off('device:heartbeat', onHeartbeat);
-      realtime.off('device:status', onStatus);
     };
   }, [realtime]);
 
@@ -332,19 +323,10 @@ export function BinDetailPage() {
       setBin((current) => (current ? mergeDeviceHeartbeatToBins([current], payload)[0] : null));
     };
 
-    const onStatus = (payload: any) => {
-      if (!payload) return;
-      if (isRaspberryPiDevice(payload.deviceId, payload.deviceType)) {
-        setBin((current) => (current ? mergeDeviceHeartbeatToBins([current], payload)[0] : null));
-      }
-    };
-
     realtime.on('device:heartbeat', onHeartbeat);
-    realtime.on('device:status', onStatus);
 
     return () => {
       realtime.off('device:heartbeat', onHeartbeat);
-      realtime.off('device:status', onStatus);
     };
   }, [realtime]);
 

@@ -154,8 +154,94 @@ function runFrontendEndToEndTests() {
   assert.strictEqual(groupB.installedCount, 1);
   console.log('  -> PASS: Phân nhóm trạm hiển thị đồng thời Trạm A (3 thùng) và Trạm B (1 thùng lắp đặt)\n');
 
+  // Test 9: Station A với mức đầy thực tế 0% (HC1: 0%, HC2: 0%, HC3: 0%)
+  console.log('Test 9: Station A Zero Percent Fill Levels (HC1: 0%, HC2: 0%, HC3: 0%)');
+  const hbZeroA = {
+    stationCode: 'STATION_A',
+    deviceId: 'raspberry-pi-5',
+    status: 'ONLINE',
+    uptimeSeconds: 600,
+    lastHeartbeat: new Date(now).toISOString(),
+    sensors: {
+      recyclable: { fillLevel: 0, distanceCm: 50.0, status: 'OK', updatedAt: new Date(now).toISOString() },
+      nonRecyclable: { fillLevel: 0, distanceCm: 50.0, status: 'OK', updatedAt: new Date(now).toISOString() },
+      organic: { fillLevel: 0, distanceCm: 50.0, status: 'OK', updatedAt: new Date(now).toISOString() }
+    }
+  };
+  const afterZeroA = mergeDeviceHeartbeatToBins(initialBins, hbZeroA);
+  for (const code of ['RECYCLABLE', 'NON_RECYCLABLE', 'ORGANIC'] as const) {
+    const bin = afterZeroA.find((b) => b.binCode === code && (b.stationCode === 'STATION_A' || !b.stationCode))!;
+    const vm = computeBinViewModel(bin, now);
+    assert.strictEqual(vm.isValidReading, true, `${code} reading must be valid`);
+    assert.strictEqual(vm.isStale, false, `${code} must not be stale`);
+    assert.strictEqual(vm.displayPercentage, '0%', `${code} must display "0%", not "—"`);
+    assert.strictEqual(vm.statusBadgeText, 'Trực tuyến', `${code} must be "Trực tuyến"`);
+  }
+  console.log('  -> PASS: Cả 3 ngăn rác Trạm A hiển thị chuẩn xác "0%", không bị nhầm thành null hay STALE\n');
+
+  // Test 10: device:status (không có trường sensors) không được xóa dữ liệu ngăn rác
+  console.log('Test 10: Sensorless device:status ping preserves active bin readings');
+  const sensorlessDeviceStatus = {
+    deviceId: 'raspberry-pi-5',
+    deviceType: 'RASPBERRY_PI',
+    stationCode: 'STATION_A',
+    status: 'ONLINE',
+    uptimeSeconds: 610,
+    cpuTempC: 48.2,
+    lastHeartbeat: new Date(now + 2000).toISOString()
+    // Lưu ý: Không có trường sensors!
+  };
+  const afterSensorlessStatus = mergeDeviceHeartbeatToBins(afterZeroA, sensorlessDeviceStatus);
+  for (const code of ['RECYCLABLE', 'NON_RECYCLABLE', 'ORGANIC'] as const) {
+    const bin = afterSensorlessStatus.find((b) => b.binCode === code && (b.stationCode === 'STATION_A' || !b.stationCode))!;
+    assert.strictEqual(bin.currentFillLevel, 0, `${code} currentFillLevel must NOT be wiped to null by sensorless status`);
+    const vm = computeBinViewModel(bin, now + 2000);
+    assert.strictEqual(vm.displayPercentage, '0%', `${code} must remain "0%"`);
+    assert.strictEqual(vm.statusBadgeText, 'Trực tuyến');
+  }
+  console.log('  -> PASS: Sự kiện device:status không làm mất dữ liệu cảm biến của các thùng rác\n');
+
+  // Test 11: Khả năng chống lệch đồng hồ (Clock Skew Tolerance)
+  console.log('Test 11: Clock Skew Tolerance (Pi hardware time behind browser/server clock)');
+  const piClockSkewTime = now - 25000; // Đồng hồ Pi bị trễ 25 giây
+  const hbClockSkew = {
+    stationCode: 'STATION_A',
+    deviceId: 'raspberry-pi-5',
+    status: 'ONLINE',
+    lastHeartbeat: new Date(now).toISOString(), // Server nhận gói tin ngay lúc này (fresh)
+    receivedAt: new Date(now).toISOString(),
+    sensors: {
+      recyclable: { fillLevel: 45, distanceCm: 25.0, status: 'OK', updatedAt: new Date(piClockSkewTime).toISOString() },
+      nonRecyclable: { fillLevel: 60, distanceCm: 18.0, status: 'OK', updatedAt: new Date(piClockSkewTime).toISOString() },
+      organic: { fillLevel: 15, distanceCm: 40.0, status: 'OK', updatedAt: new Date(piClockSkewTime).toISOString() }
+    }
+  };
+  const afterClockSkew = mergeDeviceHeartbeatToBins(initialBins, hbClockSkew);
+  const binSkewRec = afterClockSkew.find((b) => b.binCode === 'RECYCLABLE' && (b.stationCode === 'STATION_A' || !b.stationCode))!;
+  const vmSkewRec = computeBinViewModel(binSkewRec, now);
+  assert.strictEqual(vmSkewRec.isStale, false, 'Must NOT be marked STALE due to Pi clock drift when lastHeartbeat is fresh');
+  assert.strictEqual(vmSkewRec.isValidReading, true);
+  assert.strictEqual(vmSkewRec.displayPercentage, '45%');
+  console.log('  -> PASS: Đồng hồ Pi bị trễ không gây ra hiện tượng STALE giả khi luồng nhịp tim vẫn trực tuyến\n');
+
+  // Test 12: Gói tin cũ (Old timestamp) bị loại bỏ đúng quy cách
+  console.log('Test 12: Stale out-of-order heartbeat is dropped cleanly');
+  const olderHeartbeat = {
+    stationCode: 'STATION_A',
+    deviceId: 'raspberry-pi-5',
+    status: 'ONLINE',
+    lastHeartbeat: new Date(now - 60000).toISOString(), // 60s trước
+    sensors: {
+      recyclable: { fillLevel: 99, distanceCm: 2.0, status: 'OK', updatedAt: new Date(now - 60000).toISOString() }
+    }
+  };
+  const afterOlder = mergeDeviceHeartbeatToBins(afterClockSkew, olderHeartbeat);
+  const binDroppedCheck = afterOlder.find((b) => b.binCode === 'RECYCLABLE' && (b.stationCode === 'STATION_A' || !b.stationCode))!;
+  assert.strictEqual(binDroppedCheck.currentFillLevel, 45, 'Must keep 45% and drop 99% from older heartbeat');
+  console.log('  -> PASS: Gói tin cũ hơn không ghi đè dữ liệu mới\n');
+
   console.log('================================================================');
-  console.log('  ALL 8 END-TO-END FRONTEND TELEMETRY TESTS PASSED CLEANLY (8/8)!');
+  console.log('  ALL 12 END-TO-END FRONTEND TELEMETRY TESTS PASSED CLEANLY (12/12)!');
   console.log('================================================================\n');
 }
 

@@ -374,20 +374,17 @@ export function DashboardPage() {
 
     const onStatus = (payload: any) => {
       if (!payload) return;
-      if (isRaspberryPiDevice(payload.deviceId, payload.deviceType)) {
-        setData((current) => (current ? mergeDeviceHeartbeat(current, payload) : current));
-      } else {
-        setData((current) => {
-          if (!current) return current;
-          if (current.devices && Array.isArray(current.devices)) {
-            const updatedDevices = (current.devices as any[]).map((d) =>
-              d.deviceId === payload.deviceId || (d.id && d.id === payload.id) ? { ...d, ...payload } : d
-            );
-            return { ...current, devices: updatedDevices };
-          }
-          return current;
-        });
-      }
+      // device:status chỉ cập nhật metadata trong data.devices, KHÔNG ghi đè dữ liệu cảm biến ngăn rác
+      setData((current) => {
+        if (!current) return current;
+        if (current.devices && Array.isArray(current.devices)) {
+          const updatedDevices = (current.devices as any[]).map((d) =>
+            d.deviceId === payload.deviceId || (d.id && d.id === payload.id) ? { ...d, ...payload } : d
+          );
+          return { ...current, devices: updatedDevices };
+        }
+        return current;
+      });
     };
 
     realtime.on('bin:telemetry', onTelemetry);

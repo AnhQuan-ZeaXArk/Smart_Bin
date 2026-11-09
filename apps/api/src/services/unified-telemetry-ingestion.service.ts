@@ -69,8 +69,11 @@ export class UnifiedTelemetryIngestionService {
     const binCode = packet.binCode.toUpperCase();
 
     // 1. Kiểm tra khử trùng lặp tầng truyền vận (Transport Idempotency)
+    // QUY TẮC: Khóa khử trùng lặp phải phân biệt theo từng ngăn rác (stationCode:binCode:clientMessageId)
+    // để tránh tình trạng gói tin đa ngăn của Trạm A chỉ nạp ngăn đầu tiên và bỏ qua 2 ngăn còn lại.
     if (packet.clientMessageId) {
-      if (this.transportCache.has(packet.clientMessageId)) {
+      const transportKey = `${stationCode}:${binCode}:${packet.clientMessageId}`;
+      if (this.transportCache.has(transportKey)) {
         return {
           accepted: true,
           status: 'FAST_ACK_DUPLICATE',
@@ -78,7 +81,7 @@ export class UnifiedTelemetryIngestionService {
           binCode
         };
       }
-      this.transportCache.set(packet.clientMessageId, Date.now() + 60000);
+      this.transportCache.set(transportKey, Date.now() + 60000);
     }
 
     // 2. Tìm trạm và thùng rác tương ứng

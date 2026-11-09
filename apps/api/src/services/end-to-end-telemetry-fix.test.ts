@@ -304,8 +304,55 @@ async function runEndToEndBackendTests() {
   assert.strictEqual(syncedStale.status, 'OFFLINE');
   console.log('  -> PASS: Đồng bộ RAM và DB hoạt động chính xác theo thứ tự ưu tiên và thời gian tươi\n');
 
+  // Test 7: Station A 3-compartment packet với cùng clientMessageId và mức đầy 0%
+  console.log('Test 7: Station A multi-compartment packet với shared clientMessageId và 0% fill level');
+  const sharedMsgId = 'STATION_A-0-1794212251508';
+  const resComp1 = await ingestion.ingest({
+    stationCode: 'STATION_A',
+    binCode: 'RECYCLABLE',
+    fillLevel: 0,
+    distanceCm: 60.0,
+    sensorStatus: 'OK',
+    isLegacy: true,
+    clientMessageId: `${sharedMsgId}:RECYCLABLE`
+  });
+  const resComp2 = await ingestion.ingest({
+    stationCode: 'STATION_A',
+    binCode: 'NON_RECYCLABLE',
+    fillLevel: 0,
+    distanceCm: 60.0,
+    sensorStatus: 'OK',
+    isLegacy: true,
+    clientMessageId: `${sharedMsgId}:NON_RECYCLABLE`
+  });
+  const resComp3 = await ingestion.ingest({
+    stationCode: 'STATION_A',
+    binCode: 'ORGANIC',
+    fillLevel: 0,
+    distanceCm: 60.0,
+    sensorStatus: 'OK',
+    isLegacy: true,
+    clientMessageId: `${sharedMsgId}:ORGANIC`
+  });
+
+  assert.strictEqual(resComp1.accepted, true, 'Comp 1 must be accepted');
+  assert.strictEqual(resComp1.status, 'ACCEPTED_IN_ORDER', 'Comp 1 status ACCEPTED_IN_ORDER');
+  assert.strictEqual(resComp2.accepted, true, 'Comp 2 must be accepted (no transport cache collision)');
+  assert.strictEqual(resComp2.status, 'ACCEPTED_IN_ORDER', 'Comp 2 status ACCEPTED_IN_ORDER');
+  assert.strictEqual(resComp3.accepted, true, 'Comp 3 must be accepted (no transport cache collision)');
+  assert.strictEqual(resComp3.status, 'ACCEPTED_IN_ORDER', 'Comp 3 status ACCEPTED_IN_ORDER');
+
+  // Kiểm tra mức đầy 0% được lưu trữ chính xác trong DB, không bị biến thành null
+  const dbBin1 = bins.find((b) => b.id === 'cmw4u47sq000dmv94ew62bnpt');
+  const dbBin2 = bins.find((b) => b.id === 'cmw4u47sq000fmv944t48eibd');
+  const dbBin3 = bins.find((b) => b.id === 'cmw4u47sq000emv941nja5ro9');
+  assert.strictEqual(dbBin1.currentFillLevel, 0, 'DB Recyclable must be 0%');
+  assert.strictEqual(dbBin2.currentFillLevel, 0, 'DB Non-Recyclable must be 0%');
+  assert.strictEqual(dbBin3.currentFillLevel, 0, 'DB Organic must be 0%');
+  console.log('  -> PASS: Cả 3 ngăn rác Trạm A đều nạp thành công 0% mà không bị lỗi FAST_ACK_DUPLICATE\n');
+
   console.log('================================================================');
-  console.log('  ALL 6 END-TO-END BACKEND TELEMETRY TESTS PASSED CLEANLY (6/6)!');
+  console.log('  ALL 7 END-TO-END BACKEND TELEMETRY TESTS PASSED CLEANLY (7/7)!');
   console.log('================================================================\n');
 }
 

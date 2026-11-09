@@ -266,7 +266,7 @@ export class RealtimeGateway {
                       fillLevel: comp.data.fillLevel ?? null,
                       distanceCm: comp.data.distanceCm ?? null,
                       sensorStatus: sensorStatus as any,
-                      clientMessageId: parsed.data.clientMessageId,
+                      clientMessageId: parsed.data.clientMessageId ? `${parsed.data.clientMessageId}:${comp.binCode}` : undefined,
                       bootCount: parsed.data.bootCount !== undefined ? BigInt(parsed.data.bootCount) : undefined,
                       bootId: parsed.data.bootId,
                       sampleSeq: parsed.data.sampleSeq,
@@ -277,7 +277,9 @@ export class RealtimeGateway {
                     if (!result.accepted) {
                       ingestionSuccess = false;
                       ingestionStatus = result.status;
-                    } else if (result.status === 'FAST_ACK_DUPLICATE') {
+                    } else if (result.status === 'ACCEPTED_IN_ORDER' || result.status === 'COMMITTED') {
+                      ingestionStatus = 'COMMITTED';
+                    } else if (ingestionStatus !== 'COMMITTED' && result.status === 'FAST_ACK_DUPLICATE') {
                       ingestionStatus = 'FAST_ACK_DUPLICATE';
                     }
                   } catch (ingestErr) {

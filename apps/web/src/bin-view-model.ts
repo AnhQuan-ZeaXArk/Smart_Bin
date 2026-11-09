@@ -201,8 +201,15 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
   const isOffline = hb.status === 'OFFLINE';
   const sensors = isOffline ? null : hb.sensors;
 
-  // Timestamp toàn cục của gói heartbeat
-  const hbTs = parseTimestamp(hb.lastHeartbeat || hb.receivedAt || hb.sentAt);
+  // Nếu sự kiện heartbeat không chứa thông tin cảm biến và không phải là sự kiện OFFLINE
+  // (ví dụ: device:status cập nhật nhiệt độ/uptime), bảo toàn nguyên vẹn dữ liệu ngăn rác hiện tại,
+  // tuyệt đối không xóa mức đầy thành null.
+  if (!sensors && !isOffline) {
+    return workingBins;
+  }
+
+  // Timestamp toàn cục của gói heartbeat (ưu tiên thời gian nhận từ server)
+  const hbTs = parseTimestamp(hb.lastHeartbeat || hb.receivedAt || hb.sentAt) || Date.now();
 
   const mapping: Record<string, 'ORGANIC' | 'RECYCLABLE' | 'NON_RECYCLABLE'> = {
     recyclable: 'RECYCLABLE',
@@ -244,12 +251,12 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
     }
     const comp = sensorKey && sensors ? sensors[sensorKey] : null;
 
-    // Mỗi cảm biến có thời gian cập nhật độc lập (comp.updatedAt hoặc fallback về hbTs)
-    const sensorUpdatedAtMs = parseTimestamp(comp?.updatedAt) || hbTs;
+    // Sử dụng hbTs làm mốc thời gian incoming để tránh xung đột clock skew giữa Pi và Server
+    const incomingTs = hbTs || parseTimestamp(comp?.updatedAt);
     const currentBinTs = parseTimestamp(bin.lastSeen);
 
     // Chống sự kiện cũ: Heartbeat cũ không được ghi đè dữ liệu mới
-    if (shouldDropIncoming(currentBinTs, sensorUpdatedAtMs)) {
+    if (shouldDropIncoming(currentBinTs, incomingTs)) {
       return {
         ...bin,
         distanceCm: typeof bin.distanceCm === 'number' ? bin.distanceCm : null,
@@ -258,6 +265,7 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
     }
 
     if (comp && typeof comp.fillLevel === 'number' && comp.status !== 'STALE' && !isOffline) {
+      const authoritativeLastSeen = hb.lastHeartbeat || (typeof hb.receivedAt === 'string' ? hb.receivedAt : null) || comp.updatedAt || (incomingTs > 0 ? new Date(incomingTs).toISOString() : new Date().toISOString());
       return {
         ...bin,
         currentFillLevel: comp.fillLevel,
@@ -265,7 +273,7 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
         distanceCm: typeof comp.distanceCm === 'number' ? comp.distanceCm : null,
         fillCategory: getFillCategoryForLevel(comp.fillLevel),
         status: 'ONLINE' as BinStatus,
-        lastSeen: comp.updatedAt || hb.lastHeartbeat || (sensorUpdatedAtMs > 0 ? new Date(sensorUpdatedAtMs).toISOString() : new Date().toISOString()),
+        lastSeen: authoritativeLastSeen,
         isReal: true
       };
     }
@@ -280,7 +288,7 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
       distanceCm: null,
       fillCategory: 'NORMAL' as FillCategory,
       status: 'OFFLINE' as BinStatus,
-      lastSeen: comp?.updatedAt || hb.lastHeartbeat || (sensorUpdatedAtMs > 0 ? new Date(sensorUpdatedAtMs).toISOString() : bin.lastSeen),
+      lastSeen: hb.lastHeartbeat || comp?.updatedAt || (incomingTs > 0 ? new Date(incomingTs).toISOString() : bin.lastSeen),
       isReal: true
     };
   });

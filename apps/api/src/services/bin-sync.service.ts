@@ -95,13 +95,14 @@ export function syncBinWithRealDevice<T extends {
     isPiOnline;
 
   if (hasValidReading) {
+    const effectiveLastSeen = realStatus.lastHeartbeat || (typeof realStatus.sentAt === 'string' ? realStatus.sentAt : null) || comp.updatedAt || new Date().toISOString();
     return {
       ...bin,
       currentFillLevel: comp.fillLevel,
       distanceCm: typeof comp.distanceCm === 'number' && !Number.isNaN(comp.distanceCm) ? comp.distanceCm : null,
       fillCategory: computeFillCategory(comp.fillLevel),
       status: 'ONLINE' as const,
-      lastSeen: comp.updatedAt || realStatus.lastHeartbeat || (typeof realStatus.sentAt === 'string' ? realStatus.sentAt : new Date().toISOString())
+      lastSeen: effectiveLastSeen
     };
   }
 
