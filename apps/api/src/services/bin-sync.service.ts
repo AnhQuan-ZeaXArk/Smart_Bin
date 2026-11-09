@@ -1,5 +1,6 @@
 import { realDeviceService, type RealDeviceStatus } from '../demo/real-device.service.js';
 import { settingsService } from './settings.service.js';
+import { DEVICE_HEALTH_CONFIG } from '../config/device-health.config.js';
 
 export type FillCategory = 'NORMAL' | 'MONITOR' | 'NEARLY_FULL' | 'CRITICAL';
 
@@ -61,15 +62,18 @@ export function syncBinWithRealDevice<T extends {
   // 2. Kiểm tra quyền sở hữu Trạm A: Chỉ đồng bộ cảm biến Serial A cho Trạm A
   const isStationB = bin.station?.code === 'STATION_B' || bin.stationId === 'station_b_canonical_id';
   if (isStationB) {
-    const rawFill = typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel)
+    const lastSeenMs = bin.lastSeen ? new Date(bin.lastSeen).getTime() : 0;
+    const isFresh = lastSeenMs > 0 && (Date.now() - lastSeenMs <= DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_MS);
+    const rawFill = isFresh && typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel)
       ? bin.currentFillLevel
       : null;
+    const computedStatus = (isFresh && bin.status === 'ONLINE') ? 'ONLINE' : 'OFFLINE';
     return {
       ...bin,
       currentFillLevel: rawFill,
-      distanceCm: bin.distanceCm ?? null,
+      distanceCm: isFresh ? (bin.distanceCm ?? null) : null,
       fillCategory: computeFillCategory(rawFill),
-      status: bin.status === 'ONLINE' ? 'ONLINE' : 'OFFLINE',
+      status: computedStatus,
       lastSeen: bin.lastSeen ? new Date(bin.lastSeen).toISOString() : null
     };
   }

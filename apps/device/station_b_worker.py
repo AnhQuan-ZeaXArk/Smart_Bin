@@ -81,6 +81,12 @@ class StationBSerialWorker:
                     if not real.endswith('ttyUSB0'):
                         return p
 
+        # 4b. Cổng ttyUSB1 trực tiếp (nếu khác ttyUSB0 của Trạm A)
+        if os.path.exists('/dev/ttyUSB1'):
+            real_b = os.path.realpath('/dev/ttyUSB1')
+            if not real_b.endswith('ttyUSB0'):
+                return '/dev/ttyUSB1'
+
         # 5. Hỗ trợ Windows khi phát triển / test
         if sys.platform.startswith('win'):
             try:
@@ -113,10 +119,15 @@ class StationBSerialWorker:
             self.status = 'DISCONNECTED'
         logger.info("Đã dừng Station B Serial Worker thread.")
 
-    def get_latest_data(self) -> Optional[Dict[str, Any]]:
-        """Lấy gói tin telemetry mới nhất của Trạm B (Thread-safe)."""
+    def get_latest_data(self, max_age_seconds: float = 10.0) -> Optional[Dict[str, Any]]:
+        """Lấy gói tin telemetry mới nhất của Trạm B (Thread-safe).
+        Chỉ trả về dữ liệu nếu worker đang CONNECTED và dữ liệu còn mới (<= max_age_seconds).
+        Không dùng dữ liệu cũ để giả lập dữ liệu mới khi mất kết nối hoặc quá hạn.
+        """
         with self._lock:
-            if not self.latest_telemetry:
+            if not self.latest_telemetry or self.status != 'CONNECTED':
+                return None
+            if self.last_packet_time and (time.time() - self.last_packet_time > max_age_seconds):
                 return None
             return dict(self.latest_telemetry)
 
@@ -208,12 +219,15 @@ class StationBSerialWorker:
             received_crc = data['crc16']
             data_copy = dict(data)
             del data_copy['crc16']
-            # Chuẩn hóa JSON string để tính CRC
+            # Chuẩn hóa JSON string để tính CRC (hỗ trợ cả chuẩn canonical sorted và thứ tự firmware)
             canonical_bytes = json.dumps(data_copy, separators=(',', ':'), sort_keys=True).encode('utf-8')
             expected_crc = calculate_crc16_ccitt(canonical_bytes)
             if received_crc != expected_crc:
-                logger.warning("CRC16 checksum mismatch on Serial B! Received: %s, Expected: %s", received_crc, expected_crc)
-                return
+                unsorted_bytes = json.dumps(data_copy, separators=(',', ':')).encode('utf-8')
+                expected_unsorted = calculate_crc16_ccitt(unsorted_bytes)
+                if received_crc != expected_unsorted:
+                    logger.warning("CRC16 checksum mismatch on Serial B! Received: %s, Expected: %s (or %s)", received_crc, expected_crc, expected_unsorted)
+                    return
 
         now_epoch = time.time()
         with self._lock:

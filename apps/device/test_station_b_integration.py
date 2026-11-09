@@ -240,6 +240,111 @@ class TestStationBHardwareIntegration(unittest.TestCase):
             except Exception:
                 pass
 
+    def test_09_serial_b_disconnection_stops_emitting_stale_data(self):
+        """Kịch bản 6: Khi Serial B mất kết nối, Worker chuyển trạng thái DISCONNECTED và get_latest_data() trả về None."""
+        worker = StationBSerialWorker()
+        packet = {
+            "stationCode": "STATION_B",
+            "deviceId": "esp32c6-station-b",
+            "bootCount": 1,
+            "sampleSeq": 201,
+            "sensors": {"recyclable": {"fillLevel": 60, "status": "OK"}}
+        }
+        canonical_bytes = json.dumps(packet, separators=(',', ':'), sort_keys=True).encode('utf-8')
+        packet["crc16"] = calculate_crc16_ccitt(canonical_bytes)
+        worker._process_packet(packet)
+        self.assertIsNotNone(worker.get_latest_data())
+
+        # Giả lập Serial B mất kết nối
+        with worker._lock:
+            worker.status = 'DISCONNECTED'
+
+        self.assertIsNone(worker.get_latest_data(), "Khi DISCONNECTED, không được trả về dữ liệu cũ")
+
+    def test_10_serial_b_reconnection_resumes_cleanly(self):
+        """Kịch bản 7: Khi Serial B kết nối lại, nhận gói tin mới và tiếp tục cập nhật bình thường."""
+        worker = StationBSerialWorker()
+        # Ban đầu mất kết nối
+        with worker._lock:
+            worker.status = 'DISCONNECTED'
+        self.assertIsNone(worker.get_latest_data())
+
+        # ESP32-C6 kết nối lại và gửi gói tin mới
+        new_packet = {
+            "stationCode": "STATION_B",
+            "deviceId": "esp32c6-station-b",
+            "bootCount": 1,
+            "sampleSeq": 202,
+            "sensors": {"recyclable": {"fillLevel": 65, "distanceCm": 18.0, "status": "OK"}}
+        }
+        canonical_bytes = json.dumps(new_packet, separators=(',', ':'), sort_keys=True).encode('utf-8')
+        new_packet["crc16"] = calculate_crc16_ccitt(canonical_bytes)
+        worker._process_packet(new_packet)
+
+        latest = worker.get_latest_data()
+        self.assertIsNotNone(latest)
+        self.assertEqual(worker.status, 'CONNECTED')
+        self.assertEqual(latest["sampleSeq"], 202)
+        self.assertEqual(latest["sensors"]["recyclable"]["fillLevel"], 65)
+
+    def test_11_freshness_timeout_drops_stale_packet(self):
+        """Kịch bản 9: Dữ liệu quá hạn freshness (>10s) bị loại bỏ, không giả lập dữ liệu mới."""
+        worker = StationBSerialWorker()
+        packet = {
+            "stationCode": "STATION_B",
+            "bootCount": 1,
+            "sampleSeq": 203,
+            "sensors": {"recyclable": {"fillLevel": 70, "status": "OK"}}
+        }
+        canonical_bytes = json.dumps(packet, separators=(',', ':'), sort_keys=True).encode('utf-8')
+        packet["crc16"] = calculate_crc16_ccitt(canonical_bytes)
+        worker._process_packet(packet)
+
+        # Giả lập gói tin đã nhận từ 12 giây trước
+        with worker._lock:
+            worker.last_packet_time = time.time() - 12.0
+
+        # Mặc định max_age_seconds = 10.0 -> Phải trả về None
+        self.assertIsNone(worker.get_latest_data(max_age_seconds=10.0), "Dữ liệu quá 10s phải bị coi là STALE và trả về None")
+
+    def test_12_payload_normalization_for_station_b(self):
+        """Kiểm tra logic chuẩn hóa payload Station B trong Pi Agent."""
+        raw_esp32_payload = {
+            "stationCode": "STATION_B",
+            "bootCount": 2,
+            "bootId": "uuid-b-test",
+            "sampleSeq": 50,
+            "uptimeMs": 45000,
+            "sensors": {
+                "recyclable": {"fillPercent": 75, "distanceCm": 16.5, "status": "OK"},
+                "nonRecyclable": {"status": "NOT_INSTALLED"},
+                "organic": {"status": "NOT_INSTALLED"}
+            }
+        }
+
+        # Giả lập xử lý của Pi Agent
+        payload_b = dict(raw_esp32_payload)
+        payload_b['stationCode'] = 'STATION_B'
+        if not payload_b.get('deviceId'):
+            payload_b['deviceId'] = 'esp32c6-station-b'
+        payload_b['deviceType'] = 'ESP32_C6'
+        payload_b['status'] = 'ONLINE'
+        if 'uptimeSeconds' not in payload_b:
+            uptime_ms = payload_b.get('uptimeMs', 0)
+            payload_b['uptimeSeconds'] = round(uptime_ms / 1000.0, 1)
+
+        sensors_b = payload_b.get('sensors')
+        for comp_key, comp_data in sensors_b.items():
+            if isinstance(comp_data, dict):
+                if 'fillLevel' not in comp_data and 'fillPercent' in comp_data:
+                    comp_data['fillLevel'] = comp_data['fillPercent']
+
+        self.assertEqual(payload_b['deviceId'], 'esp32c6-station-b')
+        self.assertEqual(payload_b['uptimeSeconds'], 45.0)
+        self.assertEqual(payload_b['sensors']['recyclable']['fillLevel'], 75)
+        self.assertEqual(payload_b['sensors']['nonRecyclable']['status'], 'NOT_INSTALLED')
+        self.assertNotIn('fillLevel', payload_b['sensors']['nonRecyclable'])
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

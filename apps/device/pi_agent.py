@@ -447,6 +447,28 @@ def send_telemetry():
     payload_b = None
     if station_b_worker:
         payload_b = station_b_worker.get_latest_data()
+        if payload_b:
+            payload_b['stationCode'] = 'STATION_B'
+            if not payload_b.get('deviceId'):
+                payload_b['deviceId'] = 'esp32c6-station-b'
+            payload_b['deviceType'] = 'ESP32_C6'
+            payload_b['status'] = 'ONLINE'
+            if 'uptimeSeconds' not in payload_b:
+                uptime_ms = payload_b.get('uptimeMs', 0)
+                payload_b['uptimeSeconds'] = round(uptime_ms / 1000.0, 1)
+            if not payload_b.get('sentAt'):
+                payload_b['sentAt'] = datetime.now(timezone.utc).isoformat()
+
+            # Chuẩn hóa cảm biến Trạm B: map fillPercent sang fillLevel
+            sensors_b = payload_b.get('sensors')
+            if isinstance(sensors_b, dict):
+                for comp_key, comp_data in sensors_b.items():
+                    if isinstance(comp_data, dict):
+                        if 'fillLevel' not in comp_data and 'fillPercent' in comp_data:
+                            comp_data['fillLevel'] = comp_data['fillPercent']
+
+            msg_id = f"STATION_B-{payload_b.get('bootCount', 0)}-{payload_b.get('sampleSeq', 0)}-{payload_b.get('bootId', 'default')}"
+            payload_b['clientMessageId'] = msg_id
 
     station_a_sent = False
 
@@ -471,8 +493,7 @@ def send_telemetry():
 
         # Gửi Station B nếu có dữ liệu mới
         if payload_b:
-            msg_id = f"STATION_B-{payload_b.get('bootCount', 0)}-{payload_b.get('sampleSeq', 0)}-{int(time.time()*1000)}"
-            payload_b['clientMessageId'] = msg_id
+            msg_id = payload_b.get('clientMessageId') or f"STATION_B-{payload_b.get('bootCount', 0)}-{payload_b.get('sampleSeq', 0)}-{payload_b.get('bootId', 'default')}"
 
             b_ack_received = threading.Event()
             b_ack_result = {'success': False, 'data': None}
@@ -509,7 +530,7 @@ def send_telemetry():
 
     # Nếu Socket.IO chưa kết nối: Đệm dữ liệu Station B vào OfflineBuffer
     if payload_b and offline_buffer and not (sio and sio.connected):
-        msg_id = f"STATION_B-{payload_b.get('bootCount', 0)}-{payload_b.get('sampleSeq', 0)}-{int(time.time()*1000)}"
+        msg_id = payload_b.get('clientMessageId') or f"STATION_B-{payload_b.get('bootCount', 0)}-{payload_b.get('sampleSeq', 0)}-{payload_b.get('bootId', 'default')}"
         offline_buffer.enqueue(msg_id, 'STATION_B', 'RECYCLABLE', json.dumps(payload_b))
         logger.info("Đã lưu gói Station B vào Offline Buffer do mất kết nối.")
 

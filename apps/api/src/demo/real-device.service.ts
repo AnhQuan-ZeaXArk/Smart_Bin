@@ -30,6 +30,7 @@ export interface RealDeviceStatus {
   deviceId: string;
   deviceName: string;
   deviceType: 'RASPBERRY_PI';
+  stationCode?: string;
   isReal: true;
   status: RealDeviceStatusType;
   uptimeSeconds: number;
@@ -211,6 +212,7 @@ export class RealDeviceService {
       deviceId: this.deviceId,
       deviceName: this.deviceName,
       deviceType: 'RASPBERRY_PI',
+      stationCode: 'STATION_A',
       isReal: true,
       status: computedStatus,
       uptimeSeconds: this.uptimeSeconds,

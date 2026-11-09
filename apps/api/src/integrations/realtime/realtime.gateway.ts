@@ -25,9 +25,13 @@ const tokenSchema = z.object({ sub: z.string().min(1), exp: z.number().optional(
 const compartmentFillInputSchema = z.object({
   distanceCm: z.coerce.number().optional().nullable(),
   fillLevel: z.coerce.number().optional().nullable(),
+  fillPercent: z.coerce.number().optional().nullable(),
   status: z.string().optional().default('OK'),
   updatedAt: z.string().optional().nullable()
-});
+}).transform((data) => ({
+  ...data,
+  fillLevel: data.fillLevel ?? data.fillPercent ?? null
+}));
 
 const deviceTelemetryInputSchema = z.object({
   deviceId: z.string().min(1).default(CANONICAL_DEVICE_ID),
@@ -35,7 +39,8 @@ const deviceTelemetryInputSchema = z.object({
   deviceName: z.string().optional(),
   deviceType: z.string().optional(),
   status: z.string().optional().default('ONLINE'),
-  uptimeSeconds: z.coerce.number().nonnegative(),
+  uptimeSeconds: z.coerce.number().nonnegative().optional(),
+  uptimeMs: z.coerce.number().nonnegative().optional(),
   cpuTempC: z.coerce.number().optional().nullable(),
   firmwareVersion: z.string().optional().nullable(),
   ipAddress: z.string().optional().nullable(),
@@ -54,11 +59,18 @@ const deviceTelemetryInputSchema = z.object({
   sensors: z.object({
     distanceCm: z.coerce.number().optional().nullable(),
     fillLevel: z.coerce.number().optional().nullable(),
+    fillPercent: z.coerce.number().optional().nullable(),
     organic: compartmentFillInputSchema.optional().nullable(),
     recyclable: compartmentFillInputSchema.optional().nullable(),
     nonRecyclable: compartmentFillInputSchema.optional().nullable()
   }).optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional().nullable()
+}).transform((data) => {
+  const uptimeSeconds = data.uptimeSeconds ?? (data.uptimeMs !== undefined ? Math.round(data.uptimeMs / 1000) : 0);
+  return {
+    ...data,
+    uptimeSeconds
+  };
 });
 
 const deviceCommandAckInputSchema = z.object({
@@ -213,11 +225,18 @@ export class RealtimeGateway {
             const stationCode = (parsed.data.stationCode || 'STATION_A').toUpperCase();
 
             // 1. Cập nhật RealDeviceService trong RAM và phát Socket.IO 'device:heartbeat'
-            realDeviceService.recordHeartbeat(normalizedData, this.io);
+            // CHỈ cập nhật RAM của RealDeviceService cho Station A (Raspberry Pi 5 Gateway / Station A hardware)
+            // Tuyệt đối không ghi đè RAM state của Station A khi nhận telemetry từ Station B!
+            if (stationCode === 'STATION_A') {
+              realDeviceService.recordHeartbeat(normalizedData, this.io);
+            }
 
-            // 2. Broadcast nhịp tim vào phòng riêng của trạm và phòng admin
+            // 2. Broadcast nhịp tim vào phòng riêng của trạm, phòng admin, và toàn cục (cho Station B)
             this.io.to(`station:${stationCode}:telemetry`).emit('device:heartbeat', normalizedData);
             this.io.to('admin:all_stations').emit('device:heartbeat', normalizedData);
+            if (stationCode === 'STATION_B') {
+              this.io.emit('device:heartbeat', normalizedData);
+            }
 
             // 3. Xử lý Ingestion bền vững và bảo đảm Idempotency nếu có dữ liệu cảm biến
             let ingestionSuccess = true;
@@ -265,10 +284,14 @@ export class RealtimeGateway {
             }
 
             // 4. Chuyển tiếp tới DeviceHealthService để xử lý heartbeat thống nhất (PostgreSQL)
+            const deviceType = stationCode === 'STATION_B'
+              ? DeviceType.ULTRASONIC_SENSOR
+              : DeviceType.RASPBERRY_PI;
+
             void deviceHealthService.processHeartbeat({
               deviceId: normalizedDeviceId,
-              deviceName: parsed.data.deviceName,
-              deviceType: DeviceType.RASPBERRY_PI,
+              deviceName: parsed.data.deviceName || (stationCode === 'STATION_B' ? 'ESP32-C6 Trạm B' : 'Raspberry Pi 5 Gateway'),
+              deviceType,
               uptimeSeconds: parsed.data.uptimeSeconds,
               cpuTempC: parsed.data.cpuTempC,
               firmwareVersion: parsed.data.firmwareVersion,

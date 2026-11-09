@@ -169,8 +169,9 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
     }));
   }
 
-  // Nếu sự kiện dành cho thiết bị ngoại vi khác (Camera, MQTT), không thay đổi ngăn rác
-  if (hb.deviceId && !isRaspberryPiDevice(hb.deviceId, hb.deviceType)) {
+  // Nếu sự kiện dành cho thiết bị ngoại vi khác (Camera, MQTT) và không phải là nhịp tim trạm, không thay đổi ngăn rác
+  const isStationHeartbeat = Boolean(hb.stationCode);
+  if (hb.deviceId && !isRaspberryPiDevice(hb.deviceId, hb.deviceType) && !isStationHeartbeat) {
     return bins.map((b) => ({
       ...b,
       distanceCm: typeof b.distanceCm === 'number' ? b.distanceCm : null,
@@ -203,7 +204,7 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
     }
 
     // Cách ly Telemetry theo Station: Nếu có stationCode, chỉ cập nhật Bin thuộc đúng Station đó
-    const binStationCode = bin.stationCode || (bin as any).station?.code;
+    const binStationCode = bin.stationCode || (bin as any).station?.code || (bin.stationId === 'station_b_canonical_id' ? 'STATION_B' : (bin.stationId === 'station_a_canonical_id' ? 'STATION_A' : undefined));
     if (hb.stationCode && binStationCode && hb.stationCode !== binStationCode) {
       return {
         ...bin,

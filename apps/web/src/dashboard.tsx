@@ -124,16 +124,18 @@ function mergeTelemetry(data: DashboardData, event: RealtimeTelemetry): Dashboar
     };
   });
 
-  const onlineNumericBins = bins.filter(
+  const installedBins = bins.filter((bin) => bin.installed !== false);
+  const onlineNumericBins = installedBins.filter(
     (bin) => typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel) && bin.status !== 'OFFLINE'
   );
 
   const summary = {
     ...data.summary,
+    total: installedBins.length,
     normal: onlineNumericBins.filter((bin) => bin.fillCategory === 'NORMAL').length,
     warning: onlineNumericBins.filter((bin) => bin.fillCategory === 'MONITOR' || bin.fillCategory === 'NEARLY_FULL').length,
     full: onlineNumericBins.filter((bin) => bin.fillCategory === 'CRITICAL').length,
-    offline: bins.length - onlineNumericBins.length
+    offline: installedBins.length - onlineNumericBins.length
   };
 
   return {
@@ -156,8 +158,9 @@ function mergeTelemetry(data: DashboardData, event: RealtimeTelemetry): Dashboar
 function mergeDeviceHeartbeat(data: DashboardData, hb: any): DashboardData {
   if (!hb) return data;
 
-  // Nếu sự kiện dành cho thiết bị ngoại vi khác (Camera, MQTT), chỉ cập nhật devices, KHÔNG ghi đè ngăn rác
-  if (hb.deviceId && !isRaspberryPiDevice(hb.deviceId, hb.deviceType)) {
+  // Nếu sự kiện dành cho thiết bị ngoại vi khác (Camera, MQTT) và không phải là nhịp tim trạm, chỉ cập nhật devices, KHÔNG ghi đè ngăn rác
+  const isStationHeartbeat = Boolean(hb.stationCode);
+  if (hb.deviceId && !isRaspberryPiDevice(hb.deviceId, hb.deviceType) && !isStationHeartbeat) {
     if (data.devices && Array.isArray(data.devices)) {
       const updatedDevices = data.devices.map((d: any) =>
         d.deviceId === hb.deviceId || d.id === hb.id ? { ...d, ...hb } : d
@@ -169,16 +172,18 @@ function mergeDeviceHeartbeat(data: DashboardData, hb: any): DashboardData {
 
   const bins = mergeDeviceHeartbeatToBins(data.bins, hb);
 
-  const onlineNumericBins = bins.filter(
+  const installedBins = bins.filter((bin) => bin.installed !== false);
+  const onlineNumericBins = installedBins.filter(
     (bin) => typeof bin.currentFillLevel === 'number' && !Number.isNaN(bin.currentFillLevel) && bin.status !== 'OFFLINE'
   );
 
   const summary = {
     ...data.summary,
+    total: installedBins.length,
     normal: onlineNumericBins.filter((bin) => bin.fillCategory === 'NORMAL').length,
     warning: onlineNumericBins.filter((bin) => bin.fillCategory === 'MONITOR' || bin.fillCategory === 'NEARLY_FULL').length,
     full: onlineNumericBins.filter((bin) => bin.fillCategory === 'CRITICAL').length,
-    offline: bins.length - onlineNumericBins.length
+    offline: installedBins.length - onlineNumericBins.length
   };
 
   let devices = data.devices;
