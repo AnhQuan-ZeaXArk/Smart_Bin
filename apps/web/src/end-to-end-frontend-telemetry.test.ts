@@ -273,8 +273,70 @@ function runFrontendEndToEndTests() {
   assert.strictEqual(vmOrgStale.lastKnownFillPct, 3, 'Preserves last known 3%');
   console.log('  -> PASS: Cảm biến riêng lẻ quá hạn (>15s) chuyển thành STALE chính xác, không bị nhầm bởi thời gian nhịp tim\n');
 
+  // Test 14: Station A UI Progress Bar & Fill Percentages (0%, 4%, 60%, 100%, and Clamping)
+  console.log('Test 14: Station A UI Progress Bar & Proportional Widths (0%, 4%, 60%, 100%)');
+  const bin0 = { ...initialBins[0], currentFillLevel: 0, status: 'ONLINE' as const, lastSeen: new Date(now).toISOString() };
+  const bin4 = { ...initialBins[2], currentFillLevel: 4, status: 'ONLINE' as const, lastSeen: new Date(now).toISOString() };
+  const bin60 = { ...initialBins[1], currentFillLevel: 60, status: 'ONLINE' as const, lastSeen: new Date(now).toISOString() };
+  const bin100 = { ...initialBins[0], currentFillLevel: 100, status: 'ONLINE' as const, lastSeen: new Date(now).toISOString() };
+  const binOver120 = { ...initialBins[0], currentFillLevel: 125, status: 'ONLINE' as const, lastSeen: new Date(now).toISOString() };
+  const binNegative = { ...initialBins[0], currentFillLevel: -10, status: 'ONLINE' as const, lastSeen: new Date(now).toISOString() };
+
+  const vm0 = computeBinViewModel(bin0, now);
+  assert.strictEqual(vm0.displayPercentage, '0%');
+  assert.strictEqual(vm0.progressWidth, '0%');
+
+  const vm4 = computeBinViewModel(bin4, now);
+  assert.strictEqual(vm4.displayPercentage, '4%');
+  assert.strictEqual(vm4.progressWidth, '4%');
+
+  const vm60 = computeBinViewModel(bin60, now);
+  assert.strictEqual(vm60.displayPercentage, '60%');
+  assert.strictEqual(vm60.progressWidth, '60%');
+
+  const vm100 = computeBinViewModel(bin100, now);
+  assert.strictEqual(vm100.displayPercentage, '100%');
+  assert.strictEqual(vm100.progressWidth, '100%');
+
+  const vmClampedHigh = computeBinViewModel(binOver120, now);
+  assert.strictEqual(vmClampedHigh.displayPercentage, '100%');
+  assert.strictEqual(vmClampedHigh.progressWidth, '100%');
+
+  const vmClampedLow = computeBinViewModel(binNegative, now);
+  assert.strictEqual(vmClampedLow.displayPercentage, '0%');
+  assert.strictEqual(vmClampedLow.progressWidth, '0%');
+  console.log('  -> PASS: 0% thanh rỗng, 4% tỉ lệ, 60% tỉ lệ, 100% đầy, giá trị được clamp 0-100 chuẩn xác\n');
+
+  // Test 15: Null / Missing measurement remains unavailable ('—'), never converted to 0%
+  console.log('Test 15: Missing/Null measurement remains unavailable ("—") with empty bar, never converted to 0%');
+  const binNull = { ...initialBins[0], currentFillLevel: null, status: 'ONLINE' as const, lastSeen: new Date(now).toISOString() };
+  const binUndefined = { ...initialBins[0], currentFillLevel: undefined, status: 'ONLINE' as const, lastSeen: new Date(now).toISOString() };
+
+  const vmNull = computeBinViewModel(binNull, now);
+  assert.strictEqual(vmNull.isValidReading, false);
+  assert.strictEqual(vmNull.displayPercentage, '—');
+  assert.strictEqual(vmNull.progressWidth, '0%');
+
+  const vmUndef = computeBinViewModel(binUndefined, now);
+  assert.strictEqual(vmUndef.isValidReading, false);
+  assert.strictEqual(vmUndef.displayPercentage, '—');
+  assert.strictEqual(vmUndef.progressWidth, '0%');
+  console.log('  -> PASS: Dữ liệu null/undefined luôn hiển thị "—", không bị biến thành 0%\n');
+
+  // Test 16: Simplified Card Representation
+  console.log('Test 16: Simplified Card Data Model Integrity');
+  // Khi cảm biến hoạt động bình thường, ViewModel tính toán chính xác
+  assert.strictEqual(vm4.fillPct, 4);
+  assert.strictEqual(vm4.isValidReading, true);
+  assert.strictEqual(vm4.tone, 'normal');
+  // Khi offline, bảo toàn cờ và không tạo số giả
+  const vmOffline = computeBinViewModel({ ...bin4, status: 'OFFLINE' as const }, now);
+  assert.strictEqual(vmOffline.isValidReading, false);
+  assert.strictEqual(vmOffline.displayPercentage, '—');
+  console.log('  -> PASS: Giao diện thẻ thùng rác tinh giản, phản ánh chính xác dữ liệu từ cảm biến thực\n');
+
   console.log('================================================================');
-  console.log('  ALL 13 END-TO-END FRONTEND TELEMETRY TESTS PASSED CLEANLY (13/13)!');
+  console.log('  ALL 16 END-TO-END FRONTEND TELEMETRY TESTS PASSED CLEANLY (16/16)!');
   console.log('================================================================\n');
 }
 

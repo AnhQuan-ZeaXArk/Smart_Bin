@@ -60,7 +60,7 @@ export function syncBinWithRealDevice<T extends {
   }
 
   // 2. Kiểm tra quyền sở hữu Trạm A: Chỉ đồng bộ cảm biến Serial A cho Trạm A
-  const isStationB = bin.station?.code === 'STATION_B' || bin.stationId === 'station_b_canonical_id';
+  const isStationB = bin.station?.code === 'STATION_B' || (bin as any).stationCode === 'STATION_B' || bin.stationId === 'station_b_canonical_id';
   if (isStationB) {
     const lastSeenMs = bin.lastSeen ? new Date(bin.lastSeen).getTime() : 0;
     const isFresh = lastSeenMs > 0 && (Date.now() - lastSeenMs <= DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_MS);

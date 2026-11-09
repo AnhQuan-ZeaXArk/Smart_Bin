@@ -13,6 +13,7 @@ import sys
 import time
 import json
 import glob
+import copy
 import logging
 import threading
 from typing import Dict, Any, Optional
@@ -48,13 +49,17 @@ class StationBSerialWorker:
         self.status = 'DISCONNECTED'
         self.active_port: Optional[str] = None
         self.last_packet_time: Optional[float] = None
+        self.last_valid_reading_at: Optional[float] = None
         self.last_error: Optional[str] = None
 
         # Trạng thái cảm biến Trạm B (Chỉ Recyclable được lắp đặt)
         self.latest_telemetry: Optional[Dict[str, Any]] = None
 
     def find_serial_port(self) -> Optional[str]:
-        """Xác định cổng Serial B theo thứ tự phân cấp 3 tầng."""
+        """Xác định cổng Serial B theo thứ tự phân cấp 5 tầng an toàn.
+        Ưu tiên /dev/serial/by-id/ để tránh nhầm lẫn cổng USB sau khi khởi động lại.
+        TUYỆT ĐỐI KHÔNG mở cổng ttyUSB0 (sở hữu độc quyền của YOLO Trạm A).
+        """
         # 1. Cấu hình rõ ràng qua biến môi trường hoặc tham số
         if self.preferred_port and os.path.exists(self.preferred_port):
             return self.preferred_port
@@ -63,31 +68,30 @@ class StationBSerialWorker:
         if os.path.exists('/dev/smartbin_station_b'):
             return '/dev/smartbin_station_b'
 
-        # 3. Tìm theo physical path USB trên Linux
-        by_path_ports = glob.glob('/dev/serial/by-path/*')
-        if by_path_ports:
-            # Chọn cổng USB vật lý khác với Serial A (/dev/ttyUSB0)
-            for p in by_path_ports:
-                if 'ttyUSB0' not in os.path.realpath(p):
-                    return p
-
-        # 4. Tìm trong /dev/serial/by-id/
+        # 3. Ưu tiên tìm trong /dev/serial/by-id/ (Định danh theo chip ESP32-C6 / CP210x / CH340)
         by_id_ports = glob.glob('/dev/serial/by-id/*')
         if by_id_ports:
-            for p in by_id_ports:
-                if 'usb' in p.lower() or 'cp210' in p.lower() or 'ch340' in p.lower() or 'esp' in p.lower():
-                    # Tránh chọn trùng cổng ttyUSB0 của Trạm A
-                    real = os.path.realpath(p)
-                    if not real.endswith('ttyUSB0'):
-                        return p
+            for p in sorted(by_id_ports):
+                # Tránh chọn trùng cổng ttyUSB0 của Trạm A
+                real = os.path.realpath(p)
+                if not real.endswith('ttyUSB0'):
+                    return p
 
-        # 4b. Cổng ttyUSB1 trực tiếp (nếu khác ttyUSB0 của Trạm A)
+        # 4. Tìm theo physical path USB trên Linux (/dev/serial/by-path/)
+        by_path_ports = glob.glob('/dev/serial/by-path/*')
+        if by_path_ports:
+            for p in sorted(by_path_ports):
+                real = os.path.realpath(p)
+                if not real.endswith('ttyUSB0'):
+                    return p
+
+        # 5. Cổng ttyUSB1 trực tiếp (nếu khác ttyUSB0 của Trạm A)
         if os.path.exists('/dev/ttyUSB1'):
             real_b = os.path.realpath('/dev/ttyUSB1')
             if not real_b.endswith('ttyUSB0'):
                 return '/dev/ttyUSB1'
 
-        # 5. Hỗ trợ Windows khi phát triển / test
+        # 6. Hỗ trợ Windows khi phát triển / test
         if sys.platform.startswith('win'):
             try:
                 import serial.tools.list_ports
@@ -129,7 +133,7 @@ class StationBSerialWorker:
                 return None
             if self.last_packet_time and (time.time() - self.last_packet_time > max_age_seconds):
                 return None
-            return dict(self.latest_telemetry)
+            return copy.deepcopy(self.latest_telemetry)
 
     def is_connected(self) -> bool:
         with self._lock:
@@ -230,6 +234,55 @@ class StationBSerialWorker:
                     return
 
         now_epoch = time.time()
+        now_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now_epoch))
+
+        # Xử lý chi tiết đo lường của cảm biến Trạm B
+        sensors = data.get('sensors')
+        if isinstance(sensors, dict):
+            rec = sensors.get('recyclable')
+            if isinstance(rec, dict):
+                status = rec.get('status', 'OK')
+                if status == 'OK':
+                    # Parse mức đầy (fillPercent / fillLevel)
+                    raw_fill = rec.get('fillPercent') if 'fillPercent' in rec else rec.get('fillLevel')
+                    if raw_fill is not None:
+                        try:
+                            fill_int = int(round(float(raw_fill)))
+                            clamped_fill = max(0, min(100, fill_int))
+                            rec['fillPercent'] = clamped_fill
+                            rec['fillLevel'] = clamped_fill
+                            rec['updatedAt'] = now_iso
+                            rec['updatedAtEpoch'] = now_epoch
+                            with self._lock:
+                                self.last_valid_reading_at = now_epoch
+                        except (ValueError, TypeError):
+                            rec['fillPercent'] = None
+                            rec['fillLevel'] = None
+                            rec['status'] = 'ERROR'
+                    else:
+                        rec['fillPercent'] = None
+                        rec['fillLevel'] = None
+                        rec['status'] = 'ERROR'
+                else:
+                    # Lỗi đo lường hoặc timeout từ phần cứng
+                    rec['fillPercent'] = None
+                    rec['fillLevel'] = None
+                    rec['distanceCm'] = None
+                    rec['status'] = status
+                    # Tuyệt đối KHÔNG làm mới last_valid_reading_at
+
+            # Hai ngăn còn lại luôn là NOT_INSTALLED
+            if 'nonRecyclable' in sensors and isinstance(sensors['nonRecyclable'], dict):
+                sensors['nonRecyclable']['status'] = 'NOT_INSTALLED'
+                sensors['nonRecyclable'].pop('fillPercent', None)
+                sensors['nonRecyclable'].pop('fillLevel', None)
+                sensors['nonRecyclable'].pop('distanceCm', None)
+            if 'organic' in sensors and isinstance(sensors['organic'], dict):
+                sensors['organic']['status'] = 'NOT_INSTALLED'
+                sensors['organic'].pop('fillPercent', None)
+                sensors['organic'].pop('fillLevel', None)
+                sensors['organic'].pop('distanceCm', None)
+
         with self._lock:
             self.last_packet_time = now_epoch
             self.status = 'CONNECTED'

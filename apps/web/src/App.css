@@ -840,7 +840,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .waste-card-facts dd { margin: 0; color: var(--text-soft); font-size: 10px; font-weight: 650; }
 .waste-card-header h3 { color: var(--text-main); font-size: 13px; letter-spacing: .15px; }
 .waste-percentage { color: var(--text-main); font-size: 45px; }
-.waste-progress-track, .fill-track { height: 8px; background: #26394b; border-radius: 99px; }
+.waste-caption { display: block; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .3px; margin-bottom: 2px; }
+.waste-progress-track, .fill-track { height: 8px; background: #26394b; border-radius: 99px; overflow: hidden; }
+.waste-progress-fill[style*="width: 0%"], .waste-progress-fill[style*="width: 0.0%"] { display: none !important; }
 .waste-progress-fill, .fill-value { border-radius: inherit; transition: width .65s cubic-bezier(.2,.8,.2,1); }
 .waste-progress-fill.waste-tone-normal, .fill-normal { background: linear-gradient(90deg, #0fa879, #35dba4); }
 .waste-progress-fill.waste-tone-monitor, .fill-monitor { background: linear-gradient(90deg, #ce8d1e, #ffc15b); }

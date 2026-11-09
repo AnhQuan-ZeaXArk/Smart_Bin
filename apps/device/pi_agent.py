@@ -506,11 +506,22 @@ def send_telemetry():
             if isinstance(sensors_b, dict):
                 for comp_key, comp_data in sensors_b.items():
                     if isinstance(comp_data, dict):
+                        if comp_data.get('status') == 'NOT_INSTALLED':
+                            comp_data['fillLevel'] = None
+                            comp_data['fillPercent'] = None
+                            comp_data['distanceCm'] = None
+                            continue
+
                         raw_val = comp_data.get('fillLevel') if 'fillLevel' in comp_data else comp_data.get('fillPercent')
                         norm_val = normalize_fill_level(raw_val)
                         if norm_val is not None:
                             comp_data['fillLevel'] = norm_val
                             comp_data['fillPercent'] = norm_val
+                            if not comp_data.get('updatedAt'):
+                                comp_data['updatedAt'] = payload_b['sentAt']
+                        else:
+                            comp_data['fillLevel'] = None
+                            comp_data['fillPercent'] = None
 
             msg_id = f"STATION_B-{payload_b.get('bootCount', 0)}-{payload_b.get('sampleSeq', 0)}-{payload_b.get('bootId', 'default')}"
             payload_b['clientMessageId'] = msg_id

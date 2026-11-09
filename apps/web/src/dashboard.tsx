@@ -662,70 +662,90 @@ export function WasteCard({
   }
 
   const vm = computeBinViewModel(bin, now);
+  const isInstalled = bin.installed !== false;
+  const cardStationCode = stationCode || (bin as any).stationCode || (bin as any).station?.code || 'STATION_A';
+
+  // 1. Ngăn chưa lắp đặt phần cứng (Station B Organic & Non-recyclable)
+  if (!isInstalled || vm.isUninstalled) {
+    return (
+      <article
+        className="waste-card waste-tone-unavailable waste-card--uninstalled"
+        data-station={cardStationCode}
+        data-installed="false"
+      >
+        <div className="waste-card-header">
+          <div className="waste-card-identity">
+            <h3>{label}</h3>
+            <span className="device-id-code">{bin.binCode}</span>
+          </div>
+          <span className="status-badge status-badge--uninstalled">
+            Chưa lắp đặt
+          </span>
+        </div>
+        <div className="waste-percentage-row">
+          <strong className="waste-percentage text-unavailable">—</strong>
+        </div>
+        <div className="waste-card-uninstalled-note">
+          <span>Ngăn này chưa gắn cảm biến đo mức đầy. Sẵn sàng cấu hình mở rộng phần cứng.</span>
+        </div>
+      </article>
+    );
+  }
+
+  // 2. Thùng rác đã lắp đặt (Installed bin cards - Station A và Station B Recyclable):
+  // Giao diện tinh gọn, hiển thị rõ ràng Tên thùng, Loại rác, Phần trăm và Thanh tiến trình chuẩn xác.
+  // Đã loại bỏ các phần tử thừa theo yêu cầu:
+  // - Loại bỏ "(Gần nhất: xx%)"
+  // - Loại bỏ "CẦN KIỂM TRA"
+  // - Loại bỏ "Cập nhật x phút trước"
+  // - Loại bỏ badge cá nhân "MẤT KẾT NỐI" (trùng lặp với trạng thái trạm ở header)
+  // - Loại bỏ các dòng cảnh báo trùng lặp đỏ/xám.
+  const safeFill = vm.isValidReading ? Math.max(0, Math.min(100, vm.fillPct)) : null;
+  const displayPct = safeFill !== null ? `${safeFill}%` : '—';
+  const progressWidth = safeFill !== null ? `${safeFill}%` : '0%';
 
   return (
     <article
-      className={`waste-card waste-tone-${vm.tone} ${vm.isUninstalled ? 'waste-card--uninstalled' : ''}`}
-      data-station={stationCode || (bin as any).stationCode || (bin as any).station?.code}
-      data-installed={bin.installed !== false}
+      className={`waste-card waste-tone-${vm.tone}`}
+      data-station={cardStationCode}
+      data-installed="true"
     >
       <div className="waste-card-header">
         <div className="waste-card-identity">
           <h3>{label}</h3>
           <span className="device-id-code">{bin.binCode}</span>
         </div>
-        <span
-          className={`status-badge status-badge--${
-            vm.isUninstalled ? 'uninstalled' : !vm.isValidReading ? 'offline' : bin.status.toLowerCase()
-          }`}
-        >
-          {vm.statusBadgeText}
-        </span>
       </div>
 
-      <div className="waste-percentage-row" style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+      <div className="waste-percentage-row">
+        <span className="waste-caption">Mức đầy thùng rác</span>
         <strong className={`waste-percentage ${!vm.isValidReading ? 'text-unavailable' : ''}`}>
-          {vm.displayPercentage}
+          {displayPct}
         </strong>
-        {vm.lastKnownText && (
-          <span className="last-known-hint" style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: 500 }}>
-            ({vm.lastKnownText})
-          </span>
-        )}
       </div>
 
       <div
         className={`waste-progress-track ${!vm.isValidReading ? 'is-unavailable' : ''}`}
         role="progressbar"
-        aria-valuenow={vm.isValidReading ? vm.fillPct : 0}
+        aria-label="Mức đầy thùng rác"
+        aria-valuenow={safeFill ?? 0}
         aria-valuemin={0}
         aria-valuemax={100}
       >
         <span
           className={`waste-progress-fill ${vm.isValidReading ? `waste-tone-${vm.tone}` : 'is-unavailable'}`}
-          style={{ width: vm.progressWidth }}
+          style={{ width: progressWidth }}
         />
       </div>
 
-      <div className="waste-card-footer">
-        <span className={`badge badge-${vm.isUninstalled ? 'uninstalled' : vm.tone}`}>
-          {vm.fillCategoryBadgeText}
-        </span>
-        <small>{vm.lastSeenText}</small>
-      </div>
-
-      {vm.isUninstalled ? (
-        <div className="waste-card-uninstalled-note">
-          <span>Ngăn này chưa gắn cảm biến đo mức đầy. Sẵn sàng cấu hình mở rộng phần cứng.</span>
-        </div>
-      ) : vm.hasDistance ? (
+      {vm.hasDistance && (
         <dl className="waste-card-facts">
           <div>
             <dt>Khoảng cách</dt>
             <dd>{vm.distanceText}</dd>
           </div>
         </dl>
-      ) : null}
+      )}
     </article>
   );
 }

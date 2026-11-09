@@ -345,6 +345,90 @@ class TestStationBHardwareIntegration(unittest.TestCase):
         self.assertEqual(payload_b['sensors']['nonRecyclable']['status'], 'NOT_INSTALLED')
         self.assertNotIn('fillLevel', payload_b['sensors']['nonRecyclable'])
 
+    def test_13_worker_valid_zero_fill_preserved(self):
+        """Kiểm tra đo lường 0% hợp lệ: 0% được giữ nguyên là số 0, có updatedAt và last_valid_reading_at."""
+        worker = StationBSerialWorker()
+        packet = {
+            "stationCode": "STATION_B",
+            "bootCount": 1,
+            "sampleSeq": 301,
+            "sensors": {
+                "recyclable": {"fillPercent": 0, "distanceCm": 50.0, "status": "OK"},
+                "nonRecyclable": {"status": "NOT_INSTALLED"},
+                "organic": {"status": "NOT_INSTALLED"}
+            }
+        }
+        canonical_bytes = json.dumps(packet, separators=(',', ':'), sort_keys=True).encode('utf-8')
+        packet["crc16"] = calculate_crc16_ccitt(canonical_bytes)
+
+        worker._process_packet(packet)
+        latest = worker.get_latest_data()
+        self.assertIsNotNone(latest)
+        rec = latest['sensors']['recyclable']
+        self.assertEqual(rec['fillPercent'], 0, "0% phải được bảo toàn là số 0 nguyên vẹn")
+        self.assertEqual(rec['fillLevel'], 0)
+        self.assertEqual(rec['status'], 'OK')
+        self.assertIn('updatedAt', rec)
+        self.assertIsNotNone(worker.last_valid_reading_at)
+
+    def test_14_worker_sensor_error_or_timeout_handling(self):
+        """Khi cảm biến lỗi hoặc timeout: Không gửi mức đầy cũ làm mới, không cập nhật last_valid_reading_at."""
+        worker = StationBSerialWorker()
+        worker.last_valid_reading_at = None
+        packet_err = {
+            "stationCode": "STATION_B",
+            "bootCount": 1,
+            "sampleSeq": 302,
+            "sensors": {
+                "recyclable": {"status": "ERROR"},
+                "nonRecyclable": {"status": "NOT_INSTALLED"},
+                "organic": {"status": "NOT_INSTALLED"}
+            }
+        }
+        canonical_bytes = json.dumps(packet_err, separators=(',', ':'), sort_keys=True).encode('utf-8')
+        packet_err["crc16"] = calculate_crc16_ccitt(canonical_bytes)
+
+        worker._process_packet(packet_err)
+        latest = worker.get_latest_data()
+        self.assertIsNotNone(latest)
+        rec = latest['sensors']['recyclable']
+        self.assertIsNone(rec.get('fillPercent'), "Cảm biến lỗi không được có fillPercent giả")
+        self.assertIsNone(rec.get('fillLevel'))
+        self.assertEqual(rec['status'], 'ERROR')
+        self.assertIsNone(worker.last_valid_reading_at, "Lỗi cảm biến không được làm mới last_valid_reading_at")
+
+    def test_15_serial_port_discovery_prefers_by_id_and_excludes_ttyusb0(self):
+        """Xác minh thứ tự tìm cổng Serial B: Ưu tiên by-id và TUYỆT ĐỐI loại trừ ttyUSB0 (Serial A của YOLO)."""
+        from unittest import mock
+        worker = StationBSerialWorker()
+        worker.preferred_port = None
+
+        fake_by_id = ['/dev/serial/by-id/usb-CH340-ttyUSB0', '/dev/serial/by-id/usb-Espressif_ESP32-C6_001-if00']
+        fake_by_path = ['/dev/serial/by-path/platform-usb-0:1-ttyUSB0', '/dev/serial/by-path/platform-usb-0:2-ttyUSB1']
+
+        def fake_realpath(p):
+            if 'ttyUSB0' in p:
+                return '/dev/ttyUSB0'
+            return '/dev/ttyUSB1'
+
+        with mock.patch('os.path.exists', return_value=False), \
+             mock.patch('glob.glob') as mock_glob, \
+             mock.patch('os.path.realpath', side_effect=fake_realpath):
+
+            def glob_side_effect(pattern):
+                if 'by-id' in pattern:
+                    return fake_by_id
+                if 'by-path' in pattern:
+                    return fake_by_path
+                return []
+
+            mock_glob.side_effect = glob_side_effect
+            selected_port = worker.find_serial_port()
+
+            # Phải chọn cổng ESP32-C6 trong by-id, bỏ qua cổng trỏ tới ttyUSB0
+            self.assertEqual(selected_port, '/dev/serial/by-id/usb-Espressif_ESP32-C6_001-if00')
+            self.assertNotEqual(selected_port, '/dev/serial/by-id/usb-CH340-ttyUSB0')
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
