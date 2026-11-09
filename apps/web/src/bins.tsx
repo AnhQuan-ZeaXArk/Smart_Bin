@@ -6,7 +6,17 @@ import { translateBinStatus, translateFillCategory } from './i18n-labels';
 import { IconActivity, IconRefresh, IconTrash } from './icons';
 import { ErrorBoundary } from './error-boundary';
 import { apiUrl } from './api-config';
-import { computeBinViewModel, mergeDeviceHeartbeatToBins, mergeRestBinsWithRealtimeState } from './bin-view-model';
+import {
+  computeBinViewModel,
+  DEFAULT_STATION_CONFIG,
+  ensureAllStationBins,
+  ensureStationList,
+  getFillCategoryForLevel,
+  groupBinsByStation,
+  mergeDeviceHeartbeatToBins,
+  mergeRestBinsWithRealtimeState,
+  resolveBinStationCode
+} from './bin-view-model';
 
 const SensorHistoryChart = lazy(() => import('./sensor-history-chart'));
 
@@ -134,13 +144,22 @@ function StatusBadge({
   status,
   kind = 'bin',
   isValidReading = true,
+  isUninstalled = false,
   labelOverride
 }: {
   status: BinStatus | FillCategory;
   kind?: 'bin' | 'fill';
   isValidReading?: boolean;
+  isUninstalled?: boolean;
   labelOverride?: string;
 }) {
+  if (isUninstalled) {
+    return (
+      <span className="status-badge status-badge--uninstalled">
+        {labelOverride || 'Chưa lắp đặt'}
+      </span>
+    );
+  }
   if (!isValidReading) {
     return (
       <span className="status-badge status-badge--offline">
@@ -160,6 +179,8 @@ export function BinListPage() {
   const { token, user } = useAuth();
   const { socket: realtime } = useRealtime();
   const [bins, setBins] = useState<Bin[]>([]);
+  const [stations, setStations] = useState<{ id: string; code: string; name: string; status: string; location?: string | null; isActive?: boolean }[]>(DEFAULT_STATION_CONFIG);
+  const [selectedStationCode, setSelectedStationCode] = useState<string>('ALL');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<'ALL' | BinStatus>('ALL');
   const [fillCategory, setFillCategory] = useState<'ALL' | FillCategory>('ALL');
@@ -173,11 +194,22 @@ export function BinListPage() {
     return () => clearInterval(timer);
   }, []);
 
+  // Load station list from /api/stations
+  useEffect(() => {
+    getData<{ stations: { id: string; code: string; name: string; status: string; location?: string | null; isActive?: boolean }[] }>('/api/stations', token)
+      .then((res) => {
+        if (res && Array.isArray(res.stations) && res.stations.length > 0) {
+          setStations(ensureStationList(res.stations));
+        }
+      })
+      .catch(() => {});
+  }, [token]);
+
   const loadBins = useCallback(async () => {
     try {
       const result = await getData<{ bins: Bin[] }>('/api/bins', token);
-      const apiBins = result.bins.map((b) => ({ ...b, isReal: true }));
-      setBins((current) => mergeRestBinsWithRealtimeState(current, apiBins, Date.now()));
+      const resolvedBins = ensureAllStationBins(result.bins);
+      setBins((current) => mergeRestBinsWithRealtimeState(current, resolvedBins, Date.now()));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Không thể tải danh sách thùng rác.');
     } finally {
@@ -191,82 +223,214 @@ export function BinListPage() {
     return () => { active = false; };
   }, [loadBins]);
 
-  // Realtime Socket.IO subscriptions for Pi 5 heartbeat & status updates
+  // Realtime Socket.IO subscriptions for Station A & Station B heartbeats and telemetry
   useEffect(() => {
     if (!realtime) return;
+
+    const targetStation = selectedStationCode && selectedStationCode !== 'ALL' ? selectedStationCode : 'ALL';
+    realtime.emit('subscribe:station', { stationCode: targetStation });
 
     const onHeartbeat = (payload: any) => {
       setBins((current) => mergeDeviceHeartbeatToBins(current, payload, Date.now()));
     };
 
+    const onTelemetry = (event: any) => {
+      if (!event || !event.binCode) return;
+      const incomingStationCode = (event.stationCode || 'STATION_A').toUpperCase();
+      const fillVal = typeof event.fillLevel === 'number' && !Number.isNaN(event.fillLevel) ? event.fillLevel : null;
+      const nowIso = new Date().toISOString();
+      setBins((current) =>
+        current.map((b) => {
+          if (b.installed === false) return b;
+          const bStationCode = resolveBinStationCode(b);
+          if (b.binCode === event.binCode && bStationCode === incomingStationCode) {
+            return {
+              ...b,
+              currentFillLevel: fillVal,
+              distanceCm: typeof event.distance === 'number' ? event.distance : b.distanceCm ?? null,
+              fillCategory: getFillCategoryForLevel(fillVal),
+              status: fillVal !== null ? ('ONLINE' as BinStatus) : ('OFFLINE' as BinStatus),
+              lastSeen: nowIso,
+              isReal: true
+            };
+          }
+          return b;
+        })
+      );
+    };
+
     realtime.on('device:heartbeat', onHeartbeat);
+    realtime.on('bin:telemetry', onTelemetry);
 
     return () => {
+      if (targetStation !== 'ALL') {
+        realtime.emit('unsubscribe:station', { stationCode: targetStation });
+      }
       realtime.off('device:heartbeat', onHeartbeat);
+      realtime.off('bin:telemetry', onTelemetry);
     };
-  }, [realtime]);
+  }, [realtime, selectedStationCode]);
 
   const refreshBins = () => { setLoading(true); setError(''); void loadBins(); };
 
-  const visibleBins = useMemo(() => bins.filter((bin) => {
+  const stationGroups = useMemo(() => {
+    if (bins.length === 0) return [];
+    return groupBinsByStation(bins, stations, clock);
+  }, [bins, stations, clock]);
+
+  const filteredStationGroups = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
-    const matchesQuery = !query || `${bin.binCode} ${bin.name} ${bin.location}`.toLocaleLowerCase().includes(query);
-    return matchesQuery && (status === 'ALL' || bin.status === status) && (fillCategory === 'ALL' || bin.fillCategory === fillCategory);
-  }), [bins, search, status, fillCategory]);
+    return stationGroups
+      .filter((group) => selectedStationCode === 'ALL' || group.code === selectedStationCode)
+      .map((group) => {
+        const filteredCompartments = group.compartments.filter(({ bin, label }) => {
+          if (!bin) return false;
+          const vm = computeBinViewModel(bin, clock);
+          const searchable = `${bin.binCode} ${bin.name} ${label} ${bin.location} ${group.code} ${group.name}`.toLocaleLowerCase();
+          const matchesQuery = !query || searchable.includes(query);
+          const effectiveStatus: BinStatus = vm.isUninstalled
+            ? 'MAINTENANCE'
+            : vm.isValidReading
+              ? 'ONLINE'
+              : 'OFFLINE';
+          const matchesStatus = status === 'ALL' || effectiveStatus === status;
+          const matchesFill = fillCategory === 'ALL' || (!vm.isUninstalled && vm.isValidReading && bin.fillCategory === fillCategory);
+          return matchesQuery && matchesStatus && matchesFill;
+        });
+        return {
+          ...group,
+          filteredCompartments
+        };
+      })
+      .filter((group) => group.filteredCompartments.length > 0);
+  }, [stationGroups, selectedStationCode, search, status, fillCategory, clock]);
 
   return (
     <section className="page bins-page">
       <div className="page-heading">
-        <div><div className="eyebrow">QUẢN LÝ TÀI NGUYÊN</div><h1>Quản lý thùng rác</h1><p>Theo dõi mức đầy và trạng thái các thùng trong hệ thống.</p></div>
+        <div><div className="eyebrow">QUẢN LÝ TÀI NGUYÊN</div><h1>Quản lý thùng rác</h1><p>Theo dõi mức đầy và trạng thái các thùng theo từng trạm thu gom trong hệ thống.</p></div>
         <button className="button-secondary refresh-button" type="button" onClick={refreshBins} disabled={loading}><IconRefresh /> Làm mới</button>
       </div>
 
       <div className="filter-bar">
-        <label className="search-field">Tìm thùng rác<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Mã thùng, tên hoặc vị trí" /></label>
-        <label>Trạng thái<select value={status} onChange={(event) => setStatus(event.target.value as 'ALL' | BinStatus)}><option value="ALL">Tất cả</option><option value="ONLINE">Trực tuyến</option><option value="OFFLINE">Ngoại tuyến</option><option value="MAINTENANCE">Bảo trì</option></select></label>
+        <label className="search-field">Tìm thùng rác<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Mã thùng, tên, trạm hoặc vị trí" /></label>
+        <label>
+          Trạm thu gom
+          <select value={selectedStationCode} onChange={(event) => setSelectedStationCode(event.target.value)}>
+            <option value="ALL">Tất cả các trạm</option>
+            {stations.map((st) => (
+              <option key={st.id} value={st.code}>{st.name} ({st.code})</option>
+            ))}
+          </select>
+        </label>
+        <label>Trạng thái<select value={status} onChange={(event) => setStatus(event.target.value as 'ALL' | BinStatus)}><option value="ALL">Tất cả</option><option value="ONLINE">Trực tuyến</option><option value="OFFLINE">Ngoại tuyến</option><option value="MAINTENANCE">Chưa lắp đặt / Bảo trì</option></select></label>
         <label>Mức độ đầy<select value={fillCategory} onChange={(event) => setFillCategory(event.target.value as 'ALL' | FillCategory)}><option value="ALL">Tất cả</option><option value="NORMAL">Bình thường</option><option value="MONITOR">Cần theo dõi</option><option value="NEARLY_FULL">Gần đầy</option><option value="CRITICAL">Đầy</option></select></label>
       </div>
 
       {loading ? <div className="skeleton-grid" aria-label="Đang tải thùng rác"><div /><div /><div /></div>
         : error ? <div className="state-panel state-panel--error"><IconActivity /><strong>Không thể tải danh sách</strong><span>{error}</span><button className="button-secondary" type="button" onClick={refreshBins}>Thử lại</button></div>
-          : visibleBins.length === 0 ? <div className="state-panel"><IconTrash /><strong>{bins.length ? 'Không tìm thấy thùng phù hợp' : 'Chưa có thùng rác'}</strong><span>{bins.length ? 'Thay đổi bộ lọc hoặc từ khóa tìm kiếm.' : 'Danh sách thùng rác hiện chưa có dữ liệu.'}</span></div>
-            : <div className="bin-card-grid">
-              {visibleBins.map((bin) => {
-                const vm = computeBinViewModel(bin, clock);
-                return (
-                  <Link to={`/bins/${bin.id}`} className={`bin-card ${!vm.isValidReading ? 'is-unavailable' : ''}`} key={bin.id}>
-                    <div className="bin-card__top">
-                      <span className="bin-card__icon"><IconTrash /></span>
-                      <StatusBadge status={bin.status} isValidReading={vm.isValidReading} labelOverride={vm.statusBadgeText} />
-                    </div>
-                    <div className="bin-card__title">
-                      <span className="device-id-code">{bin.binCode}</span>
-                      <h2>{bin.name}</h2>
-                      <p>{bin.location}</p>
-                    </div>
-                    <div className="bin-card__fill">
-                      <div>
-                        <span>Mức độ đầy</span>
-                        <StatusBadge status={bin.fillCategory} kind="fill" isValidReading={vm.isValidReading} labelOverride={vm.fillCategoryBadgeText} />
-                      </div>
-                      <FillMeter bin={bin} now={clock} />
-                    </div>
-                    <div className="bin-card__metrics">
-                      {vm.hasDistance && (
-                        <div>
-                          <span>Khoảng cách</span>
-                          <strong>{vm.distanceText}</strong>
-                        </div>
-                      )}
-                      <div>
-                        <span>Cập nhật lần cuối</span>
-                        <strong>{vm.lastSeenText}</strong>
+          : filteredStationGroups.length === 0 ? <div className="state-panel"><IconTrash /><strong>{bins.length ? 'Không tìm thấy thùng phù hợp' : 'Chưa có thùng rác'}</strong><span>{bins.length ? 'Thay đổi bộ lọc hoặc từ khóa tìm kiếm.' : 'Danh sách thùng rác hiện chưa có dữ liệu.'}</span></div>
+            : <div className="stations-container">
+              {filteredStationGroups.map((group) => (
+                <section
+                  className={`station-section station-section--${group.code.toLowerCase()}`}
+                  key={group.code}
+                  data-station-code={group.code}
+                >
+                  <div className="station-header">
+                    <div className="station-header-main">
+                      <div className="station-title-row">
+                        <span className="station-code-chip">{group.code}</span>
+                        <h2 className="station-name">{group.name}</h2>
+                        <span className={`station-status-badge status-badge--${group.status.toLowerCase()}`}>
+                          <span className="status-dot" />
+                          {group.status === 'ONLINE'
+                            ? 'Trực tuyến'
+                            : group.status === 'WARNING'
+                            ? 'Cảnh báo'
+                            : group.status === 'MAINTENANCE'
+                            ? 'Bảo trì'
+                            : 'Mất kết nối'}
+                        </span>
                       </div>
                     </div>
-                    <span className="bin-card__open">Mở chi tiết <span aria-hidden="true">↗</span></span>
-                  </Link>
-                );
-              })}
+                    <div className="station-header-right">
+                      <div className="station-stats-pills">
+                        <span className="station-stat-pill">
+                          <span className="stat-label">Đã lắp:</span>
+                          <strong className="stat-value">{group.installedCount}/{group.totalBinsCount} thùng</strong>
+                        </span>
+                        <span className="station-stat-pill">
+                          <span className="stat-label">Mức đầy TB:</span>
+                          <strong className="stat-value">{group.averageFillPct !== null ? `${group.averageFillPct}%` : '—'}</strong>
+                        </span>
+                        <span className="station-stat-pill">
+                          <span className="stat-label">Cập nhật:</span>
+                          <strong className="stat-value">{group.lastSeenText}</strong>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bin-card-grid">
+                    {group.filteredCompartments.map(({ bin, label }) => {
+                      if (!bin) return null;
+                      const vm = computeBinViewModel(bin, clock);
+                      const targetId = bin.id || `${group.code}:${bin.binCode}`;
+                      return (
+                        <Link
+                          to={`/bins/${encodeURIComponent(targetId)}`}
+                          className={`bin-card ${!vm.isValidReading ? 'is-unavailable' : ''} ${vm.isUninstalled ? 'bin-card--uninstalled' : ''}`}
+                          key={`${group.code}-${bin.binCode}`}
+                          data-station={group.code}
+                          data-installed={vm.isUninstalled ? 'false' : 'true'}
+                        >
+                          <div className="bin-card__top">
+                            <span className="bin-card__icon"><IconTrash /></span>
+                            <StatusBadge
+                              status={bin.status}
+                              isValidReading={vm.isValidReading}
+                              isUninstalled={Boolean(vm.isUninstalled)}
+                              labelOverride={vm.statusBadgeText}
+                            />
+                          </div>
+                          <div className="bin-card__title">
+                            <span className="device-id-code">{group.code} • {bin.binCode}</span>
+                            <h2>{label}</h2>
+                            <p>{bin.location || group.location}</p>
+                          </div>
+                          <div className="bin-card__fill">
+                            <div>
+                              <span>Mức độ đầy</span>
+                              <StatusBadge
+                                status={bin.fillCategory}
+                                kind="fill"
+                                isValidReading={vm.isValidReading}
+                                isUninstalled={Boolean(vm.isUninstalled)}
+                                labelOverride={vm.fillCategoryBadgeText}
+                              />
+                            </div>
+                            <FillMeter bin={bin} now={clock} />
+                          </div>
+                          <div className="bin-card__metrics">
+                            {vm.hasDistance && (
+                              <div>
+                                <span>Khoảng cách</span>
+                                <strong>{vm.distanceText}</strong>
+                              </div>
+                            )}
+                            <div>
+                              <span>{vm.isUninstalled ? 'Trạng thái phần cứng' : 'Cập nhật lần cuối'}</span>
+                              <strong>{vm.lastSeenText}</strong>
+                            </div>
+                          </div>
+                          <span className="bin-card__open">Mở chi tiết <span aria-hidden="true">↗</span></span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
             </div>}
       {user && user.role !== 'WORKER' && <p className="page-footnote">Thao tác tạo, sửa hoặc ngừng hoạt động thùng chưa được cung cấp trong giao diện hiện tại.</p>}
     </section>
@@ -294,13 +458,26 @@ export function BinDetailPage() {
     try {
       const { bin: result } = await getData<{ bin: Bin }>(`/api/bins/${encodeURIComponent(id)}`, token);
       setBin((current) => mergeRestBinsWithRealtimeState(current ? [current] : null, [{ ...result, isReal: true }], Date.now())[0]);
-      try {
-        const history = await getData<{ readings: SensorReading[] }>(`/api/dashboard/sensor-readings?${new URLSearchParams({ binCode: result.binCode })}`, token);
-        setReadings(history.readings);
-        setHistoryError('');
-      } catch (historyLoadError) {
+      if (result.installed === false) {
         setReadings([]);
-        setHistoryError(historyLoadError instanceof Error ? historyLoadError.message : 'Không thể tải lịch sử cảm biến.');
+        setHistoryError('');
+      } else {
+        try {
+          const stationCode = resolveBinStationCode(result);
+          const params = new URLSearchParams({
+            binCode: result.binCode,
+            stationCode
+          });
+          if (result.stationId) {
+            params.set('stationId', result.stationId);
+          }
+          const history = await getData<{ readings: SensorReading[] }>(`/api/dashboard/sensor-readings?${params.toString()}`, token);
+          setReadings(history.readings);
+          setHistoryError('');
+        } catch (historyLoadError) {
+          setReadings([]);
+          setHistoryError(historyLoadError instanceof Error ? historyLoadError.message : 'Không thể tải lịch sử cảm biến.');
+        }
       }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Không thể tải chi tiết thùng rác.');
@@ -315,18 +492,45 @@ export function BinDetailPage() {
     return () => { active = false; };
   }, [loadDetail]);
 
-  // Realtime Socket.IO subscriptions for Pi 5 heartbeat & status updates
+  // Realtime Socket.IO subscriptions for Station A & Station B heartbeat & status updates
   useEffect(() => {
     if (!realtime) return;
+
+    realtime.emit('subscribe:station', { stationCode: 'ALL' });
 
     const onHeartbeat = (payload: any) => {
       setBin((current) => (current ? mergeDeviceHeartbeatToBins([current], payload, Date.now())[0] : null));
     };
 
+    const onTelemetry = (event: any) => {
+      if (!event || !event.binCode) return;
+      const incomingStationCode = (event.stationCode || 'STATION_A').toUpperCase();
+      const fillVal = typeof event.fillLevel === 'number' && !Number.isNaN(event.fillLevel) ? event.fillLevel : null;
+      const nowIso = new Date().toISOString();
+      setBin((current) => {
+        if (!current || current.installed === false) return current;
+        const bStationCode = resolveBinStationCode(current);
+        if (current.binCode === event.binCode && bStationCode === incomingStationCode) {
+          return {
+            ...current,
+            currentFillLevel: fillVal,
+            distanceCm: typeof event.distance === 'number' ? event.distance : current.distanceCm ?? null,
+            fillCategory: getFillCategoryForLevel(fillVal),
+            status: fillVal !== null ? ('ONLINE' as BinStatus) : ('OFFLINE' as BinStatus),
+            lastSeen: nowIso,
+            isReal: true
+          };
+        }
+        return current;
+      });
+    };
+
     realtime.on('device:heartbeat', onHeartbeat);
+    realtime.on('bin:telemetry', onTelemetry);
 
     return () => {
       realtime.off('device:heartbeat', onHeartbeat);
+      realtime.off('bin:telemetry', onTelemetry);
     };
   }, [realtime]);
 
@@ -336,17 +540,18 @@ export function BinDetailPage() {
   if (error || !bin) return <section className="page detail-page"><Link className="back-link" to="/bins">← Quản lý thùng rác</Link><div className="state-panel state-panel--error"><IconActivity /><strong>Không thể tải thông tin thùng rác</strong><span>{error || 'Không tìm thấy thùng rác'}</span><div className="state-panel__actions"><button className="button-secondary" type="button" onClick={refreshDetail}>Thử lại</button><Link className="button-secondary" to="/bins">Quay lại</Link></div></div></section>;
 
   const vm = computeBinViewModel(bin, clock);
+  const binStationCode = resolveBinStationCode(bin);
 
   return (
     <section className="page detail-page">
       <Link className="back-link" to="/bins">← Quản lý thùng rác</Link>
       <div className="page-heading detail-heading">
         <div>
-          <div className="eyebrow">THÔNG TIN THIẾT BỊ</div>
+          <div className="eyebrow">THÔNG TIN THIẾT BỊ • {binStationCode}</div>
           <h1>{bin.name}</h1>
-          <p><span className="device-id-code">{bin.binCode}</span><span className="detail-location">{bin.location}</span></p>
+          <p><span className="device-id-code">{binStationCode} • {bin.binCode}</span><span className="detail-location">{bin.location}</span></p>
         </div>
-        <StatusBadge status={bin.status} isValidReading={vm.isValidReading} labelOverride={vm.statusBadgeText} />
+        <StatusBadge status={bin.status} isValidReading={vm.isValidReading} isUninstalled={Boolean(vm.isUninstalled)} labelOverride={vm.statusBadgeText} />
       </div>
 
       <div className="bin-detail-hero">
@@ -356,7 +561,7 @@ export function BinDetailPage() {
             {vm.displayPercentage}
           </strong>
           <FillMeter bin={bin} now={clock} />
-          <StatusBadge status={bin.fillCategory} kind="fill" isValidReading={vm.isValidReading} labelOverride={vm.fillCategoryBadgeText} />
+          <StatusBadge status={bin.fillCategory} kind="fill" isValidReading={vm.isValidReading} isUninstalled={Boolean(vm.isUninstalled)} labelOverride={vm.fillCategoryBadgeText} />
         </div>
         <div className="bin-detail-facts">
           {vm.hasDistance && (

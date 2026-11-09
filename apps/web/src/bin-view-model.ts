@@ -523,7 +523,7 @@ export const DEFAULT_HARDWARE_METADATA: Record<string, { name: string; location:
 export function createDefaultStationBBins(): (Bin & { distanceCm: number | null; isReal: boolean })[] {
   return [
     {
-      id: 'station_b_canonical_recyclable',
+      id: 'bin_station_b_recyclable_id',
       binCode: 'RECYCLABLE',
       name: 'Rác tái chế',
       location: 'Khuôn viên phía Đông',
@@ -545,7 +545,7 @@ export function createDefaultStationBBins(): (Bin & { distanceCm: number | null;
       isReal: true
     },
     {
-      id: 'station_b_canonical_organic',
+      id: 'bin_station_b_organic_id',
       binCode: 'ORGANIC',
       name: 'Rác hữu cơ',
       location: 'Khuôn viên phía Đông',
@@ -567,7 +567,7 @@ export function createDefaultStationBBins(): (Bin & { distanceCm: number | null;
       isReal: true
     },
     {
-      id: 'station_b_canonical_non_recyclable',
+      id: 'bin_station_b_non_recyclable_id',
       binCode: 'NON_RECYCLABLE',
       name: 'Rác không tái chế',
       location: 'Khuôn viên phía Đông',
@@ -589,6 +589,42 @@ export function createDefaultStationBBins(): (Bin & { distanceCm: number | null;
       isReal: true
     }
   ];
+}
+
+/**
+ * Chuẩn hóa danh sách ngăn rác trả về từ API (/api/bins hoặc /api/dashboard/summary)
+ * để cả trang Tổng quan (DashboardPage) và trang Quản lý thùng rác (BinListPage)
+ * luôn nhận đủ cả Station A và Station B.
+ */
+export function ensureAllStationBins<T extends Bin & { distanceCm?: number | null; isReal?: boolean }>(
+  apiBins: T[],
+  selectedStationCode?: string
+): (T & { isReal: boolean })[] {
+  const filterCode = selectedStationCode?.trim().toUpperCase();
+  const normalized = apiBins.map((b) => ({
+    ...b,
+    stationCode: resolveBinStationCode(b),
+    isReal: true
+  }));
+
+  if (filterCode === 'STATION_A') {
+    return normalized.filter((b) => resolveBinStationCode(b) === 'STATION_A');
+  }
+
+  const existingStationBCodes = new Set(
+    normalized
+      .filter((b) => resolveBinStationCode(b) === 'STATION_B')
+      .map((b) => b.binCode)
+  );
+
+  const missingStationB = createDefaultStationBBins()
+    .filter((b) => !existingStationBCodes.has(b.binCode)) as unknown as (T & { isReal: boolean })[];
+
+  const combined = missingStationB.length > 0 ? [...normalized, ...missingStationB] : normalized;
+  if (filterCode === 'STATION_B') {
+    return combined.filter((b) => resolveBinStationCode(b) === 'STATION_B');
+  }
+  return combined;
 }
 
 export function ensureStationList(

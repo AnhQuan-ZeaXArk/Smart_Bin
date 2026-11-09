@@ -483,8 +483,23 @@ class TestStationBHardwareIntegration(unittest.TestCase):
 
         invalid_texts = ["HC1: 67", "HC2: 50%", "HC1: abc%", "INVALID_DATA"]
         for text in invalid_texts:
-            match = re.match(r'^HC1:\s*(-?\d+)\s*%$', text.strip(), re.IGNORECASE)
-            self.assertIsNone(match, f"Should not match invalid text: {text}")
+            self.assertIsNone(
+                StationBSerialWorker.parse_text_measurement_line(text),
+                f"Should not match invalid text: {text}"
+            )
+
+    def test_20_worker_text_measurement_marks_is_legacy_and_supports_esp32_prefix(self):
+        """Đảm bảo phép đo dạng text (HC1: 42% / [ESP32] HC1: 42.4%) gắn cờ isLegacy=True và có session_boot_count duy nhất."""
+        worker = StationBSerialWorker()
+        val = worker.parse_text_measurement_line("[ESP32] HC1: 42.4%")
+        self.assertEqual(val, 42)
+        worker._process_text_measurement(val)
+        latest = worker.get_latest_data()
+        self.assertIsNotNone(latest)
+        self.assertTrue(latest.get("isLegacy"), "Text measurement must set isLegacy=True to prevent watermark collision on restart")
+        self.assertEqual(latest["sensors"]["recyclable"]["fillLevel"], 42)
+        self.assertEqual(latest["sensors"]["recyclable"]["fillPercent"], 42)
+        self.assertGreater(latest["bootCount"], 1)
 
 
 if __name__ == '__main__':

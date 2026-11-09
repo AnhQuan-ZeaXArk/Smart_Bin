@@ -13,9 +13,13 @@ const router = Router();
 const compartmentFillHeartbeatSchema = z.object({
   distanceCm: z.coerce.number().optional().nullable(),
   fillLevel: z.coerce.number().optional().nullable(),
+  fillPercent: z.coerce.number().optional().nullable(),
   status: z.string().optional().default('OK'),
   updatedAt: z.string().optional().nullable()
-});
+}).transform((data) => ({
+  ...data,
+  fillLevel: data.fillLevel ?? data.fillPercent ?? null
+}));
 
 const deviceHeartbeatSchema = z.object({
   deviceId: z.string().min(1, 'deviceId không được để trống'),

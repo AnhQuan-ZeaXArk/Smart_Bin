@@ -38,6 +38,7 @@ export interface RealDeviceStatus {
   lastHeartbeat: string | null;
   receivedAt: string | null;
   sentAt: string | null;
+  lastSensorSentAt?: string | null;
   heartbeatCount: number;
   ageSeconds: number | null;
   isSocketConnected: boolean;
@@ -79,6 +80,8 @@ export class RealDeviceService {
   private heartbeatCount: number = 0;
   private lastSentAt: string | null = null;
   private lastReceivedAt: string | null = null;
+  private lastSensorSentAt: string | null = null;
+  private lastSensorReceivedDate: Date | null = null;
   private previousStatus: RealDeviceStatusType = 'OFFLINE';
   private previousSocketConnected: boolean = false;
   private isSocketConnected: boolean = false;
@@ -90,6 +93,14 @@ export class RealDeviceService {
   };
   private aiDetection: AiDetectionResult | null = null;
   private detectionHistory: AiDetectionResult[] = [];
+
+  // Isolated in-memory state for Station B (ESP32-C6 Serial B)
+  // NEVER mixed with Station A's state
+  private stationBLastHeartbeatDate: Date | null = null;
+  private stationBLastReceivedAt: string | null = null;
+  private stationBLastSentAt: string | null = null;
+  private stationBSensors: DeviceSensorsData | null = null;
+  private stationBHeartbeatCount: number = 0;
 
   // Active command pending registry
   private pendingCommands = new Map<string, PendingCommand>();
@@ -122,6 +133,17 @@ export class RealDeviceService {
     if (date) {
       this.lastReceivedAt = date.toISOString();
       this.heartbeatCount = Math.max(1, this.heartbeatCount);
+      if (this.sensors) {
+        this.lastSensorReceivedDate = date;
+      }
+    }
+  }
+
+  setStationBLastHeartbeatDateForTest(date: Date | null): void {
+    this.stationBLastHeartbeatDate = date;
+    if (date) {
+      this.stationBLastReceivedAt = date.toISOString();
+      this.stationBHeartbeatCount = Math.max(1, this.stationBHeartbeatCount);
     }
   }
 
@@ -158,6 +180,18 @@ export class RealDeviceService {
 
     if (input.sensors !== undefined) {
       this.sensors = input.sensors;
+      if (input.sensors !== null) {
+        this.lastSensorSentAt = this.lastSentAt;
+        this.lastSensorReceivedDate = now;
+      } else {
+        this.lastSensorSentAt = null;
+        this.lastSensorReceivedDate = null;
+      }
+    } else if (this.lastSensorReceivedDate && (now.getTime() - this.lastSensorReceivedDate.getTime() > DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_MS)) {
+      // Nếu các gói heartbeat sau không mang sensors và gói có sensors gần nhất đã quá ngưỡng 15s, xóa cache cảm biến cũ
+      this.sensors = null;
+      this.lastSensorSentAt = null;
+      this.lastSensorReceivedDate = null;
     }
 
     if (input.subsystems) {
@@ -220,6 +254,7 @@ export class RealDeviceService {
       lastHeartbeat: this.lastHeartbeatDate ? this.lastHeartbeatDate.toISOString() : null,
       receivedAt: this.lastReceivedAt,
       sentAt: this.lastSentAt,
+      lastSensorSentAt: this.lastSensorSentAt,
       heartbeatCount: this.heartbeatCount,
       ageSeconds,
       isSocketConnected: this.isSocketConnected,
@@ -234,6 +269,61 @@ export class RealDeviceService {
         offlineThresholdSeconds: DEVICE_HEALTH_CONFIG.OFFLINE_THRESHOLD_SECONDS,
         platform: 'Raspberry Pi 5'
       }
+    };
+  }
+
+  /**
+   * Ghi nhận nhịp tim/telemetry từ Trạm B (ESP32-C6 Serial B) vào vùng nhớ RAM tách biệt hoàn toàn với Trạm A.
+   */
+  recordStationBHeartbeat(input: HeartbeatPayload): void {
+    const now = new Date();
+    this.stationBLastHeartbeatDate = now;
+    this.stationBLastReceivedAt = now.toISOString();
+    this.stationBLastSentAt = input.sentAt || this.stationBLastReceivedAt;
+    this.stationBHeartbeatCount += 1;
+    if (input.sensors !== undefined) {
+      this.stationBSensors = input.sensors;
+    }
+  }
+
+  /**
+   * Trả về trạng thái RAM tách biệt của Trạm B (ESP32-C6).
+   */
+  getStationBStatus(nowOverride?: number): {
+    stationCode: 'STATION_B';
+    status: RealDeviceStatusType;
+    lastHeartbeat: string | null;
+    receivedAt: string | null;
+    sentAt: string | null;
+    heartbeatCount: number;
+    ageSeconds: number | null;
+    sensors: DeviceSensorsData | null;
+  } {
+    const now = nowOverride ?? Date.now();
+    let computedStatus: RealDeviceStatusType = 'OFFLINE';
+    let ageSeconds: number | null = null;
+
+    if (this.stationBLastHeartbeatDate) {
+      const elapsedMs = now - this.stationBLastHeartbeatDate.getTime();
+      ageSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+      if (elapsedMs <= DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_MS) {
+        computedStatus = 'ONLINE';
+      } else if (elapsedMs < DEVICE_HEALTH_CONFIG.WARNING_THRESHOLD_MS) {
+        computedStatus = 'WARNING';
+      } else {
+        computedStatus = 'OFFLINE';
+      }
+    }
+
+    return {
+      stationCode: 'STATION_B',
+      status: computedStatus,
+      lastHeartbeat: this.stationBLastHeartbeatDate ? this.stationBLastHeartbeatDate.toISOString() : null,
+      receivedAt: this.stationBLastReceivedAt,
+      sentAt: this.stationBLastSentAt,
+      heartbeatCount: this.stationBHeartbeatCount,
+      ageSeconds,
+      sensors: (computedStatus === 'ONLINE' || computedStatus === 'WARNING') ? this.stationBSensors : null
     };
   }
 
@@ -387,10 +477,17 @@ export class RealDeviceService {
     this.heartbeatCount = 0;
     this.lastSentAt = null;
     this.lastReceivedAt = null;
+    this.lastSensorSentAt = null;
+    this.lastSensorReceivedDate = null;
     this.previousStatus = 'OFFLINE';
     this.previousSocketConnected = false;
     this.isSocketConnected = false;
     this.sensors = null;
+    this.stationBLastHeartbeatDate = null;
+    this.stationBLastReceivedAt = null;
+    this.stationBLastSentAt = null;
+    this.stationBSensors = null;
+    this.stationBHeartbeatCount = 0;
     this.subsystems = {
       yolo: 'STOPPED',
       camera: 'DISCONNECTED',

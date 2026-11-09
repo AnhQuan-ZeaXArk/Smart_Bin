@@ -26,7 +26,7 @@ import {
   mergeRestBinsWithRealtimeState,
   groupBinsByStation,
   DEFAULT_STATION_CONFIG,
-  createDefaultStationBBins,
+  ensureAllStationBins,
   ensureStationList
 } from './bin-view-model';
 
@@ -278,19 +278,7 @@ export function DashboardPage() {
       .then((result) => {
         if (active) {
           const apiBins = result.bins || [];
-          const hasStationB = apiBins.some(
-            (b) => b.stationCode === 'STATION_B' || (b as any).station?.code === 'STATION_B' || b.stationId === 'station_b_canonical_id'
-          );
-
-          // Round 22: Nếu API chưa trả về Station B (Production Database chưa migration),
-          // bổ sung fallback bins cho Station B để Dashboard và realtime updates hoạt động ngay
-          const shouldAddStationB = !hasStationB && (!selectedStationCode || selectedStationCode === 'STATION_B');
-          const resolvedBins: DashboardBin[] = shouldAddStationB
-            ? [
-                ...apiBins.map((b) => ({ ...b, isReal: true })),
-                ...createDefaultStationBBins()
-              ]
-            : apiBins.map((b) => ({ ...b, isReal: true }));
+          const resolvedBins: DashboardBin[] = ensureAllStationBins(apiBins, selectedStationCode);
 
           setData((currentData) => {
             const mergedBins = mergeRestBinsWithRealtimeState(
@@ -719,6 +707,7 @@ export function SensorHistoryPage() {
   const [bins, setBins] = useState<Bin[]>([]);
   const [binsLoaded, setBinsLoaded] = useState(false);
   const [readings, setReadings] = useState<DashboardData['recentSensorReadings']>([]);
+  const [stationCode, setStationCode] = useState<'ALL' | 'STATION_A' | 'STATION_B'>('ALL');
   const [category, setCategory] = useState<'ALL' | WasteCategoryKey>('ALL');
   const [range, setRange] = useState<'ALL' | 'TODAY' | '7D' | '30D'>('ALL');
   const [loading, setLoading] = useState(true);
@@ -728,7 +717,7 @@ export function SensorHistoryPage() {
   useEffect(() => {
     let active = true;
     getData<{ bins: Bin[] }>('/api/bins', token)
-      .then((result) => { if (active) setBins(result.bins); })
+      .then((result) => { if (active) setBins(ensureAllStationBins(result.bins)); })
       .catch((loadError) => { if (active) setError(loadError instanceof Error ? loadError.message : 'Không thể tải danh sách thùng.'); })
       .finally(() => { if (active) setBinsLoaded(true); });
     return () => { active = false; };
@@ -741,9 +730,11 @@ export function SensorHistoryPage() {
     if (!binsLoaded || error) return;
     let active = true;
     const params = new URLSearchParams();
+    if (stationCode !== 'ALL') {
+      params.set('stationCode', stationCode);
+    }
     if (category !== 'ALL') {
-      const bin = compartments.find((c) => c.key === category)?.bin;
-      if (bin) params.set('binCode', bin.binCode);
+      params.set('binCode', category);
     }
     const days = range === 'TODAY' ? 0 : range === '7D' ? 7 : range === '30D' ? 30 : null;
     if (days !== null) {
@@ -758,7 +749,7 @@ export function SensorHistoryPage() {
       .catch((loadError) => { if (active) setError(loadError instanceof Error ? loadError.message : 'Không thể tải lịch sử cảm biến.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [token, binsLoaded, category, range, compartments, error]);
+  }, [token, binsLoaded, stationCode, category, range, error]);
 
   const visibleReadings = readings.filter((reading) => category === 'ALL' || categoryByBinCode.has(reading.bin.binCode));
   const refreshHistory = () => { setLoading(true); setError(''); setRefreshKey((value) => value + 1); };
@@ -769,11 +760,19 @@ export function SensorHistoryPage() {
         <div>
           <div className="eyebrow">LỊCH SỬ DỮ LIỆU CẢM BIẾN</div>
           <h1>Lịch sử cảm biến</h1>
-          <p>Lịch sử dữ liệu từ các cảm biến siêu âm của hệ thống SmartBin.</p>
+          <p>Lịch sử dữ liệu từ các cảm biến siêu âm của hệ thống SmartBin theo từng trạm.</p>
         </div>
         <button className="button-secondary refresh-button" type="button" onClick={refreshHistory} disabled={loading}><IconRefresh /> Làm mới</button>
       </div>
       <div className="filter-bar">
+        <label>
+          Trạm thu gom
+          <select value={stationCode} onChange={(event) => { setLoading(true); setStationCode(event.target.value as 'ALL' | 'STATION_A' | 'STATION_B'); }}>
+            <option value="ALL">Tất cả các trạm</option>
+            <option value="STATION_A">Trạm A (STATION_A)</option>
+            <option value="STATION_B">Trạm B (STATION_B)</option>
+          </select>
+        </label>
         <label>
           Loại rác
           <select value={category} onChange={(event) => { setLoading(true); setCategory(event.target.value as 'ALL' | WasteCategoryKey); }}>
@@ -804,6 +803,7 @@ export function SensorHistoryPage() {
           <table>
             <thead>
               <tr>
+                <th>Trạm</th>
                 <th>Loại rác</th>
                 <th>Mức độ đầy</th>
                 <th>Khoảng cách đo được</th>
@@ -813,6 +813,7 @@ export function SensorHistoryPage() {
             <tbody>
               {visibleReadings.map((reading) => (
                 <tr key={reading.id}>
+                  <td><span className="device-id-code">{(reading.bin as any).station?.code || ((reading.bin as any).stationId === 'station_b_canonical_id' ? 'STATION_B' : 'STATION_A')}</span></td>
                   <td><strong>{categoryByBinCode.get(reading.bin.binCode) ?? reading.bin.name}</strong></td>
                   <td>{reading.fillLevel}%</td>
                   <td>{reading.distance} cm</td>

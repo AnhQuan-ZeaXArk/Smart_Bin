@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { env } from '../config/env.js';
+import { realDeviceService } from '../demo/real-device.service.js';
+import { CANONICAL_STATION_B_BINS, syncBinsWithRealDevice } from '../services/bin-sync.service.js';
 
 const router = Router();
 
@@ -59,19 +61,48 @@ router.get('/', async (_request, response, next) => {
       orderBy: { code: 'asc' }
     });
 
-    const formatted = stations.map((s) => ({
-      id: s.id,
-      code: s.code,
-      name: s.name,
-      status: s.status,
-      isActive: s.isActive,
-      location: s.location,
-      createdAt: s.createdAt,
-      updatedAt: s.updatedAt,
-      binsCount: s.bins.length,
-      installedBinsCount: s.bins.filter((b) => b.installed).length,
-      bins: s.bins
-    }));
+    const realAStatus = realDeviceService.getStatus();
+    const realBStatus = realDeviceService.getStationBStatus();
+
+    const formatted = stations.map((s) => {
+      const syncedBins = syncBinsWithRealDevice(s.bins as any, realAStatus);
+      const isOnline = s.code === 'STATION_A'
+        ? (realAStatus.status === 'ONLINE' || realAStatus.status === 'WARNING' || s.status === 'ONLINE')
+        : s.code === 'STATION_B'
+          ? (realBStatus.status === 'ONLINE' || realBStatus.status === 'WARNING' || s.status === 'ONLINE')
+          : s.status === 'ONLINE';
+      return {
+        id: s.id,
+        code: s.code,
+        name: s.name,
+        status: isOnline ? 'ONLINE' : s.status,
+        isActive: s.isActive,
+        location: s.location,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+        binsCount: syncedBins.length,
+        installedBinsCount: syncedBins.filter((b) => b.installed !== false).length,
+        bins: syncedBins
+      };
+    });
+
+    if (!formatted.some((s) => s.code === 'STATION_B')) {
+      const syncedBBins = syncBinsWithRealDevice(CANONICAL_STATION_B_BINS as any, realAStatus);
+      const isBOnline = realBStatus.status === 'ONLINE' || realBStatus.status === 'WARNING';
+      formatted.push({
+        id: 'station_b_canonical_id',
+        code: 'STATION_B',
+        name: 'Trạm Thu gom Mở rộng B',
+        status: isBOnline ? 'ONLINE' : 'OFFLINE',
+        isActive: true,
+        location: 'Khuôn viên phía Đông',
+        createdAt: new Date(0),
+        updatedAt: new Date(),
+        binsCount: 3,
+        installedBinsCount: 1,
+        bins: syncedBBins
+      } as any);
+    }
 
     return response.json({ stations: formatted });
   } catch (error) {

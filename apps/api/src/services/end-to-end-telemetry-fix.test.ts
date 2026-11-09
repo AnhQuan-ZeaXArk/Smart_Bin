@@ -1,6 +1,12 @@
 import assert from 'node:assert';
 import { UnifiedTelemetryIngestionService } from './unified-telemetry-ingestion.service.js';
-import { syncBinWithRealDevice, syncBinsWithRealDevice } from './bin-sync.service.js';
+import {
+  ensureStationBBinsIfMissing,
+  findCanonicalStationBBinById,
+  syncBinWithRealDevice,
+  syncBinsWithRealDevice
+} from './bin-sync.service.js';
+import { realDeviceService } from '../demo/real-device.service.js';
 import { prisma } from '../lib/prisma.js';
 
 /**
@@ -388,8 +394,106 @@ async function runEndToEndBackendTests() {
   }
   console.log('  -> PASS: syncBinsWithRealDevice trả về đúng 36%, 14%, 3% với lastSeen tươi (< 15s), không bị trừ kép delayOnPiMs\n');
 
+  // Test 9: Multi-Station Bin Management & Station B In-Memory Sync + Fallback (when DB only has Station A)
+  console.log('Test 9: Multi-Station Bin Management (Station A + Station B in-memory sync & unmigrated DB fallback)');
+  realDeviceService.reset();
+
+  // Ghi nhận nhịp tim Station A (HC1=36%, HC2=14%, HC3=3%) tiếp theo sau là nhịp tim không kèm sensors
+  const now9 = new Date();
+  realDeviceService.recordHeartbeat({
+    deviceId: 'raspberry-pi-5',
+    uptimeSeconds: 500,
+    sentAt: new Date(now9.getTime() - 3000).toISOString(),
+    sensors: {
+      recyclable: { fillLevel: 36, distanceCm: 38.4, status: 'OK', updatedAt: new Date(now9.getTime() - 12000).toISOString() },
+      nonRecyclable: { fillLevel: 14, distanceCm: 51.6, status: 'OK', updatedAt: new Date(now9.getTime() - 12000).toISOString() },
+      organic: { fillLevel: 3, distanceCm: 58.2, status: 'OK', updatedAt: new Date(now9.getTime() - 12000).toISOString() }
+    }
+  });
+  // Gói heartbeat tiếp theo không kèm sensors (sentAt mới hơn 4s) -> KHÔNG được làm hỏng delayOnPiMs!
+  realDeviceService.recordHeartbeat({
+    deviceId: 'raspberry-pi-5',
+    uptimeSeconds: 504,
+    sentAt: now9.toISOString()
+  });
+
+  // Ghi nhận nhịp tim Station B (HC1=42%) vào vùng nhớ RAM tách biệt của Station B
+  realDeviceService.recordStationBHeartbeat({
+    deviceId: 'smartbin_station_b_esp32c6',
+    uptimeSeconds: 120,
+    sentAt: now9.toISOString(),
+    sensors: {
+      recyclable: { fillLevel: 42, fillPercent: 42, distanceCm: 28.0, status: 'OK', updatedAt: now9.toISOString() },
+      organic: { status: 'NOT_INSTALLED' },
+      nonRecyclable: { status: 'NOT_INSTALLED' }
+    }
+  });
+
+  // Giả lập DB chưa chạy SQL migration (chỉ trả về 3 bin của Station A)
+  const dbOnlyStationA = [dbBin1, dbBin2, dbBin3];
+  const allMultiStationBins = ensureStationBBinsIfMissing(
+    syncBinsWithRealDevice(dbOnlyStationA),
+    realDeviceService.getStatus()
+  );
+
+  assert.strictEqual(allMultiStationBins.length, 6, 'Must return all 6 bins across Station A (3) and Station B (3)');
+  const stARec9 = allMultiStationBins.find((b) => b.stationCode === 'STATION_A' && b.binCode === 'RECYCLABLE')!;
+  const stANon9 = allMultiStationBins.find((b) => b.stationCode === 'STATION_A' && b.binCode === 'NON_RECYCLABLE')!;
+  const stAOrg9 = allMultiStationBins.find((b) => b.stationCode === 'STATION_A' && b.binCode === 'ORGANIC')!;
+  const stBRec9 = allMultiStationBins.find((b) => b.stationCode === 'STATION_B' && b.binCode === 'RECYCLABLE')!;
+  const stBOrg9 = allMultiStationBins.find((b) => b.stationCode === 'STATION_B' && b.binCode === 'ORGANIC')!;
+  const stBNon9 = allMultiStationBins.find((b) => b.stationCode === 'STATION_B' && b.binCode === 'NON_RECYCLABLE')!;
+
+  assert.strictEqual(stARec9.currentFillLevel, 36, 'Station A RECYCLABLE must be 36% even after sensorless heartbeat');
+  assert.strictEqual(stANon9.currentFillLevel, 14, 'Station A NON_RECYCLABLE must be 14%');
+  assert.strictEqual(stAOrg9.currentFillLevel, 3, 'Station A ORGANIC must be 3%');
+  assert.strictEqual(stARec9.status, 'ONLINE');
+
+  assert.strictEqual(stBRec9.installed, true, 'Station B RECYCLABLE is installed: true');
+  assert.strictEqual(stBRec9.currentFillLevel, 42, 'Station B RECYCLABLE receives 42% from Station B RAM state');
+  assert.strictEqual(stBRec9.status, 'ONLINE');
+
+  assert.strictEqual(stBOrg9.installed, false, 'Station B ORGANIC is installed: false');
+  assert.strictEqual(stBOrg9.currentFillLevel, null, 'Station B ORGANIC fill level is null');
+  assert.strictEqual(stBOrg9.status, 'MAINTENANCE', 'Station B ORGANIC status is MAINTENANCE');
+
+  assert.strictEqual(stBNon9.installed, false, 'Station B NON_RECYCLABLE is installed: false');
+  assert.strictEqual(stBNon9.currentFillLevel, null, 'Station B NON_RECYCLABLE fill level is null');
+  assert.strictEqual(stBNon9.status, 'MAINTENANCE', 'Station B NON_RECYCLABLE status is MAINTENANCE');
+
+  // Kiểm tra findCanonicalStationBBinById cho BinDetailPage (/api/bins/:id)
+  const detailCanonBRec = findCanonicalStationBBinById('bin_station_b_recyclable_id');
+  assert.ok(detailCanonBRec, 'Must resolve canonical Station B Recyclable bin by ID');
+  const syncedDetailBRec = syncBinWithRealDevice(detailCanonBRec!);
+  assert.strictEqual(syncedDetailBRec.currentFillLevel, 42, 'Bin Detail for Station B Recyclable must return 42%');
+  assert.strictEqual(syncedDetailBRec.stationCode, 'STATION_B');
+
+  realDeviceService.reset();
+  console.log('  -> PASS: Đồng bộ đầy đủ 6 ngăn rác (Trạm A: 36%, 14%, 3%; Trạm B: 42%, Chưa lắp đặt, Chưa lắp đặt)\n');
+
+  // Test 10: Station B plain-text HC1 firmware restart does NOT trigger SEQUENCE_CLASH_TAMPERED when isLegacy=true
+  console.log('Test 10: Station B plain-text HC1 firmware restart (isLegacy=true) updates Bin.currentFillLevel without watermark collision');
+  // Trước đó Test 3 đã ghi watermark (bootCount=1, sampleSeq=1) cho STATION_B RECYCLABLE.
+  // Giả lập Pi Agent khởi động lại và gửi sampleSeq=1 từ luồng text 'HC1: 42%' với isLegacy=true:
+  const resBRestart = await ingestion.ingest({
+    stationCode: 'STATION_B',
+    binCode: 'RECYCLABLE',
+    fillLevel: 42,
+    distanceCm: null,
+    sensorStatus: 'OK',
+    isLegacy: true,
+    bootCount: 1n,
+    bootId: 'esp32c6_serial_b_restart',
+    sampleSeq: 1,
+    clientMessageId: `STATION_B-restart-${Date.now()}:RECYCLABLE`
+  });
+  assert.strictEqual(resBRestart.accepted, true, 'Station B plain-text measurement after restart must be accepted');
+  assert.strictEqual(resBRestart.status, 'ACCEPTED_IN_ORDER');
+  assert.strictEqual(binBRec.currentFillLevel, 42, 'Station B RECYCLABLE DB currentFillLevel must update to 42%');
+  console.log('  -> PASS: Station B plain-text HC1 không bị chặn bởi SEQUENCE_CLASH_TAMPERED sau khi khởi động lại Pi Agent\n');
+
   console.log('================================================================');
-  console.log('  ALL 8 END-TO-END BACKEND TELEMETRY TESTS PASSED CLEANLY (8/8)!');
+  console.log('  ALL 10 END-TO-END BACKEND TELEMETRY TESTS PASSED CLEANLY (10/10)!');
   console.log('================================================================\n');
 }
 

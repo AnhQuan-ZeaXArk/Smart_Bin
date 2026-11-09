@@ -116,6 +116,7 @@ export interface DeviceCommandStatusPayload {
 export interface CompartmentFillData {
   distanceCm?: number | null;
   fillLevel?: number | null;
+  fillPercent?: number | null;
   status?: 'OK' | 'OUT_OF_RANGE' | 'SENSOR_ERROR' | 'STALE' | 'NOT_ATTACHED' | string;
   updatedAt?: string | null;
 }

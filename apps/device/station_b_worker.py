@@ -55,6 +55,28 @@ class StationBSerialWorker:
 
         # Trạng thái cảm biến Trạm B (Chỉ Recyclable được lắp đặt)
         self.latest_telemetry: Optional[Dict[str, Any]] = None
+        self.session_boot_count: int = max(1, int(time.time()))
+        self.session_boot_id: str = f"esp32c6_serial_b_{self.session_boot_count}"
+
+    @staticmethod
+    def parse_text_measurement_line(line: str) -> Optional[int]:
+        """Phân tích chuỗi văn bản từ ESP32-C6 Trạm B (ví dụ: 'HC1: 67%', '[ESP32] HC1: 67%', 'HC1: 67.5%').
+        Chỉ chấp nhận phép đo HC1 hợp lệ có ký hiệu % ở cuối.
+        """
+        if not line:
+            return None
+        cleaned = line.strip()
+        match = re.match(
+            r'^(?:\[(?:ESP32|ESP32-C6|STATION_B)\]\s*)?HC1\s*[:=]\s*(-?\d+(?:\.\d+)?)\s*%$',
+            cleaned,
+            re.IGNORECASE
+        )
+        if not match:
+            return None
+        try:
+            return int(round(float(match.group(1))))
+        except (ValueError, TypeError):
+            return None
 
     def find_serial_port(self) -> Optional[str]:
         """Xác định cổng Serial B theo thứ tự phân cấp 5 tầng an toàn.
@@ -86,11 +108,12 @@ class StationBSerialWorker:
                 if not real.endswith('ttyUSB0'):
                     return p
 
-        # 5. Cổng ttyUSB1 trực tiếp (nếu khác ttyUSB0 của Trạm A)
-        if os.path.exists('/dev/ttyUSB1'):
-            real_b = os.path.realpath('/dev/ttyUSB1')
-            if not real_b.endswith('ttyUSB0'):
-                return '/dev/ttyUSB1'
+        # 5. Cổng ttyUSB1 / ttyACM0 / ttyACM1 trực tiếp (nếu khác ttyUSB0 của Trạm A)
+        for candidate in ('/dev/ttyUSB1', '/dev/ttyACM0', '/dev/ttyACM1'):
+            if os.path.exists(candidate):
+                real_b = os.path.realpath(candidate)
+                if not real_b.endswith('ttyUSB0'):
+                    return candidate
 
         # 6. Hỗ trợ Windows khi phát triển / test
         if sys.platform.startswith('win'):
@@ -191,10 +214,9 @@ class StationBSerialWorker:
                             continue
 
                         # 1. Định dạng văn bản thuần từ firmware vật lý ESP32-C6 (ví dụ: "HC1: 67%", "HC1: 0%")
-                        text_match = re.match(r'^HC1:\s*(-?\d+)\s*%$', line, re.IGNORECASE)
-                        if text_match:
-                            percent_val = int(text_match.group(1))
-                            self._process_text_measurement(percent_val)
+                        parsed_percent = self.parse_text_measurement_line(line)
+                        if parsed_percent is not None:
+                            self._process_text_measurement(parsed_percent)
                             continue
 
                         # 2. Định dạng NDJSON cấu trúc
@@ -253,9 +275,10 @@ class StationBSerialWorker:
                 'deviceId': 'smartbin_station_b_esp32c6',
                 'deviceType': 'ULTRASONIC_SENSOR',
                 'status': 'ONLINE',
+                'isLegacy': True,
                 'sampleSeq': current_seq,
-                'bootCount': 1,
-                'bootId': 'esp32c6_serial_b',
+                'bootCount': self.session_boot_count,
+                'bootId': self.session_boot_id,
                 'sentAt': now_iso,
                 'sensors': {
                     'recyclable': {

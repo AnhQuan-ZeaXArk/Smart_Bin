@@ -6,13 +6,14 @@ import { getFillCategory } from './bin.routes.js';
 import { env } from '../config/env.js';
 import { demoService } from '../demo/demo.service.js';
 import { realDeviceService } from '../demo/real-device.service.js';
-import { syncBinsWithRealDevice } from '../services/bin-sync.service.js';
+import { ensureStationBBinsIfMissing, syncBinsWithRealDevice } from '../services/bin-sync.service.js';
 
 const router = Router();
 const dateQuery = z.string().datetime({ offset: true }).optional();
 const historyQuery = z.object({
   stationId: z.string().optional(),
   stationCode: z.string().optional(),
+  binId: z.string().optional(),
   binCode: z.string().optional(),
   from: dateQuery,
   to: dateQuery,
@@ -38,26 +39,33 @@ router.get('/summary', async (request, response, next) => {
     }
 
     const isStationAFilter = targetStationId === 'station_a_canonical_id' || rawStationCode?.toUpperCase() === 'STATION_A';
+    const isStationBUnmigratedFilter = !targetStationId && rawStationCode?.toUpperCase() === 'STATION_B';
 
-    const bins = await prisma.bin.findMany({
-      where: {
-        isActive: true,
-        ...(targetStationId
-          ? isStationAFilter
-            ? {
-                OR: [
-                  { stationId: targetStationId },
-                  { stationId: null }
-                ]
-              }
-            : { stationId: targetStationId }
-          : {})
-      },
-      include: { station: true },
-      orderBy: [{ stationId: 'asc' }, { binCode: 'asc' }]
-    });
+    const bins = isStationBUnmigratedFilter
+      ? []
+      : await prisma.bin.findMany({
+          where: {
+            isActive: true,
+            ...(targetStationId
+              ? isStationAFilter
+                ? {
+                    OR: [
+                      { stationId: targetStationId },
+                      { stationId: null }
+                    ]
+                  }
+                : { stationId: targetStationId }
+              : {})
+          },
+          include: { station: true },
+          orderBy: [{ stationId: 'asc' }, { binCode: 'asc' }]
+        });
 
-    const latest = syncBinsWithRealDevice(bins, realStatus, targetStationId);
+    const latest = ensureStationBBinsIfMissing(
+      syncBinsWithRealDevice(bins, realStatus, targetStationId),
+      realStatus,
+      { stationCode: rawStationCode, stationId: targetStationId }
+    );
 
     const installedBins = latest.filter((bin) => bin.installed !== false);
     const uninstalledCount = latest.filter((bin) => bin.installed === false).length;
@@ -110,17 +118,45 @@ router.get('/sensor-readings', async (request, response, next) => {
       return response.json({ readings: demoService.getSensorReadings(query) });
     }
 
+    const rawStationCode = query.stationCode?.trim().toUpperCase();
     let targetStationId = query.stationId;
-    if (!targetStationId && query.stationCode) {
-      const station = await prisma.station.findUnique({ where: { code: query.stationCode } });
+    if (!targetStationId && rawStationCode) {
+      const station = await prisma.station.findUnique({ where: { code: rawStationCode } });
       if (station) targetStationId = station.id;
     }
 
+    const isStationAFilter = targetStationId === 'station_a_canonical_id' || rawStationCode === 'STATION_A';
+    const isStationBUnmigratedFilter = !targetStationId && rawStationCode === 'STATION_B';
+    if (isStationBUnmigratedFilter) {
+      return response.json({ readings: [] });
+    }
+
+    const binFilter: Record<string, any> = {};
+    if (query.binCode) {
+      binFilter.binCode = query.binCode;
+    }
+    if (targetStationId) {
+      if (isStationAFilter) {
+        binFilter.OR = [{ stationId: targetStationId }, { stationId: null }];
+      } else {
+        binFilter.stationId = targetStationId;
+      }
+    }
+
     const readings = await prisma.sensorReading.findMany({
-      include: { bin: { select: { binCode: true, name: true, stationId: true } } },
+      include: {
+        bin: {
+          select: {
+            binCode: true,
+            name: true,
+            stationId: true,
+            station: { select: { id: true, code: true, name: true } }
+          }
+        }
+      },
       where: {
-        ...(targetStationId ? { bin: { stationId: targetStationId } } : {}),
-        ...(query.binCode ? { bin: { binCode: query.binCode } } : {}),
+        ...(query.binId ? { binId: query.binId } : {}),
+        ...(Object.keys(binFilter).length > 0 ? { bin: binFilter } : {}),
         ...(query.from || query.to ? { timestamp: { ...(query.from ? { gte: new Date(query.from) } : {}), ...(query.to ? { lte: new Date(query.to) } : {}) } } : {}),
         ...(query.fillMin !== undefined || query.fillMax !== undefined ? { fillLevel: { ...(query.fillMin !== undefined ? { gte: query.fillMin } : {}), ...(query.fillMax !== undefined ? { lte: query.fillMax } : {}) } } : {})
       },

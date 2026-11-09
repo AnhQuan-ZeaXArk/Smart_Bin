@@ -51,6 +51,7 @@ const deviceTelemetryInputSchema = z.object({
   bootId: z.string().optional(),
   sampleSeq: z.coerce.number().optional(),
   payloadHash: z.string().optional(),
+  isLegacy: z.boolean().optional(),
   subsystems: z.object({
     yolo: z.string().optional(),
     camera: z.string().optional(),
@@ -283,6 +284,9 @@ export class RealtimeGateway {
             if (stationCode === 'STATION_A') {
               realDeviceService.recordHeartbeat(normalizedData, this.io);
             } else {
+              if (stationCode === 'STATION_B') {
+                realDeviceService.recordStationBHeartbeat(normalizedData);
+              }
               // 2. Broadcast nhịp tim cho các trạm khác (ví dụ: STATION_B) một lần duy nhất tới toàn bộ client
               this.io.emit('device:heartbeat', normalizedData);
             }
@@ -313,6 +317,7 @@ export class RealtimeGateway {
                       bootId: parsed.data.bootId,
                       sampleSeq: parsed.data.sampleSeq,
                       payloadHash: parsed.data.payloadHash,
+                      isLegacy: parsed.data.isLegacy,
                       timestamp: projectSensorTimestamp(parsed.data.sentAt, comp.data.updatedAt, serverReceivedAt)
                     });
                     binResults.push({ binCode: comp.binCode, status: result.status });

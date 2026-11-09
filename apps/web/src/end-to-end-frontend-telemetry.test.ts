@@ -6,6 +6,8 @@ import {
   groupBinsByStation,
   DEFAULT_STATION_CONFIG,
   createDefaultStationBBins,
+  ensureAllStationBins,
+  resolveBinStationCode,
   type Bin
 } from './bin-view-model.js';
 
@@ -523,8 +525,89 @@ function runFrontendEndToEndTests() {
   assert.strictEqual(afterRestRefresh.find((b) => b.binCode === 'ORGANIC')!.currentFillLevel, 3, 'REST refresh must NOT overwrite newer 3% realtime value');
   console.log('  -> PASS: Partial Socket.IO update và REST refresh bảo toàn tuyệt đối các giá trị cảm biến hợp lệ\n');
 
+  // Test 20: Multi-Station Synchronization Across Overview, Bin Management, and Bin Detail (Station A: 36%, 14%, 3% + Station B: 42%, NOT_INSTALLED)
+  console.log('Test 20: Multi-Station Synchronization Across Overview & Bin Management (Station A: 36/14/3%, Station B: 42% + 2 NOT_INSTALLED)');
+  const now20 = Date.now();
+  // Giả lập API chỉ trả về 3 bin của Station A (trước khi chạy SQL migration)
+  const apiBinsOnlyA = [
+    { ...initialBins[0], currentFillLevel: 36, status: 'ONLINE' as const, lastSeen: new Date(now20).toISOString() },
+    { ...initialBins[1], currentFillLevel: 14, status: 'ONLINE' as const, lastSeen: new Date(now20).toISOString() },
+    { ...initialBins[2], currentFillLevel: 3, status: 'ONLINE' as const, lastSeen: new Date(now20).toISOString() }
+  ];
+
+  // Cả DashboardPage và BinListPage đều gọi ensureAllStationBins -> luôn có đủ 6 bins (3 của Trạm A + 3 của Trạm B)
+  const normalizedMultiBins = ensureAllStationBins(apiBinsOnlyA as any);
+  assert.strictEqual(normalizedMultiBins.length, 6, 'ensureAllStationBins must provide all 6 bins across Station A and Station B');
+
+  // Nhận gói realtime heartbeat của Station B với HC1 = 42%
+  const hbStationB42 = {
+    stationCode: 'STATION_B',
+    deviceId: 'smartbin_station_b_esp32c6',
+    status: 'ONLINE',
+    sentAt: new Date(now20).toISOString(),
+    receivedAt: new Date(now20).toISOString(),
+    lastHeartbeat: new Date(now20).toISOString(),
+    sensors: {
+      recyclable: {
+        fillLevel: 42,
+        fillPercent: 42,
+        distanceCm: 28.5,
+        status: 'OK',
+        updatedAt: new Date(now20).toISOString()
+      },
+      organic: { status: 'NOT_INSTALLED' },
+      nonRecyclable: { status: 'NOT_INSTALLED' }
+    }
+  };
+
+  const syncedBins20 = mergeDeviceHeartbeatToBins(normalizedMultiBins as any, hbStationB42, now20);
+  const groups20 = groupBinsByStation(syncedBins20, DEFAULT_STATION_CONFIG, now20);
+  assert.strictEqual(groups20.length, 2, 'Both Overview and Bin Management must render 2 station groups (STATION_A and STATION_B)');
+
+  const groupA20 = groups20.find((g) => g.code === 'STATION_A')!;
+  const groupB20 = groups20.find((g) => g.code === 'STATION_B')!;
+
+  // Kiểm tra Station A trên cả Overview & Bin Management: 36%, 14%, 3%, TB = 18%
+  assert.strictEqual(groupA20.installedCount, 3);
+  assert.strictEqual(groupA20.totalBinsCount, 3);
+  assert.strictEqual(groupA20.averageFillPct, 18);
+  assert.strictEqual(computeBinViewModel(groupA20.compartments.find((c) => c.key === 'RECYCLABLE')!.bin, now20).displayPercentage, '36%');
+  assert.strictEqual(computeBinViewModel(groupA20.compartments.find((c) => c.key === 'NON_RECYCLABLE')!.bin, now20).displayPercentage, '14%');
+  assert.strictEqual(computeBinViewModel(groupA20.compartments.find((c) => c.key === 'ORGANIC')!.bin, now20).displayPercentage, '3%');
+
+  // Kiểm tra Station B trên cả Overview & Bin Management: RECYCLABLE = 42% (ONLINE), ORGANIC & NON_RECYCLABLE = Chưa lắp đặt ('—'), TB = 42%
+  assert.strictEqual(groupB20.installedCount, 1, 'Station B has exactly 1 installed bin');
+  assert.strictEqual(groupB20.totalBinsCount, 3, 'Station B has 3 total compartments');
+  assert.strictEqual(groupB20.status, 'ONLINE');
+  assert.strictEqual(groupB20.averageFillPct, 42, 'Station B average fill is 42% (excludes NOT_INSTALLED bins)');
+
+  const vmBRec20 = computeBinViewModel(groupB20.compartments.find((c) => c.key === 'RECYCLABLE')!.bin, now20);
+  const vmBOrg20 = computeBinViewModel(groupB20.compartments.find((c) => c.key === 'ORGANIC')!.bin, now20);
+  const vmBNon20 = computeBinViewModel(groupB20.compartments.find((c) => c.key === 'NON_RECYCLABLE')!.bin, now20);
+
+  assert.strictEqual(vmBRec20.isValidReading, true);
+  assert.strictEqual(vmBRec20.displayPercentage, '42%');
+  assert.strictEqual(vmBRec20.progressWidth, '42%');
+  assert.strictEqual(vmBRec20.statusBadgeText, 'Trực tuyến');
+
+  assert.strictEqual(vmBOrg20.isUninstalled, true);
+  assert.strictEqual(vmBOrg20.displayPercentage, '—');
+  assert.strictEqual(vmBOrg20.statusBadgeText, 'Chưa lắp đặt');
+  assert.strictEqual(vmBOrg20.isOffline, false);
+
+  assert.strictEqual(vmBNon20.isUninstalled, true);
+  assert.strictEqual(vmBNon20.displayPercentage, '—');
+  assert.strictEqual(vmBNon20.statusBadgeText, 'Chưa lắp đặt');
+  assert.strictEqual(vmBNon20.isOffline, false);
+
+  // Kiểm tra Bin Detail view model cho Station B Recyclable
+  const detailBinB = groupB20.compartments.find((c) => c.key === 'RECYCLABLE')!.bin!;
+  assert.strictEqual(resolveBinStationCode(detailBinB), 'STATION_B');
+  assert.strictEqual(computeBinViewModel(detailBinB, now20).displayPercentage, '42%');
+  console.log('  -> PASS: Đồng bộ nhất quán tuyệt đối giữa Overview, Bin Management và Bin Detail cho cả Trạm A và Trạm B\n');
+
   console.log('================================================================');
-  console.log('  ALL 19 END-TO-END FRONTEND TELEMETRY TESTS PASSED CLEANLY (19/19)!');
+  console.log('  ALL 20 END-TO-END FRONTEND TELEMETRY TESTS PASSED CLEANLY (20/20)!');
   console.log('================================================================\n');
 }
 

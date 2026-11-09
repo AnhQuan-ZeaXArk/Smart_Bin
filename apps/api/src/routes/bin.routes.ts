@@ -8,7 +8,12 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { env } from '../config/env.js';
 import { demoService } from '../demo/demo.service.js';
 import { settingsService, type SystemThresholds } from '../services/settings.service.js';
-import { syncBinWithRealDevice, syncBinsWithRealDevice } from '../services/bin-sync.service.js';
+import {
+  ensureStationBBinsIfMissing,
+  findCanonicalStationBBinById,
+  syncBinWithRealDevice,
+  syncBinsWithRealDevice
+} from '../services/bin-sync.service.js';
 
 const router = Router();
 const idSchema = z.string().min(1);
@@ -86,25 +91,53 @@ router.get('/', async (request, response, next) => {
     }
 
     const query = queryResult.data;
+    const rawStationCode = query.stationCode?.trim().toUpperCase();
     let targetStationId = query.stationId;
-    if (!targetStationId && query.stationCode) {
-      const station = await prisma.station.findUnique({ where: { code: query.stationCode } });
+    if (!targetStationId && rawStationCode) {
+      const station = await prisma.station.findUnique({ where: { code: rawStationCode } });
       if (station) targetStationId = station.id;
     }
 
-    const bins = await prisma.bin.findMany({
-      where: {
-        isActive: true,
-        ...(targetStationId ? { stationId: targetStationId } : {}),
-        ...(query.search ? { OR: [{ binCode: { contains: query.search } }, { name: { contains: query.search } }, { location: { contains: query.search } }] } : {})
-      },
-      include: { station: true },
-      orderBy: [{ stationId: 'asc' }, { binCode: 'asc' }]
-    });
+    const isStationAFilter = targetStationId === 'station_a_canonical_id' || rawStationCode === 'STATION_A';
+    const isStationBUnmigratedFilter = !targetStationId && rawStationCode === 'STATION_B';
 
-    // Đồng bộ hóa trạng thái cảm biến phần cứng thực tế với Database Bins
-    const synchronized = syncBinsWithRealDevice(bins, undefined, targetStationId);
+    const bins = isStationBUnmigratedFilter
+      ? []
+      : await prisma.bin.findMany({
+          where: {
+            isActive: true,
+            ...(targetStationId
+              ? isStationAFilter
+                ? {
+                    OR: [
+                      { stationId: targetStationId },
+                      { stationId: null }
+                    ]
+                  }
+                : { stationId: targetStationId }
+              : {})
+          },
+          include: { station: true },
+          orderBy: [{ stationId: 'asc' }, { binCode: 'asc' }]
+        });
+
+    // Đồng bộ hóa trạng thái cảm biến phần cứng thực tế với Database Bins + bổ sung Station B nếu DB chưa migrate
+    const synchronized = ensureStationBBinsIfMissing(
+      syncBinsWithRealDevice(bins, undefined, targetStationId),
+      undefined,
+      { stationCode: rawStationCode, stationId: targetStationId }
+    );
     let filtered = synchronized;
+    if (query.search) {
+      const q = query.search.toLowerCase();
+      filtered = filtered.filter((b: any) =>
+        String(b.binCode || '').toLowerCase().includes(q) ||
+        String(b.name || '').toLowerCase().includes(q) ||
+        String(b.location || '').toLowerCase().includes(q) ||
+        String(b.station?.code || b.stationCode || '').toLowerCase().includes(q) ||
+        String(b.station?.name || '').toLowerCase().includes(q)
+      );
+    }
     if (query.status) {
       filtered = filtered.filter((b) => b.status === query.status);
     }
@@ -136,7 +169,13 @@ router.get('/:id', async (request, response, next) => {
       },
       include: { station: true }
     });
-    if (!bin) return notFound(response);
+    if (!bin) {
+      const canonicalStationBBin = findCanonicalStationBBinById(id);
+      if (canonicalStationBBin) {
+        return response.json({ bin: syncBinWithRealDevice(canonicalStationBBin) });
+      }
+      return notFound(response);
+    }
 
     const synchronized = syncBinWithRealDevice(bin);
     return response.json({ bin: synchronized });
