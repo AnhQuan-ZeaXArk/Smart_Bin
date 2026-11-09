@@ -6,7 +6,7 @@ import { translateBinStatus, translateFillCategory } from './i18n-labels';
 import { IconActivity, IconRefresh, IconTrash } from './icons';
 import { ErrorBoundary } from './error-boundary';
 import { apiUrl } from './api-config';
-import { computeBinViewModel, mergeDeviceHeartbeatToBins } from './bin-view-model';
+import { computeBinViewModel, mergeDeviceHeartbeatToBins, mergeRestBinsWithRealtimeState } from './bin-view-model';
 
 const SensorHistoryChart = lazy(() => import('./sensor-history-chart'));
 
@@ -176,7 +176,8 @@ export function BinListPage() {
   const loadBins = useCallback(async () => {
     try {
       const result = await getData<{ bins: Bin[] }>('/api/bins', token);
-      setBins(result.bins.map((b) => ({ ...b, isReal: true })));
+      const apiBins = result.bins.map((b) => ({ ...b, isReal: true }));
+      setBins((current) => mergeRestBinsWithRealtimeState(current, apiBins, Date.now()));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Không thể tải danh sách thùng rác.');
     } finally {
@@ -195,7 +196,7 @@ export function BinListPage() {
     if (!realtime) return;
 
     const onHeartbeat = (payload: any) => {
-      setBins((current) => mergeDeviceHeartbeatToBins(current, payload));
+      setBins((current) => mergeDeviceHeartbeatToBins(current, payload, Date.now()));
     };
 
     realtime.on('device:heartbeat', onHeartbeat);
@@ -292,7 +293,7 @@ export function BinDetailPage() {
     if (!id) return;
     try {
       const { bin: result } = await getData<{ bin: Bin }>(`/api/bins/${encodeURIComponent(id)}`, token);
-      setBin({ ...result, isReal: true });
+      setBin((current) => mergeRestBinsWithRealtimeState(current ? [current] : null, [{ ...result, isReal: true }], Date.now())[0]);
       try {
         const history = await getData<{ readings: SensorReading[] }>(`/api/dashboard/sensor-readings?${new URLSearchParams({ binCode: result.binCode })}`, token);
         setReadings(history.readings);
@@ -319,7 +320,7 @@ export function BinDetailPage() {
     if (!realtime) return;
 
     const onHeartbeat = (payload: any) => {
-      setBin((current) => (current ? mergeDeviceHeartbeatToBins([current], payload)[0] : null));
+      setBin((current) => (current ? mergeDeviceHeartbeatToBins([current], payload, Date.now())[0] : null));
     };
 
     realtime.on('device:heartbeat', onHeartbeat);

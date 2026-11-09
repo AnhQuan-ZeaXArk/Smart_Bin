@@ -351,8 +351,45 @@ async function runEndToEndBackendTests() {
   assert.strictEqual(dbBin3.currentFillLevel, 0, 'DB Organic must be 0%');
   console.log('  -> PASS: Cả 3 ngăn rác Trạm A đều nạp thành công 0% mà không bị lỗi FAST_ACK_DUPLICATE\n');
 
+  // Test 8: Production Scenario HC1=36% (RECYCLABLE), HC2=14% (NON_RECYCLABLE), HC3=3% (ORGANIC) với delayOnPiMs = 11s
+  console.log('Test 8: Production Scenario HC1=36%, HC2=14%, HC3=3% syncBinsWithRealDevice freshness preservation');
+  const serverReceiveMs8 = Date.now() - 4000; // Heartbeat vừa nhận cách đây 4s (chu kỳ gửi của Pi là 5s)
+  const piSentMs8 = serverReceiveMs8;
+  const sensorMeasuredMs8 = piSentMs8 - 11000; // Cảm biến đo 11s trước khi Pi gửi (hợp lệ <= 15s trên Pi)
+  const realStatus36_14_3 = {
+    ...realStatusOnline,
+    status: 'ONLINE' as const,
+    lastHeartbeat: new Date(serverReceiveMs8).toISOString(),
+    receivedAt: new Date(serverReceiveMs8).toISOString(),
+    sentAt: new Date(piSentMs8).toISOString(),
+    sensors: {
+      recyclable: { fillLevel: 36, distanceCm: 38.4, status: 'OK', updatedAt: new Date(sensorMeasuredMs8).toISOString() },
+      nonRecyclable: { fillLevel: 14, distanceCm: 51.6, status: 'OK', updatedAt: new Date(sensorMeasuredMs8).toISOString() },
+      organic: { fillLevel: 3, distanceCm: 58.2, status: 'OK', updatedAt: new Date(sensorMeasuredMs8).toISOString() }
+    }
+  };
+
+  const syncedAll8 = syncBinsWithRealDevice([dbBin1, dbBin2, dbBin3], realStatus36_14_3);
+  const syncedRec8 = syncedAll8.find((b) => b.binCode === 'RECYCLABLE')!;
+  const syncedNon8 = syncedAll8.find((b) => b.binCode === 'NON_RECYCLABLE')!;
+  const syncedOrg8 = syncedAll8.find((b) => b.binCode === 'ORGANIC')!;
+
+  assert.strictEqual(syncedRec8.currentFillLevel, 36, 'HC1 -> RECYCLABLE must be 36%');
+  assert.strictEqual(syncedNon8.currentFillLevel, 14, 'HC2 -> NON_RECYCLABLE must be 14%');
+  assert.strictEqual(syncedOrg8.currentFillLevel, 3, 'HC3 -> ORGANIC must be 3%');
+  assert.strictEqual(syncedRec8.status, 'ONLINE');
+  assert.strictEqual(syncedNon8.status, 'ONLINE');
+  assert.strictEqual(syncedOrg8.status, 'ONLINE');
+
+  // Đảm bảo lastSeen trả về từ API không bị trừ kép (4s + 11s = 15s+) khiến Frontend vừa nhận đã đánh dấu STALE
+  for (const sBin of [syncedRec8, syncedNon8, syncedOrg8]) {
+    const ageOnFrontendMs = Date.now() - new Date(sBin.lastSeen!).getTime();
+    assert.ok(ageOnFrontendMs < 15000, `Bin ${sBin.binCode} lastSeen age (${ageOnFrontendMs}ms) must be < 15000ms so cards do not show "—"`);
+  }
+  console.log('  -> PASS: syncBinsWithRealDevice trả về đúng 36%, 14%, 3% với lastSeen tươi (< 15s), không bị trừ kép delayOnPiMs\n');
+
   console.log('================================================================');
-  console.log('  ALL 7 END-TO-END BACKEND TELEMETRY TESTS PASSED CLEANLY (7/7)!');
+  console.log('  ALL 8 END-TO-END BACKEND TELEMETRY TESTS PASSED CLEANLY (8/8)!');
   console.log('================================================================\n');
 }
 

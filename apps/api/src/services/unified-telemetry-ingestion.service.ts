@@ -87,18 +87,23 @@ export class UnifiedTelemetryIngestionService {
 
     // 2. Tìm trạm và thùng rác tương ứng
     const station = await prisma.station.findUnique({ where: { code: stationCode } });
-    if (!station || !station.isActive) {
+    if (station && !station.isActive) {
+      return { accepted: false, status: 'UNKNOWN_STATION', stationCode, binCode };
+    }
+    if (!station && stationCode !== 'STATION_A') {
       return { accepted: false, status: 'UNKNOWN_STATION', stationCode, binCode };
     }
 
     // 2.1. Tìm thùng rác theo đúng stationId và binCode chuẩn
-    let bin = await prisma.bin.findFirst({
-      where: {
-        stationId: station.id,
-        binCode,
-        isActive: true
-      }
-    });
+    let bin = station
+      ? await prisma.bin.findFirst({
+          where: {
+            stationId: station.id,
+            binCode,
+            isActive: true
+          }
+        })
+      : null;
 
     // 2.2. Fallback cho Station A nếu database Production chưa chạy script gán stationId (stationId IS NULL)
     if (!bin && stationCode === 'STATION_A') {

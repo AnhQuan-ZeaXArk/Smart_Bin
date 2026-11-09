@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import {
   computeBinViewModel,
   mergeDeviceHeartbeatToBins,
+  mergeRestBinsWithRealtimeState,
   groupBinsByStation,
   DEFAULT_STATION_CONFIG,
   createDefaultStationBBins,
@@ -398,8 +399,132 @@ function runFrontendEndToEndTests() {
   assert.strictEqual(stationAGroup.status, 'ONLINE');
   console.log('  -> PASS: HC1=67%, HC2=21%, HC3=—; Trung bình mức đầy = 44%; Không bị biến null thành 0%; Đồng bộ hoàn hảo giữa Header và Cards\n');
 
+  // Test 18: Exact Production Evidence Scenario (HC1=36%, HC2=14%, HC3=3%, delayOnPiMs=11s + 5s heartbeat interval + Browser Clock Skew)
+  console.log('Test 18: Exact Production Evidence (HC1=36% RECYCLABLE, HC2=14% NON_RECYCLABLE, HC3=3% ORGANIC, Header=18%, Cards never show "—")');
+  const serverNow18 = Date.now();
+  const browserNow18 = serverNow18 + 22000; // Đồng hồ PC người dùng chạy nhanh hơn Server 22s
+  const prodHeartbeat36_14_3 = {
+    stationCode: 'STATION_A',
+    deviceId: 'raspberry-pi-5',
+    status: 'ONLINE',
+    // Trên Pi, cảm biến đo cách thời điểm sentAt 11 giây (vẫn hợp lệ <= 15s theo HC_VALID_TIMEOUT_SEC)
+    sentAt: new Date(serverNow18).toISOString(),
+    receivedAt: new Date(serverNow18).toISOString(),
+    lastHeartbeat: new Date(serverNow18).toISOString(),
+    subsystems: {
+      yolo: 'RUNNING',
+      camera: 'CONNECTED'
+    },
+    sensors: {
+      recyclable: {
+        fillLevel: 36,
+        distanceCm: 38.4,
+        status: 'OK',
+        updatedAt: new Date(serverNow18 - 11000).toISOString()
+      },
+      nonRecyclable: {
+        fillLevel: 14,
+        distanceCm: 51.6,
+        status: 'OK',
+        updatedAt: new Date(serverNow18 - 11000).toISOString()
+      },
+      organic: {
+        fillLevel: 3,
+        distanceCm: 58.2,
+        status: 'OK',
+        updatedAt: new Date(serverNow18 - 11000).toISOString()
+      }
+    }
+  };
+
+  // Trình duyệt nhận sự kiện tại thời điểm browserNow18 và kiểm tra sau 4.5s (trước nhịp heartbeat 5s tiếp theo)
+  const mergedProdBins = mergeDeviceHeartbeatToBins(initialBins, prodHeartbeat36_14_3, browserNow18);
+  const checkTimeAfter4_5s = browserNow18 + 4500;
+  const prodGroups = groupBinsByStation(mergedProdBins, DEFAULT_STATION_CONFIG, checkTimeAfter4_5s);
+  const prodStationA = prodGroups.find((g) => g.code === 'STATION_A')!;
+  const prodStationB = prodGroups.find((g) => g.code === 'STATION_B')!;
+
+  const prodRecCard = computeBinViewModel(
+    prodStationA.compartments.find((c) => c.key === 'RECYCLABLE')!.bin,
+    checkTimeAfter4_5s
+  );
+  const prodNonRecCard = computeBinViewModel(
+    prodStationA.compartments.find((c) => c.key === 'NON_RECYCLABLE')!.bin,
+    checkTimeAfter4_5s
+  );
+  const prodOrgCard = computeBinViewModel(
+    prodStationA.compartments.find((c) => c.key === 'ORGANIC')!.bin,
+    checkTimeAfter4_5s
+  );
+
+  // Kiểm tra chính xác từng thẻ ngăn rác (HC1 -> RECYCLABLE=36%, HC2 -> NON_RECYCLABLE=14%, HC3 -> ORGANIC=3%)
+  assert.strictEqual(prodRecCard.isValidReading, true, 'RECYCLABLE card must be valid (not falsely STALE)');
+  assert.strictEqual(prodRecCard.displayPercentage, '36%', 'HC1 -> RECYCLABLE must display 36%');
+  assert.strictEqual(prodRecCard.progressWidth, '36%');
+
+  assert.strictEqual(prodNonRecCard.isValidReading, true, 'NON_RECYCLABLE card must be valid (not falsely STALE)');
+  assert.strictEqual(prodNonRecCard.displayPercentage, '14%', 'HC2 -> NON_RECYCLABLE must display 14%');
+  assert.strictEqual(prodNonRecCard.progressWidth, '14%');
+
+  assert.strictEqual(prodOrgCard.isValidReading, true, 'ORGANIC card must be valid (not falsely STALE)');
+  assert.strictEqual(prodOrgCard.displayPercentage, '3%', 'HC3 -> ORGANIC must display 3%');
+  assert.strictEqual(prodOrgCard.progressWidth, '3%');
+
+  // Kiểm tra Header Trạm A: Math.round((36 + 14 + 3) / 3) = Math.round(17.666...) = 18%
+  assert.strictEqual(prodStationA.averageFillPct, 18, 'Station A header average must be Math.round((36+14+3)/3) = 18%');
+  assert.strictEqual(prodStationA.status, 'ONLINE');
+
+  // Kiểm tra cách ly Trạm B: Trạm B RECYCLABLE không bị ảnh hưởng bởi HC1=36% của Trạm A
+  const prodStationBRec = computeBinViewModel(
+    prodStationB.compartments.find((c) => c.key === 'RECYCLABLE')!.bin,
+    checkTimeAfter4_5s
+  );
+  assert.strictEqual(prodStationBRec.displayPercentage, '—', 'Station B RECYCLABLE must remain isolated from Station A');
+  console.log('  -> PASS: HC1=36% (RECYCLABLE), HC2=14% (NON_RECYCLABLE), HC3=3% (ORGANIC), Header=18%, hoàn toàn miễn nhiễm lệch đồng hồ & delayOnPiMs\n');
+
+  // Test 19: Partial Socket.IO sensor update does NOT erase other valid Bin readings, and REST refresh does NOT overwrite newer realtime values
+  console.log('Test 19: Partial Socket.IO update preserves other valid Bins & REST refresh preserves newer realtime state');
+  const partialSocketUpdate = {
+    stationCode: 'STATION_A',
+    deviceId: 'raspberry-pi-5',
+    status: 'ONLINE',
+    sentAt: new Date(serverNow18 + 2000).toISOString(),
+    receivedAt: new Date(serverNow18 + 2000).toISOString(),
+    lastHeartbeat: new Date(serverNow18 + 2000).toISOString(),
+    sensors: {
+      // Chỉ cập nhật HC1 (RECYCLABLE = 40%), không truyền nonRecyclable và organic
+      recyclable: {
+        fillLevel: 40,
+        distanceCm: 36.0,
+        status: 'OK',
+        updatedAt: new Date(serverNow18 + 2000).toISOString()
+      }
+    }
+  };
+
+  const afterPartialSocket = mergeDeviceHeartbeatToBins(mergedProdBins, partialSocketUpdate, browserNow18 + 2000);
+  const recAfterPartial = afterPartialSocket.find((b) => b.binCode === 'RECYCLABLE' && !b.stationId)!;
+  const nonRecAfterPartial = afterPartialSocket.find((b) => b.binCode === 'NON_RECYCLABLE' && !b.stationId)!;
+  const orgAfterPartial = afterPartialSocket.find((b) => b.binCode === 'ORGANIC' && !b.stationId)!;
+
+  assert.strictEqual(recAfterPartial.currentFillLevel, 40, 'RECYCLABLE updated to 40%');
+  assert.strictEqual(nonRecAfterPartial.currentFillLevel, 14, 'NON_RECYCLABLE 14% preserved when omitted from partial update');
+  assert.strictEqual(orgAfterPartial.currentFillLevel, 3, 'ORGANIC 3% preserved when omitted from partial update');
+
+  // Mô phỏng phản hồi REST /api/dashboard/summary đến muộn (chứa dữ liệu cũ hơn từ thời điểm serverNow18 - 5000 hoặc null)
+  const staleRestBins = [
+    { ...initialBins[0], currentFillLevel: 10, status: 'ONLINE' as const, lastSeen: new Date(serverNow18 - 5000).toISOString() },
+    { ...initialBins[1], currentFillLevel: null, status: 'OFFLINE' as const, lastSeen: new Date(serverNow18 - 5000).toISOString() },
+    { ...initialBins[2], currentFillLevel: null, status: 'OFFLINE' as const, lastSeen: new Date(serverNow18 - 5000).toISOString() }
+  ];
+  const afterRestRefresh = mergeRestBinsWithRealtimeState(afterPartialSocket, staleRestBins as any, browserNow18 + 3000);
+  assert.strictEqual(afterRestRefresh.find((b) => b.binCode === 'RECYCLABLE')!.currentFillLevel, 40, 'REST refresh must NOT overwrite newer 40% realtime value');
+  assert.strictEqual(afterRestRefresh.find((b) => b.binCode === 'NON_RECYCLABLE')!.currentFillLevel, 14, 'REST refresh must NOT overwrite newer 14% realtime value');
+  assert.strictEqual(afterRestRefresh.find((b) => b.binCode === 'ORGANIC')!.currentFillLevel, 3, 'REST refresh must NOT overwrite newer 3% realtime value');
+  console.log('  -> PASS: Partial Socket.IO update và REST refresh bảo toàn tuyệt đối các giá trị cảm biến hợp lệ\n');
+
   console.log('================================================================');
-  console.log('  ALL 17 END-TO-END FRONTEND TELEMETRY TESTS PASSED CLEANLY (17/17)!');
+  console.log('  ALL 19 END-TO-END FRONTEND TELEMETRY TESTS PASSED CLEANLY (19/19)!');
   console.log('================================================================\n');
 }
 

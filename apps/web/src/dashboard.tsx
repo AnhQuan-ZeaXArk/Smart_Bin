@@ -23,6 +23,7 @@ import {
 import {
   computeBinViewModel,
   mergeDeviceHeartbeatToBins,
+  mergeRestBinsWithRealtimeState,
   groupBinsByStation,
   DEFAULT_STATION_CONFIG,
   createDefaultStationBBins,
@@ -165,7 +166,7 @@ function mergeTelemetry(data: DashboardData, event: RealtimeTelemetry): Dashboar
   };
 }
 
-function mergeDeviceHeartbeat(data: DashboardData, hb: any): DashboardData {
+function mergeDeviceHeartbeat(data: DashboardData, hb: any, clientReceiveMs?: number): DashboardData {
   if (!hb) return data;
 
   // Nếu sự kiện dành cho thiết bị ngoại vi khác (Camera, MQTT) và không phải là nhịp tim trạm, chỉ cập nhật devices, KHÔNG ghi đè ngăn rác
@@ -180,7 +181,7 @@ function mergeDeviceHeartbeat(data: DashboardData, hb: any): DashboardData {
     return data;
   }
 
-  const bins = mergeDeviceHeartbeatToBins(data.bins, hb);
+  const bins = mergeDeviceHeartbeatToBins(data.bins, hb, clientReceiveMs);
 
   const installedBins = bins.filter((bin) => bin.installed !== false);
   const onlineNumericBins = installedBins.filter(
@@ -291,49 +292,12 @@ export function DashboardPage() {
               ]
             : apiBins.map((b) => ({ ...b, isReal: true }));
 
-          const initialized: DashboardData = {
-            ...result,
-            bins: resolvedBins
-          };
-
           setData((currentData) => {
-            if (!currentData || !currentData.bins || currentData.bins.length === 0) {
-              return initialized;
-            }
-
-            // Hợp nhất từng bin: nếu bin hiện tại trong client có lastSeen MỚI HƠN bin từ API,
-            // và bin hiện tại có currentFillLevel hợp lệ, GIỮ NGUYÊN dữ liệu realtime mới hơn!
-            const mergedBins = resolvedBins.map((apiBin) => {
-              const existingBin = currentData.bins.find(
-                (b) => b.id === apiBin.id || (b.binCode === apiBin.binCode && (b.stationCode === apiBin.stationCode || b.stationId === apiBin.stationId))
-              );
-              if (!existingBin) return apiBin;
-
-              const existingTs = existingBin.lastSeen ? new Date(existingBin.lastSeen).getTime() : 0;
-              const apiTs = apiBin.lastSeen ? new Date(apiBin.lastSeen).getTime() : 0;
-
-              // Nếu dữ liệu hiện tại trên client mới hơn dữ liệu API trả về:
-              if (existingTs > apiTs && typeof existingBin.currentFillLevel === 'number') {
-                return {
-                  ...apiBin,
-                  currentFillLevel: existingBin.currentFillLevel,
-                  status: existingBin.status,
-                  distanceCm: existingBin.distanceCm ?? apiBin.distanceCm,
-                  lastSeen: existingBin.lastSeen,
-                  fillCategory: existingBin.fillCategory,
-                  lastKnownFillLevel: (existingBin as any).lastKnownFillLevel ?? existingBin.currentFillLevel
-                };
-              }
-              // Bảo toàn lastKnownFillLevel nếu API trả về null
-              if (apiBin.currentFillLevel === null && typeof (existingBin as any).lastKnownFillLevel === 'number') {
-                return {
-                  ...apiBin,
-                  lastKnownFillLevel: (existingBin as any).lastKnownFillLevel
-                };
-              }
-              return apiBin;
-            });
-
+            const mergedBins = mergeRestBinsWithRealtimeState(
+              currentData?.bins,
+              resolvedBins,
+              Date.now()
+            );
             return {
               ...result,
               bins: mergedBins
@@ -369,7 +333,7 @@ export function DashboardPage() {
     };
 
     const onHeartbeat = (payload: any) => {
-      setData((current) => (current ? mergeDeviceHeartbeat(current, payload) : current));
+      setData((current) => (current ? mergeDeviceHeartbeat(current, payload, Date.now()) : current));
     };
 
     const onStatus = (payload: any) => {

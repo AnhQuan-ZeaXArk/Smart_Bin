@@ -163,13 +163,127 @@ export function getFillCategoryForLevel(fillLevel: number | null | undefined): F
   return 'NORMAL';
 }
 
+export function resolveBinStationCode(bin: {
+  stationId?: string | null;
+  stationCode?: string | null;
+  station?: { id?: string; code?: string } | null;
+}): string {
+  const explicitCode = bin.station?.code || bin.stationCode;
+  if (explicitCode) return explicitCode.toUpperCase();
+  const stId = (bin.station?.id || bin.stationId || '').toLowerCase();
+  if (
+    stId === 'station_b_canonical_id' ||
+    stId === 'st-b' ||
+    stId.includes('station_b') ||
+    stId.includes('station-b')
+  ) {
+    return 'STATION_B';
+  }
+  return 'STATION_A';
+}
+
+/**
+ * Hợp nhất danh sách ngăn rác trả về từ REST API (/api/dashboard/summary hoặc /api/bins)
+ * với trạng thái realtime hiện tại trên trình duyệt:
+ * 1. Không bao giờ để bản ghi REST cũ ghi đè dữ liệu realtime Socket.IO mới hơn.
+ * 2. Neo mốc thời gian tươi (lastSeen) theo đồng hồ trình duyệt khi nhận phản hồi ONLINE trực tiếp,
+ *    loại bỏ hoàn toàn lỗi lệch đồng hồ giữa PC người dùng và Render Server.
+ */
+export function mergeRestBinsWithRealtimeState<T extends Bin & { distanceCm?: number | null; isReal?: boolean }>(
+  currentBins: T[] | undefined | null,
+  apiBins: T[],
+  clientReceiveMs?: number
+): T[] {
+  const normalizedApiBins = apiBins.map((apiBin) => {
+    const serverLastSeenMs = parseTimestamp(apiBin.lastSeen);
+    const hasNumericFill = typeof apiBin.currentFillLevel === 'number' && !Number.isNaN(apiBin.currentFillLevel);
+    // Nếu Backend xác nhận bin đang ONLINE với số đo hợp lệ nhưng đồng hồ PC lệch với Server (> 2s),
+    // neo lastSeen về clientReceiveMs để tránh cờ STALE giả trên trình duyệt.
+    let anchoredLastSeen = apiBin.lastSeen;
+    if (
+      typeof clientReceiveMs === 'number' &&
+      clientReceiveMs > 0 &&
+      apiBin.status === 'ONLINE' &&
+      hasNumericFill &&
+      serverLastSeenMs > 0 &&
+      Math.abs(clientReceiveMs - serverLastSeenMs) > 2000
+    ) {
+      anchoredLastSeen = new Date(clientReceiveMs).toISOString();
+    }
+    return {
+      ...apiBin,
+      lastSeen: anchoredLastSeen,
+      lastServerHeartbeatMs: serverLastSeenMs > 0 ? serverLastSeenMs : undefined,
+      isReal: true
+    } as T;
+  });
+
+  if (!currentBins || currentBins.length === 0) {
+    return normalizedApiBins;
+  }
+
+  return normalizedApiBins.map((apiBin) => {
+    const apiStationCode = resolveBinStationCode(apiBin);
+    const existingBin = currentBins.find((b) => {
+      if (b.id && apiBin.id && b.id === apiBin.id) return true;
+      const bStationCode = resolveBinStationCode(b);
+      const stationIdMatch = Boolean(b.stationId && apiBin.stationId && b.stationId === apiBin.stationId);
+      return b.binCode === apiBin.binCode && (bStationCode === apiStationCode || stationIdMatch);
+    });
+    if (!existingBin) return apiBin;
+
+    const existingServerTs = typeof (existingBin as any).lastServerHeartbeatMs === 'number' && (existingBin as any).lastServerHeartbeatMs > 0
+      ? (existingBin as any).lastServerHeartbeatMs
+      : parseTimestamp(existingBin.lastSeen);
+    const apiServerTs = typeof (apiBin as any).lastServerHeartbeatMs === 'number' && (apiBin as any).lastServerHeartbeatMs > 0
+      ? (apiBin as any).lastServerHeartbeatMs
+      : parseTimestamp(apiBin.lastSeen);
+
+    const existingHasValidFill =
+      typeof existingBin.currentFillLevel === 'number' &&
+      !Number.isNaN(existingBin.currentFillLevel) &&
+      existingBin.status === 'ONLINE';
+
+    // Nếu dữ liệu realtime hiện tại trên client mới hơn dữ liệu REST API trả về
+    // (hoặc cùng thời điểm nhưng REST trả về null do truy vấn DB trước khi commit xong):
+    if (
+      existingHasValidFill &&
+      (existingServerTs > apiServerTs || (existingServerTs === apiServerTs && apiBin.currentFillLevel === null))
+    ) {
+      return {
+        ...apiBin,
+        currentFillLevel: existingBin.currentFillLevel,
+        status: existingBin.status,
+        distanceCm: existingBin.distanceCm ?? apiBin.distanceCm ?? null,
+        lastSeen: existingBin.lastSeen,
+        lastServerHeartbeatMs: existingServerTs > 0 ? existingServerTs : (apiBin as any).lastServerHeartbeatMs,
+        fillCategory: existingBin.fillCategory,
+        lastKnownFillLevel: (existingBin as any).lastKnownFillLevel ?? existingBin.currentFillLevel,
+        isReal: true
+      } as T;
+    }
+
+    // Bảo toàn lastKnownFillLevel nếu API trả về null
+    if (apiBin.currentFillLevel === null && typeof (existingBin as any).lastKnownFillLevel === 'number') {
+      return {
+        ...apiBin,
+        lastKnownFillLevel: (existingBin as any).lastKnownFillLevel,
+        isReal: true
+      } as T;
+    }
+
+    return apiBin;
+  });
+}
+
 /**
  * Hàm chuẩn hóa hợp nhất dữ liệu nhịp tim thực tế từ Pi 5 vào danh sách ngăn rác.
  * Được dùng chung giữa Dashboard và Trang Quản lý thùng rác (Bins).
  */
 export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number | null; isReal?: boolean }>(
   bins: T[],
-  hb: any
+  hb: any,
+  clientReceiveMs?: number
 ): (T & { distanceCm: number | null; isReal: boolean })[] {
   if (!hb) {
     return bins.map((b) => ({
@@ -191,10 +305,8 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
 
   // Round 22: Đảm bảo ngăn rác Trạm B tồn tại trong working list nếu nhận được heartbeat của STATION_B
   let workingBins: (T & { distanceCm?: number | null; isReal?: boolean })[] = bins;
-  const hasStationBBin = bins.some(
-    (b) => b.stationCode === 'STATION_B' || (b as any).station?.code === 'STATION_B' || b.stationId === 'station_b_canonical_id'
-  );
-  if (!hasStationBBin && hb.stationCode === 'STATION_B') {
+  const hasStationBBin = bins.some((b) => resolveBinStationCode(b) === 'STATION_B');
+  if (!hasStationBBin && (hb.stationCode || '').toUpperCase() === 'STATION_B') {
     workingBins = [...bins, ...(createDefaultStationBBins() as unknown as T[])];
   }
 
@@ -212,8 +324,15 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
     }));
   }
 
-  // Timestamp toàn cục của gói heartbeat (ưu tiên thời gian nhận từ server)
-  const hbTs = parseTimestamp(hb.lastHeartbeat || hb.receivedAt || hb.sentAt) || Date.now();
+  // Timestamp toàn cục của gói heartbeat từ Server (dùng để kiểm tra thứ tự gói tin out-of-order)
+  const serverHbMs = parseTimestamp(hb.lastHeartbeat || hb.receivedAt || hb.sentAt);
+  const hbTs = serverHbMs || Date.now();
+  // Nếu gói tin vừa nhận trực tiếp qua Socket.IO tại trình duyệt (clientReceiveMs > 0)
+  // và đồng hồ PC lệch với đồng hồ Server (> 2s), neo thời점 nhận về đồng hồ trình duyệt.
+  const baseReceiveMs =
+    typeof clientReceiveMs === 'number' && clientReceiveMs > 0 && (serverHbMs === 0 || Math.abs(clientReceiveMs - serverHbMs) > 2000)
+      ? clientReceiveMs
+      : hbTs;
 
   const mapping: Record<string, 'ORGANIC' | 'RECYCLABLE' | 'NON_RECYCLABLE'> = {
     recyclable: 'RECYCLABLE',
@@ -233,12 +352,16 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
       };
     }
 
-    // Cách ly Telemetry theo Station: Tuyệt đối không cho phép dữ liệu Trạm A ghi đè Trạm B và ngược lại
-    const isStationB = bin.stationCode === 'STATION_B' || (bin as any).station?.code === 'STATION_B' || bin.stationId === 'station_b_canonical_id';
-    const binStationCode = isStationB ? 'STATION_B' : 'STATION_A';
-    const incomingStationCode = (hb.stationCode || 'STATION_A').toUpperCase();
+    // Cách ly Telemetry theo Station (sử dụng cả stationId và stationCode + binCode):
+    // Tuyệt đối không cho phép dữ liệu Trạm A ghi đè Trạm B và ngược lại
+    const binStationCode = resolveBinStationCode(bin);
+    const incomingStationCode = (
+      hb.stationCode ||
+      (hb.stationId === 'station_b_canonical_id' ? 'STATION_B' : 'STATION_A')
+    ).toUpperCase();
+    const stationIdMismatch = Boolean(hb.stationId && bin.stationId && hb.stationId !== bin.stationId);
 
-    if (incomingStationCode !== binStationCode) {
+    if (incomingStationCode !== binStationCode || stationIdMismatch) {
       return {
         ...bin,
         distanceCm: typeof bin.distanceCm === 'number' ? bin.distanceCm : null,
@@ -255,12 +378,14 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
     }
     const comp = sensorKey && sensors ? sensors[sensorKey] : null;
 
-    // Sử dụng hbTs làm mốc thời gian incoming để tránh xung đột clock skew giữa Pi và Server
-    const incomingTs = hbTs || parseTimestamp(comp?.updatedAt);
-    const currentBinTs = parseTimestamp(bin.lastSeen);
+    // Kiểm tra thứ tự gói tin trong cùng miền thời gian Server để chống ghi đè bởi bản tin cũ (out-of-order)
+    const incomingTs = serverHbMs || parseTimestamp(comp?.updatedAt);
+    const currentBinServerTs =
+      typeof (bin as any).lastServerHeartbeatMs === 'number' && (bin as any).lastServerHeartbeatMs > 0
+        ? (bin as any).lastServerHeartbeatMs
+        : parseTimestamp(bin.lastSeen);
 
-    // Chống sự kiện cũ: Heartbeat cũ không được ghi đè dữ liệu mới
-    if (shouldDropIncoming(currentBinTs, incomingTs)) {
+    if (shouldDropIncoming(currentBinServerTs, incomingTs)) {
       return {
         ...bin,
         distanceCm: typeof bin.distanceCm === 'number' ? bin.distanceCm : null,
@@ -268,27 +393,58 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
       };
     }
 
-    if (comp && typeof comp.fillLevel === 'number' && comp.status !== 'STALE' && !isOffline) {
-      // Chuẩn hóa thời gian đo lường của cảm biến để bảo đảm tính chính xác của cờ STALE mà không bị ảnh hưởng bởi clock skew
-      const packetSentMs = parseTimestamp(hb.sentAt || hb.lastHeartbeat || hb.receivedAt);
+    const rawFillLevel =
+      typeof comp?.fillLevel === 'number' && !Number.isNaN(comp.fillLevel)
+        ? comp.fillLevel
+        : typeof comp?.fillPercent === 'number' && !Number.isNaN(comp.fillPercent)
+        ? comp.fillPercent
+        : null;
+
+    if (comp && rawFillLevel !== null && comp.status !== 'STALE' && !isOffline) {
+      // Chỉ tính delayOnPiMs khi có cả hb.sentAt và comp.updatedAt (cùng miền đồng hồ trên Pi)
+      const packetSentMs = parseTimestamp(hb.sentAt);
       const sensorMeasurementMs = parseTimestamp(comp.updatedAt);
       const delayOnPiMs = (packetSentMs > 0 && sensorMeasurementMs > 0)
         ? Math.max(0, packetSentMs - sensorMeasurementMs)
         : 0;
-      const serverReceiveMs = parseTimestamp(hb.lastHeartbeat || hb.receivedAt || hb.sentAt) || Date.now();
-      const effectiveSensorMs = Math.max(0, serverReceiveMs - delayOnPiMs);
+      // Nếu cảm biến riêng lẻ trên Pi đã quá hạn (> 15s) tại thời điểm Pi phát tin, giữ nguyên độ trễ để gắn cờ STALE.
+      // Nếu cảm biến còn tươi (<= 15s) khi Pi phát tin, neo vào thời điểm nhận gói tin (baseReceiveMs)
+      // để tránh cộng dồn kép làm các thẻ ngăn rác chuyển sang "—" trong khi Header vẫn tính trung bình.
+      const effectiveSensorMs = delayOnPiMs > 15000
+        ? Math.max(0, baseReceiveMs - delayOnPiMs)
+        : baseReceiveMs;
       const authoritativeLastSeen = effectiveSensorMs > 0 ? new Date(effectiveSensorMs).toISOString() : new Date().toISOString();
 
       return {
         ...bin,
-        currentFillLevel: comp.fillLevel,
-        lastKnownFillLevel: comp.fillLevel,
+        currentFillLevel: rawFillLevel,
+        lastKnownFillLevel: rawFillLevel,
         distanceCm: typeof comp.distanceCm === 'number' ? comp.distanceCm : null,
-        fillCategory: getFillCategoryForLevel(comp.fillLevel),
+        fillCategory: getFillCategoryForLevel(rawFillLevel),
         status: 'ONLINE' as BinStatus,
         lastSeen: authoritativeLastSeen,
+        lastServerHeartbeatMs: serverHbMs > 0 ? serverHbMs : undefined,
         isReal: true
       };
+    }
+
+    // Nếu gói cập nhật chỉ chứa một phần sensors (không có khóa sensorKey thay vì truyền rõ null)
+    // và ngăn rác hiện tại đang có số đo hợp lệ còn tươi (<= 15s), bảo toàn số đo hiện tại của ngăn rác đó.
+    if (sensorKey && sensors && !(sensorKey in sensors) && !isOffline) {
+      const existingLastSeenMs = parseTimestamp(bin.lastSeen);
+      const isExistingStillFresh =
+        typeof bin.currentFillLevel === 'number' &&
+        !Number.isNaN(bin.currentFillLevel) &&
+        bin.status === 'ONLINE' &&
+        existingLastSeenMs > 0 &&
+        (baseReceiveMs - existingLastSeenMs <= 15000);
+      if (isExistingStillFresh) {
+        return {
+          ...bin,
+          distanceCm: typeof bin.distanceCm === 'number' ? bin.distanceCm : null,
+          isReal: true
+        };
+      }
     }
 
     // Khi offline hoặc không có reading hợp lệ:
@@ -302,6 +458,7 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
       fillCategory: 'NORMAL' as FillCategory,
       status: 'OFFLINE' as BinStatus,
       lastSeen: hb.lastHeartbeat || comp?.updatedAt || (incomingTs > 0 ? new Date(incomingTs).toISOString() : bin.lastSeen),
+      lastServerHeartbeatMs: serverHbMs > 0 ? serverHbMs : (bin as any).lastServerHeartbeatMs,
       isReal: true
     };
   });
@@ -509,7 +666,17 @@ export function groupBinsByStation<T extends Bin & { distanceCm?: number | null;
     });
 
     const compartments = WASTE_CATEGORY_ORDER.map((key) => {
-      const existing = stationBins.find((b) => b.binCode === key);
+      const matchingBins = stationBins.filter((b) => b.binCode === key);
+      const existing = matchingBins.length <= 1
+        ? matchingBins[0]
+        : matchingBins.slice().sort((a, b) => {
+            const aValid = typeof a.currentFillLevel === 'number' && !Number.isNaN(a.currentFillLevel) ? 1 : 0;
+            const bValid = typeof b.currentFillLevel === 'number' && !Number.isNaN(b.currentFillLevel) ? 1 : 0;
+            if (bValid !== aValid) return bValid - aValid;
+            const aTs = a.lastSeen ? new Date(a.lastSeen).getTime() : 0;
+            const bTs = b.lastSeen ? new Date(b.lastSeen).getTime() : 0;
+            return bTs - aTs;
+          })[0];
       if (existing) {
         // Enforce Station B architectural layout: only RECYCLABLE is installed, ORGANIC & NON_RECYCLABLE are NOT_INSTALLED
         const isInstalled = st.code === 'STATION_B'

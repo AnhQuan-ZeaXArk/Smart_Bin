@@ -60,7 +60,15 @@ export function syncBinWithRealDevice<T extends {
   }
 
   // 2. Kiểm tra quyền sở hữu Trạm A: Chỉ đồng bộ cảm biến Serial A cho Trạm A
-  const isStationB = bin.station?.code === 'STATION_B' || (bin as any).stationCode === 'STATION_B' || bin.stationId === 'station_b_canonical_id';
+  const explicitCode = bin.station?.code || (bin as any).stationCode;
+  const stId = (bin.station?.id || bin.stationId || '').toLowerCase();
+  const isStationB =
+    explicitCode === 'STATION_B' ||
+    stId === 'station_b_canonical_id' ||
+    stId === 'st-b' ||
+    stId.includes('station_b') ||
+    stId.includes('station-b') ||
+    (Boolean(targetStationId && bin.stationId && bin.stationId !== targetStationId) && explicitCode !== 'STATION_A');
   if (isStationB) {
     const lastSeenMs = bin.lastSeen ? new Date(bin.lastSeen).getTime() : 0;
     const isFresh = lastSeenMs > 0 && (Date.now() - lastSeenMs <= DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_MS);
@@ -88,26 +96,40 @@ export function syncBinWithRealDevice<T extends {
   else if (bin.binCode === 'RECYCLABLE') comp = sensors?.recyclable;
   else if (bin.binCode === 'NON_RECYCLABLE') comp = sensors?.nonRecyclable;
 
-  const hasValidReading = comp &&
-    typeof comp.fillLevel === 'number' &&
-    !Number.isNaN(comp.fillLevel) &&
-    comp.status !== 'STALE' &&
-    isPiOnline;
+  const rawFillLevel =
+    typeof comp?.fillLevel === 'number' && !Number.isNaN(comp.fillLevel)
+      ? comp.fillLevel
+      : typeof comp?.fillPercent === 'number' && !Number.isNaN(comp.fillPercent)
+      ? comp.fillPercent
+      : null;
 
-  if (hasValidReading) {
-    const packetSentMs = realStatus.sentAt ? new Date(realStatus.sentAt).getTime() : 0;
-    const sensorMeasurementMs = comp.updatedAt ? new Date(comp.updatedAt).getTime() : 0;
-    const delayOnPiMs = (packetSentMs > 0 && sensorMeasurementMs > 0)
-      ? Math.max(0, packetSentMs - sensorMeasurementMs)
-      : 0;
-    const serverReceiveMs = realStatus.lastHeartbeat ? new Date(realStatus.lastHeartbeat).getTime() : Date.now();
-    const effectiveSensorMs = Math.max(0, serverReceiveMs - delayOnPiMs);
-    const effectiveLastSeen = effectiveSensorMs > 0 ? new Date(effectiveSensorMs).toISOString() : new Date().toISOString();
+  const packetSentMs = realStatus.sentAt ? new Date(realStatus.sentAt).getTime() : 0;
+  const sensorMeasurementMs = comp?.updatedAt ? new Date(comp.updatedAt).getTime() : 0;
+  const delayOnPiMs = (packetSentMs > 0 && sensorMeasurementMs > 0 && Number.isFinite(packetSentMs) && Number.isFinite(sensorMeasurementMs))
+    ? Math.max(0, packetSentMs - sensorMeasurementMs)
+    : 0;
+  const isSensorFreshOnPi = delayOnPiMs <= DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_MS;
+
+  const hasValidReading = Boolean(
+    comp &&
+    rawFillLevel !== null &&
+    comp.status !== 'STALE' &&
+    isSensorFreshOnPi &&
+    isPiOnline
+  );
+
+  if (hasValidReading && rawFillLevel !== null) {
+    const serverReceiveMs = realStatus.lastHeartbeat
+      ? new Date(realStatus.lastHeartbeat).getTime()
+      : realStatus.receivedAt
+      ? new Date(realStatus.receivedAt).getTime()
+      : Date.now();
+    const effectiveLastSeen = serverReceiveMs > 0 ? new Date(serverReceiveMs).toISOString() : new Date().toISOString();
     return {
       ...bin,
-      currentFillLevel: comp.fillLevel,
+      currentFillLevel: rawFillLevel,
       distanceCm: typeof comp.distanceCm === 'number' && !Number.isNaN(comp.distanceCm) ? comp.distanceCm : null,
-      fillCategory: computeFillCategory(comp.fillLevel),
+      fillCategory: computeFillCategory(rawFillLevel),
       status: 'ONLINE' as const,
       lastSeen: effectiveLastSeen
     };

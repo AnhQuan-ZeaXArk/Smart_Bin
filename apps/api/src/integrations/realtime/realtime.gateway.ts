@@ -6,6 +6,7 @@ import { DeviceType } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { CANONICAL_DEVICE_ID, normalizeDeviceId } from '../../config/device-id.config.js';
+import { DEVICE_HEALTH_CONFIG } from '../../config/device-health.config.js';
 import { realDeviceService } from '../../demo/real-device.service.js';
 import { deviceHealthService } from '../../services/device-health.service.js';
 import {
@@ -97,8 +98,10 @@ export function projectSensorTimestamp(
   const sensorMs = sensorUpdatedAt ? new Date(sensorUpdatedAt).getTime() : 0;
   if (sentMs > 0 && sensorMs > 0 && Number.isFinite(sentMs) && Number.isFinite(sensorMs)) {
     const delayOnPiMs = Math.max(0, sentMs - sensorMs);
-    const effectiveSensorMs = Math.max(0, serverReceivedAt.getTime() - delayOnPiMs);
-    return new Date(effectiveSensorMs);
+    if (delayOnPiMs > DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_MS) {
+      return new Date(Math.max(0, serverReceivedAt.getTime() - delayOnPiMs));
+    }
+    return serverReceivedAt;
   }
   return serverReceivedAt;
 }
@@ -279,18 +282,8 @@ export class RealtimeGateway {
             // Tuyệt đối không ghi đè RAM state của Station A khi nhận telemetry từ Station B!
             if (stationCode === 'STATION_A') {
               realDeviceService.recordHeartbeat(normalizedData, this.io);
-            }
-
-            // 2. Broadcast nhịp tim vào phòng riêng của trạm, phòng tổng quan dashboard, và phòng admin
-            // Sử dụng chained .to() để Socket.IO tự động khử trùng lặp (deduplicate):
-            // Một client thuộc nhiều phòng chỉ nhận được đúng 1 sự kiện duy nhất.
-            this.io
-              .to(`station:${stationCode}:telemetry`)
-              .to('dashboard:all_stations')
-              .to('admin:all_stations')
-              .emit('device:heartbeat', normalizedData);
-
-            if (stationCode === 'STATION_B') {
+            } else {
+              // 2. Broadcast nhịp tim cho các trạm khác (ví dụ: STATION_B) một lần duy nhất tới toàn bộ client
               this.io.emit('device:heartbeat', normalizedData);
             }
 
