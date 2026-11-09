@@ -335,8 +335,71 @@ function runFrontendEndToEndTests() {
   assert.strictEqual(vmOffline.displayPercentage, '—');
   console.log('  -> PASS: Giao diện thẻ thùng rác tinh giản, phản ánh chính xác dữ liệu từ cảm biến thực\n');
 
+  // Test 17: Scenario HC1=67%, HC2=21%, HC3=null (YOLO=RUNNING, Camera=CONNECTED)
+  console.log('Test 17: Realistic Scenario HC1=67%, HC2=21%, HC3=null');
+  const now17 = Date.now();
+  const realisticStationAHeartbeat = {
+    stationCode: 'STATION_A',
+    deviceId: 'pi-gateway-01',
+    status: 'ONLINE',
+    sentAt: new Date(now17 - 100).toISOString(),
+    receivedAt: new Date(now17 - 50).toISOString(),
+    lastHeartbeat: new Date(now17 - 50).toISOString(),
+    subsystems: {
+      yolo: 'RUNNING',
+      camera: 'CONNECTED'
+    },
+    sensors: {
+      recyclable: {
+        fillLevel: 67,
+        fillPercent: 67,
+        status: 'OK',
+        updatedAt: new Date(now17 - 500).toISOString()
+      },
+      nonRecyclable: {
+        fillLevel: 21,
+        fillPercent: 21,
+        status: 'OK',
+        updatedAt: new Date(now17 - 500).toISOString()
+      }
+      // HC3 is null / absent
+    }
+  };
+
+  const updatedBins17 = mergeDeviceHeartbeatToBins(initialBins, realisticStationAHeartbeat);
+  const recBin = updatedBins17.find((b) => b.binCode === 'RECYCLABLE')!;
+  const nonRecBin = updatedBins17.find((b) => b.binCode === 'NON_RECYCLABLE')!;
+  const orgBin = updatedBins17.find((b) => b.binCode === 'ORGANIC')!;
+
+  const vmRec = computeBinViewModel(recBin, now17);
+  const vmNonRec = computeBinViewModel(nonRecBin, now17);
+  const vmOrg = computeBinViewModel(orgBin, now17);
+
+  // Recyclable: 67%
+  assert.strictEqual(vmRec.isValidReading, true);
+  assert.strictEqual(vmRec.displayPercentage, '67%');
+  assert.strictEqual(vmRec.progressWidth, '67%');
+
+  // Non-recyclable: 21%
+  assert.strictEqual(vmNonRec.isValidReading, true);
+  assert.strictEqual(vmNonRec.displayPercentage, '21%');
+  assert.strictEqual(vmNonRec.progressWidth, '21%');
+
+  // Organic: null -> '—' (KHÔNG bị biến thành 0%)
+  assert.strictEqual(vmOrg.isValidReading, false);
+  assert.strictEqual(vmOrg.displayPercentage, '—');
+  assert.strictEqual(vmOrg.progressWidth, '0%');
+  assert.strictEqual(vmOrg.hasValidFillLevel, false);
+
+  // Station Group Header: Tính trung bình chỉ từ các ngăn hợp lệ (67 + 21) / 2 = 44%
+  const groups17 = groupBinsByStation(updatedBins17, [{ id: 'station_a_id', code: 'STATION_A', name: 'Trạm A' }], now17);
+  const stationAGroup = groups17.find((g) => g.code === 'STATION_A')!;
+  assert.strictEqual(stationAGroup.averageFillPct, 44, 'Trung bình mức đầy Trạm A phải là 44% (khớp hoàn toàn với các thẻ 67% và 21%)');
+  assert.strictEqual(stationAGroup.status, 'ONLINE');
+  console.log('  -> PASS: HC1=67%, HC2=21%, HC3=—; Trung bình mức đầy = 44%; Không bị biến null thành 0%; Đồng bộ hoàn hảo giữa Header và Cards\n');
+
   console.log('================================================================');
-  console.log('  ALL 16 END-TO-END FRONTEND TELEMETRY TESTS PASSED CLEANLY (16/16)!');
+  console.log('  ALL 17 END-TO-END FRONTEND TELEMETRY TESTS PASSED CLEANLY (17/17)!');
   console.log('================================================================\n');
 }
 

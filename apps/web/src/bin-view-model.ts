@@ -581,16 +581,13 @@ export function groupBinsByStation<T extends Bin & { distanceCm?: number | null;
     }
     const lastSeenText = latestSeenTime ? secondsAgoLabel(latestSeenTime, currentNow) : 'Chưa có dữ liệu';
 
-    const numericLevels = installedBins
-      .map((b) => b.currentFillLevel)
-      .filter((lvl): lvl is number => typeof lvl === 'number' && !Number.isNaN(lvl));
-
-    const averageFillPct = numericLevels.length > 0
-      ? Math.round(numericLevels.reduce((a, b) => a + b, 0) / numericLevels.length)
+    const validBins = installedBins.filter((b) => computeBinViewModel(b, currentNow).isValidReading);
+    const averageFillPct = validBins.length > 0
+      ? Math.round(validBins.reduce((a, b) => a + (b.currentFillLevel as number), 0) / validBins.length)
       : null;
 
     let stationStatus: 'ONLINE' | 'WARNING' | 'OFFLINE' | 'MAINTENANCE' = (st.status as any) || 'OFFLINE';
-    const anyOnlineBin = installedBins.some((b) => b.status === 'ONLINE' && b.currentFillLevel !== null);
+    const anyOnlineBin = validBins.length > 0 || installedBins.some((b) => b.status === 'ONLINE' && b.currentFillLevel !== null);
     if (anyOnlineBin) {
       stationStatus = 'ONLINE';
     } else if (installedBins.every((b) => b.status === 'OFFLINE' || b.currentFillLevel === null)) {

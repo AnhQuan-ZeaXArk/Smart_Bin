@@ -523,7 +523,13 @@ def send_telemetry():
                             comp_data['fillLevel'] = None
                             comp_data['fillPercent'] = None
 
-            msg_id = f"STATION_B-{payload_b.get('bootCount', 0)}-{payload_b.get('sampleSeq', 0)}-{payload_b.get('bootId', 'default')}"
+            sample_seq = payload_b.get('sampleSeq')
+            boot_count = payload_b.get('bootCount', 0)
+            boot_id = payload_b.get('bootId', 'default')
+            if sample_seq is not None:
+                msg_id = f"STATION_B-{boot_count}-{sample_seq}-{boot_id}"
+            else:
+                msg_id = f"STATION_B-{boot_count}-{int(time.time() * 1000)}-{boot_id}"
             payload_b['clientMessageId'] = msg_id
 
     station_a_sent = False

@@ -429,6 +429,63 @@ class TestStationBHardwareIntegration(unittest.TestCase):
             self.assertEqual(selected_port, '/dev/serial/by-id/usb-Espressif_ESP32-C6_001-if00')
             self.assertNotEqual(selected_port, '/dev/serial/by-id/usb-CH340-ttyUSB0')
 
+    def test_16_worker_text_measurement_hc1_67_percent(self):
+        """Firmware ESP32-C6 gửi định dạng text 'HC1: 67%' -> parse chính xác mức đầy 67% cho RECYCLABLE."""
+        worker = StationBSerialWorker()
+        worker._process_text_measurement(67)
+        latest = worker.get_latest_data()
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest.get("stationCode"), "STATION_B")
+        self.assertIsNotNone(worker.last_valid_reading_at)
+
+        sensors = latest.get("sensors", {})
+        self.assertEqual(sensors["recyclable"]["fillPercent"], 67)
+        self.assertEqual(sensors["recyclable"]["fillLevel"], 67)
+        self.assertEqual(sensors["recyclable"]["status"], "OK")
+        self.assertEqual(sensors["organic"]["status"], "NOT_INSTALLED")
+        self.assertEqual(sensors["nonRecyclable"]["status"], "NOT_INSTALLED")
+
+    def test_17_worker_text_measurement_hc1_0_percent(self):
+        """Firmware ESP32-C6 gửi 'HC1: 0%' -> giá trị 0% hợp lệ được bảo toàn, không bị biến thành null."""
+        worker = StationBSerialWorker()
+        worker._process_text_measurement(0)
+        latest = worker.get_latest_data()
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest["sensors"]["recyclable"]["fillPercent"], 0)
+        self.assertEqual(latest["sensors"]["recyclable"]["fillLevel"], 0)
+        self.assertEqual(latest["sensors"]["recyclable"]["status"], "OK")
+        self.assertIsNotNone(worker.last_valid_reading_at)
+
+    def test_18_worker_text_measurement_out_of_bounds_rejected(self):
+        """Giá trị ngoài dải 0-100% (ví dụ: -5% hoặc 120%) bị từ chối, không cập nhật last_valid_reading_at."""
+        worker = StationBSerialWorker()
+        worker._process_text_measurement(-5)
+        self.assertIsNone(worker.last_valid_reading_at)
+        self.assertIsNone(worker.get_latest_data())
+
+        worker._process_text_measurement(120)
+        self.assertIsNone(worker.last_valid_reading_at)
+        self.assertIsNone(worker.get_latest_data())
+
+    def test_19_worker_regex_text_parsing(self):
+        """Kiểm tra regex khớp chuỗi text 'HC1: 67%' và các biến thể khoảng trắng."""
+        import re
+        patterns = [
+            ("HC1: 67%", 67),
+            ("HC1:0%", 0),
+            ("hc1: 100%", 100),
+            ("HC1:  21%  ", 21)
+        ]
+        for text, expected in patterns:
+            match = re.match(r'^HC1:\s*(-?\d+)\s*%$', text.strip(), re.IGNORECASE)
+            self.assertIsNotNone(match, f"Failed to match: {text}")
+            self.assertEqual(int(match.group(1)), expected)
+
+        invalid_texts = ["HC1: 67", "HC2: 50%", "HC1: abc%", "INVALID_DATA"]
+        for text in invalid_texts:
+            match = re.match(r'^HC1:\s*(-?\d+)\s*%$', text.strip(), re.IGNORECASE)
+            self.assertIsNone(match, f"Should not match invalid text: {text}")
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

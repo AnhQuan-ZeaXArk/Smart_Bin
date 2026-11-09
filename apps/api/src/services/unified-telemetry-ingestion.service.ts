@@ -24,6 +24,7 @@ export interface IngestionResult {
     | 'ACCEPTED_LATE'
     | 'FAST_ACK_DUPLICATE'
     | 'SKIPPED_NOT_INSTALLED'
+    | 'SKIPPED_NO_VALID_READING'
     | 'UNKNOWN_STATION'
     | 'UNKNOWN_BIN'
     | 'COMMISSIONING_REQUIRED'
@@ -121,6 +122,22 @@ export class UnifiedTelemetryIngestionService {
       return {
         accepted: true,
         status: 'SKIPPED_NOT_INSTALLED',
+        stationCode,
+        binCode
+      };
+    }
+
+    // 3.1. Cảm biến lỗi / timeout / giá trị không hợp lệ:
+    // QUY TẮC BẤT BIẾN: Không ghi SensorReading, không cập nhật Bin.currentFillLevel,
+    // không làm mới Bin.lastSeen. Trước đây `packet.fillLevel ?? 0` biến lỗi cảm biến thành 0% giả.
+    const hasValidFill = typeof packet.fillLevel === 'number'
+      && Number.isFinite(packet.fillLevel)
+      && packet.fillLevel >= 0
+      && packet.fillLevel <= 100;
+    if (packet.sensorStatus !== 'OK' || !hasValidFill) {
+      return {
+        accepted: true,
+        status: 'SKIPPED_NO_VALID_READING',
         stationCode,
         binCode
       };

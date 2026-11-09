@@ -84,6 +84,52 @@ const deviceCommandAckInputSchema = z.object({
   executedAt: z.string().optional()
 });
 
+/**
+ * Chuẩn hóa timestamp đo lường của cảm biến để bảo đảm tính tươi (freshness)
+ * và triệt tiêu sai lệch đồng hồ (clock skew) giữa Pi/ESP32 và Backend Server.
+ */
+export function projectSensorTimestamp(
+  sentAt: string | undefined,
+  sensorUpdatedAt: string | undefined | null,
+  serverReceivedAt: Date = new Date()
+): Date {
+  const sentMs = sentAt ? new Date(sentAt).getTime() : 0;
+  const sensorMs = sensorUpdatedAt ? new Date(sensorUpdatedAt).getTime() : 0;
+  if (sentMs > 0 && sensorMs > 0 && Number.isFinite(sentMs) && Number.isFinite(sensorMs)) {
+    const delayOnPiMs = Math.max(0, sentMs - sensorMs);
+    const effectiveSensorMs = Math.max(0, serverReceivedAt.getTime() - delayOnPiMs);
+    return new Date(effectiveSensorMs);
+  }
+  return serverReceivedAt;
+}
+
+/**
+ * Tổng hợp kết quả ingestion của từng ngăn rác thành trạng thái ACK toàn thể.
+ */
+export function summarizeIngestionResults(binResults: Array<{ binCode: string; status: string }>): {
+  success: boolean;
+  status: string;
+} {
+  if (binResults.length === 0) return { success: true, status: 'COMMITTED' };
+  const fatal = binResults.find((r) =>
+    r.status === 'INGESTION_ERROR' ||
+    r.status === 'COMMISSIONING_REQUIRED' ||
+    r.status === 'SEQUENCE_CLASH_TAMPERED' ||
+    r.status === 'HASH_MISMATCH' ||
+    r.status === 'LATE_PACKET_EXPIRED' ||
+    r.status === 'UNKNOWN_STATION' ||
+    r.status === 'UNKNOWN_BIN'
+  );
+  if (fatal) return { success: false, status: fatal.status };
+  if (binResults.some((r) => r.status === 'ACCEPTED_IN_ORDER' || r.status === 'ACCEPTED_LATE')) {
+    return { success: true, status: 'COMMITTED' };
+  }
+  if (binResults.every((r) => r.status === 'FAST_ACK_DUPLICATE')) {
+    return { success: true, status: 'FAST_ACK_DUPLICATE' };
+  }
+  return { success: true, status: 'COMMITTED' };
+}
+
 export class RealtimeGateway {
   readonly io: Server;
 
@@ -218,9 +264,13 @@ export class RealtimeGateway {
             }
 
             const normalizedDeviceId = normalizeDeviceId(parsed.data.deviceId);
+            // Thời điểm Backend nhận gói (đồng hồ server, không lấy từ Pi).
+            const serverReceivedAt = new Date();
             const normalizedData = {
               ...parsed.data,
-              deviceId: normalizedDeviceId
+              deviceId: normalizedDeviceId,
+              receivedAt: serverReceivedAt.toISOString(),
+              lastHeartbeat: serverReceivedAt.toISOString()
             };
             const stationCode = (parsed.data.stationCode || 'STATION_A').toUpperCase();
 
@@ -245,8 +295,7 @@ export class RealtimeGateway {
             }
 
             // 3. Xử lý Ingestion bền vững và bảo đảm Idempotency nếu có dữ liệu cảm biến
-            let ingestionSuccess = true;
-            let ingestionStatus = 'COMMITTED';
+            const binResults: Array<{ binCode: string; status: string }> = [];
 
             if (parsed.data.sensors && !env.isDemoMode) {
               const sensors = parsed.data.sensors;
@@ -271,25 +320,18 @@ export class RealtimeGateway {
                       bootId: parsed.data.bootId,
                       sampleSeq: parsed.data.sampleSeq,
                       payloadHash: parsed.data.payloadHash,
-                      timestamp: comp.data.updatedAt ? new Date(comp.data.updatedAt) : (parsed.data.sentAt ? new Date(parsed.data.sentAt) : new Date())
+                      timestamp: projectSensorTimestamp(parsed.data.sentAt, comp.data.updatedAt, serverReceivedAt)
                     });
-
-                    if (!result.accepted) {
-                      ingestionSuccess = false;
-                      ingestionStatus = result.status;
-                    } else if (result.status === 'ACCEPTED_IN_ORDER' || result.status === 'ACCEPTED_LATE') {
-                      ingestionStatus = 'COMMITTED';
-                    } else if (ingestionStatus !== 'COMMITTED' && result.status === 'FAST_ACK_DUPLICATE') {
-                      ingestionStatus = 'FAST_ACK_DUPLICATE';
-                    }
+                    binResults.push({ binCode: comp.binCode, status: result.status });
                   } catch (ingestErr) {
                     console.error(`[RealtimeGateway] Ingestion error on ${stationCode} ${comp.binCode}:`, ingestErr);
-                    ingestionSuccess = false;
-                    ingestionStatus = 'INGESTION_ERROR';
+                    binResults.push({ binCode: comp.binCode, status: 'INGESTION_ERROR' });
                   }
                 }
               }
             }
+
+            const { success: ingestionSuccess, status: ingestionStatus } = summarizeIngestionResults(binResults);
 
             // 4. Chuyển tiếp tới DeviceHealthService để xử lý heartbeat thống nhất (PostgreSQL)
             const deviceType = stationCode === 'STATION_B'
@@ -320,6 +362,7 @@ export class RealtimeGateway {
               ackCallback({
                 success: ingestionSuccess,
                 status: ingestionStatus,
+                results: binResults,
                 clientMessageId: parsed.data.clientMessageId,
                 timestamp: new Date().toISOString()
               });

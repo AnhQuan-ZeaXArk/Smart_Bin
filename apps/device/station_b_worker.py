@@ -16,6 +16,7 @@ import glob
 import copy
 import logging
 import threading
+import re
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger('SmartBin-StationB-Worker')
@@ -186,11 +187,23 @@ class StationBSerialWorker:
 
                     try:
                         line = raw_line.decode('utf-8', errors='replace').strip()
-                        if not line or not line.startswith('{') or not line.endswith('}'):
+                        if not line:
                             continue
 
-                        data = json.loads(line)
-                        self._process_packet(data)
+                        # 1. Định dạng văn bản thuần từ firmware vật lý ESP32-C6 (ví dụ: "HC1: 67%", "HC1: 0%")
+                        text_match = re.match(r'^HC1:\s*(-?\d+)\s*%$', line, re.IGNORECASE)
+                        if text_match:
+                            percent_val = int(text_match.group(1))
+                            self._process_text_measurement(percent_val)
+                            continue
+
+                        # 2. Định dạng NDJSON cấu trúc
+                        if line.startswith('{') and line.endswith('}'):
+                            data = json.loads(line)
+                            self._process_packet(data)
+                            continue
+
+                        logger.debug("Bỏ qua gói Serial B không khớp định dạng text hoặc JSON: %s", line)
                     except json.JSONDecodeError:
                         logger.debug("Bỏ qua gói Serial B không phải JSON hợp lệ: %s", raw_line)
                     except Exception as e:
@@ -211,6 +224,59 @@ class StationBSerialWorker:
 
             time.sleep(min(backoff_sec, 10.0))
             backoff_sec = min(backoff_sec * 2.0, 10.0)
+
+    def _process_text_measurement(self, percent_val: int):
+        """Xử lý phép đo trực tiếp từ chuỗi 'HC1: xx%' của ESP32-C6 Trạm B.
+        - Cảm biến HC1 ánh xạ duy nhất tới ngăn RECYCLABLE của STATION_B.
+        - Giới hạn chuẩn hóa 0 - 100%. Giá trị 0% hợp lệ được bảo toàn nguyên vẹn.
+        - Nếu ngoài phạm vi (hoặc chuỗi hỏng), tuyệt đối không làm mới last_valid_reading_at.
+        - Các ngăn ORGANIC và NON_RECYCLABLE luôn là NOT_INSTALLED.
+        """
+        if percent_val < 0 or percent_val > 100:
+            logger.warning("Giá trị cảm biến Trạm B ngoài phạm vi cho phép (0-100%%): %s%%", percent_val)
+            with self._lock:
+                self.status = 'CONNECTED'
+                # Không cập nhật last_valid_reading_at khi dữ liệu không hợp lệ
+            return
+
+        now_epoch = time.time()
+        now_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now_epoch))
+
+        with self._lock:
+            # Tăng sequence cho mỗi phép đo mới để bảo đảm tính duy nhất của clientMessageId
+            current_seq = 1
+            if self.latest_telemetry and isinstance(self.latest_telemetry.get('sampleSeq'), int):
+                current_seq = self.latest_telemetry['sampleSeq'] + 1
+
+            self.latest_telemetry = {
+                'stationCode': 'STATION_B',
+                'deviceId': 'smartbin_station_b_esp32c6',
+                'deviceType': 'ULTRASONIC_SENSOR',
+                'status': 'ONLINE',
+                'sampleSeq': current_seq,
+                'bootCount': 1,
+                'bootId': 'esp32c6_serial_b',
+                'sentAt': now_iso,
+                'sensors': {
+                    'recyclable': {
+                        'fillPercent': percent_val,
+                        'fillLevel': percent_val,
+                        'distanceCm': None,
+                        'status': 'OK',
+                        'updatedAt': now_iso,
+                        'updatedAtEpoch': now_epoch
+                    },
+                    'organic': {
+                        'status': 'NOT_INSTALLED'
+                    },
+                    'nonRecyclable': {
+                        'status': 'NOT_INSTALLED'
+                    }
+                }
+            }
+            self.last_valid_reading_at = now_epoch
+            self.last_packet_time = now_epoch
+            self.status = 'CONNECTED'
 
     def _process_packet(self, data: Dict[str, Any]):
         """Xác minh Checksum CRC16 và lưu trữ dữ liệu Trạm B."""
