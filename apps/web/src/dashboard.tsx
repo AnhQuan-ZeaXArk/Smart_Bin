@@ -24,7 +24,9 @@ import {
   computeBinViewModel,
   mergeDeviceHeartbeatToBins,
   groupBinsByStation,
-  DEFAULT_STATION_CONFIG
+  DEFAULT_STATION_CONFIG,
+  createDefaultStationBBins,
+  ensureStationList
 } from './bin-view-model';
 
 type RealtimeTelemetry = {
@@ -33,6 +35,8 @@ type RealtimeTelemetry = {
   fillCategory: FillCategory;
   distanceCm: number | null;
   timestamp: string;
+  stationCode?: string;
+  stationId?: string;
 };
 
 type Summary = {
@@ -102,6 +106,12 @@ function badge(value: string) {
 function mergeTelemetry(data: DashboardData, event: RealtimeTelemetry): DashboardData {
   const bins = data.bins.map((bin) => {
     if (bin.binCode !== event.binCode) return bin;
+
+    // Cách ly Telemetry theo Station
+    const binStationCode = bin.stationCode || (bin as any).station?.code || (bin.stationId === 'station_b_canonical_id' ? 'STATION_B' : (bin.stationId === 'station_a_canonical_id' ? 'STATION_A' : undefined));
+    if (event.stationCode && binStationCode && event.stationCode !== binStationCode) {
+      return bin;
+    }
 
     // RULE 2: Dữ liệu mô phỏng bin:telemetry TUYỆT ĐỐI KHÔNG ĐƯỢC ghi đè dữ liệu cảm biến thực tế
     if (bin.isReal) {
@@ -250,7 +260,9 @@ export function DashboardPage() {
     getData<{ stations: StationOption[] }>('/api/stations', token)
       .then((res) => {
         if (res && Array.isArray(res.stations) && res.stations.length > 0) {
-          setStations(res.stations);
+          // Round 22: Tự động bổ sung fallback Station B nếu API Production chưa migration
+          const merged = ensureStationList(res.stations);
+          setStations(merged);
         }
       })
       .catch(() => {});
@@ -264,9 +276,24 @@ export function DashboardPage() {
     getData<DashboardData>(`/api/dashboard/summary${query}`, token)
       .then((result) => {
         if (active) {
+          const apiBins = result.bins || [];
+          const hasStationB = apiBins.some(
+            (b) => b.stationCode === 'STATION_B' || (b as any).station?.code === 'STATION_B' || b.stationId === 'station_b_canonical_id'
+          );
+
+          // Round 22: Nếu API chưa trả về Station B (Production Database chưa migration),
+          // bổ sung fallback bins cho Station B để Dashboard và realtime updates hoạt động ngay
+          const shouldAddStationB = !hasStationB && (!selectedStationCode || selectedStationCode === 'STATION_B');
+          const resolvedBins: DashboardBin[] = shouldAddStationB
+            ? [
+                ...apiBins.map((b) => ({ ...b, isReal: true })),
+                ...createDefaultStationBBins()
+              ]
+            : apiBins.map((b) => ({ ...b, isReal: true }));
+
           const initialized: DashboardData = {
             ...result,
-            bins: result.bins.map((b) => ({ ...b, isReal: true }))
+            bins: resolvedBins
           };
           setData(initialized);
         }

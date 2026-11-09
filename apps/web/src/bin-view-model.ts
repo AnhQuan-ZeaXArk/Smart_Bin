@@ -179,6 +179,15 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
     }));
   }
 
+  // Round 22: Đảm bảo ngăn rác Trạm B tồn tại trong working list nếu nhận được heartbeat của STATION_B
+  let workingBins: (T & { distanceCm?: number | null; isReal?: boolean })[] = bins;
+  const hasStationBBin = bins.some(
+    (b) => b.stationCode === 'STATION_B' || (b as any).station?.code === 'STATION_B' || b.stationId === 'station_b_canonical_id'
+  );
+  if (!hasStationBBin && hb.stationCode === 'STATION_B') {
+    workingBins = [...bins, ...(createDefaultStationBBins() as unknown as T[])];
+  }
+
   const isOffline = hb.status === 'OFFLINE';
   const sensors = isOffline ? null : hb.sensors;
 
@@ -191,7 +200,7 @@ export function mergeDeviceHeartbeatToBins<T extends Bin & { distanceCm?: number
     organic: 'ORGANIC'
   };
 
-  return bins.map((bin) => {
+  return workingBins.map((bin) => {
     // Ngăn rác chưa lắp đặt không nhận dữ liệu cảm biến
     if (bin.installed === false) {
       return {
@@ -279,81 +288,169 @@ export interface StationGroup<T extends Bin = Bin> {
   }[];
 }
 
+export const FALLBACK_STATION_B = {
+  id: 'station_b_canonical_id',
+  code: 'STATION_B',
+  name: 'Trạm Thu gom Trung tâm B',
+  status: 'OFFLINE' as const,
+  isActive: true,
+  location: 'Khuôn viên phía Đông'
+};
+
 export const DEFAULT_STATION_CONFIG = [
   {
     id: 'station_a_canonical_id',
     code: 'STATION_A',
     name: 'Trạm Thu gom Trung tâm A',
     status: 'ONLINE' as const,
+    isActive: true,
     location: 'Khuôn viên chính'
   },
-  {
-    id: 'station_b_canonical_id',
-    code: 'STATION_B',
-    name: 'Trạm Thu gom Mở rộng B',
-    status: 'OFFLINE' as const,
-    location: 'Khuôn viên phía Đông'
-  }
+  FALLBACK_STATION_B
 ];
 
-export function groupBinsByStation<T extends Bin & { distanceCm?: number | null; isReal?: boolean }>(
-  bins: T[],
-  knownStations: { id: string; code: string; name: string; status?: string; location?: string | null }[] = [],
-  now?: number
-): StationGroup<T>[] {
-  const currentNow = typeof now === 'number' && now > 0 ? now : Date.now();
+export const DEFAULT_HARDWARE_METADATA: Record<string, { name: string; location: string; gateway: string; controller: string }> = {
+  STATION_A: {
+    name: 'Trạm Thu gom Trung tâm A',
+    location: 'Khuôn viên chính',
+    gateway: 'Raspberry Pi 5',
+    controller: 'ESP32 A'
+  },
+  STATION_B: {
+    name: 'Trạm Thu gom Trung tâm B',
+    location: 'Khuôn viên phía Đông',
+    gateway: 'Raspberry Pi 5 (Dùng chung)',
+    controller: 'ESP32-C6'
+  }
+};
 
-  const DEFAULT_HARDWARE_METADATA: Record<string, { name: string; location: string; gateway: string; controller: string }> = {
-    STATION_A: {
-      name: 'Trạm Thu gom Trung tâm A',
-      location: 'Khuôn viên chính',
-      gateway: 'Raspberry Pi 5',
-      controller: 'ESP32 A'
-    },
-    STATION_B: {
-      name: 'Trạm Thu gom Mở rộng B',
+export function createDefaultStationBBins(): (Bin & { distanceCm: number | null; isReal: boolean })[] {
+  return [
+    {
+      id: 'station_b_canonical_recyclable',
+      binCode: 'RECYCLABLE',
+      name: 'Rác tái chế',
       location: 'Khuôn viên phía Đông',
-      gateway: 'Raspberry Pi 5 (Dùng chung)',
-      controller: 'ESP32-C6'
+      latitude: null,
+      longitude: null,
+      capacity: 240,
+      currentFillLevel: null,
+      distanceCm: null,
+      fillCategory: 'NORMAL',
+      status: 'OFFLINE',
+      isActive: true,
+      installed: true,
+      lastSeen: null,
+      createdAt: '',
+      updatedAt: '',
+      stationId: 'station_b_canonical_id',
+      stationCode: 'STATION_B',
+      station: { id: 'station_b_canonical_id', code: 'STATION_B', name: 'Trạm Thu gom Trung tâm B' },
+      isReal: true
+    },
+    {
+      id: 'station_b_canonical_organic',
+      binCode: 'ORGANIC',
+      name: 'Rác hữu cơ',
+      location: 'Khuôn viên phía Đông',
+      latitude: null,
+      longitude: null,
+      capacity: 240,
+      currentFillLevel: null,
+      distanceCm: null,
+      fillCategory: 'NORMAL',
+      status: 'MAINTENANCE',
+      isActive: false,
+      installed: false,
+      lastSeen: null,
+      createdAt: '',
+      updatedAt: '',
+      stationId: 'station_b_canonical_id',
+      stationCode: 'STATION_B',
+      station: { id: 'station_b_canonical_id', code: 'STATION_B', name: 'Trạm Thu gom Trung tâm B' },
+      isReal: true
+    },
+    {
+      id: 'station_b_canonical_non_recyclable',
+      binCode: 'NON_RECYCLABLE',
+      name: 'Rác không tái chế',
+      location: 'Khuôn viên phía Đông',
+      latitude: null,
+      longitude: null,
+      capacity: 360,
+      currentFillLevel: null,
+      distanceCm: null,
+      fillCategory: 'NORMAL',
+      status: 'MAINTENANCE',
+      isActive: false,
+      installed: false,
+      lastSeen: null,
+      createdAt: '',
+      updatedAt: '',
+      stationId: 'station_b_canonical_id',
+      stationCode: 'STATION_B',
+      station: { id: 'station_b_canonical_id', code: 'STATION_B', name: 'Trạm Thu gom Trung tâm B' },
+      isReal: true
     }
-  };
+  ];
+}
 
-  let stationDefs: { id: string; code: string; name: string; status: string; location: string | null }[] = [];
+export function ensureStationList(
+  knownStations?: { id: string; code: string; name?: string; status?: string; location?: string | null; isActive?: boolean }[],
+  options?: { allowSingleStation?: boolean }
+): { id: string; code: string; name: string; status: string; location: string | null; isActive: boolean }[] {
+  const map = new Map<string, { id: string; code: string; name: string; status: string; location: string | null; isActive: boolean }>();
 
   if (knownStations && knownStations.length > 0) {
-    stationDefs = knownStations.map((st) => ({
-      id: st.id,
-      code: st.code || (st.id === 'station_a_canonical_id' ? 'STATION_A' : 'STATION_B'),
-      name: st.name || DEFAULT_HARDWARE_METADATA[st.code]?.name || `Trạm ${st.code}`,
-      status: (st.status as any) || 'OFFLINE',
-      location: st.location || DEFAULT_HARDWARE_METADATA[st.code]?.location || null
-    }));
-  } else {
-    const foundCodes = new Set<string>();
-    for (const bin of bins) {
-      const code = bin.station?.code || bin.stationCode || (bin.stationId === 'station_b_canonical_id' ? 'STATION_B' : 'STATION_A');
-      foundCodes.add(code);
-    }
-    if (foundCodes.size === 0) foundCodes.add('STATION_A');
-
-    stationDefs = Array.from(foundCodes).map((code) => {
-      const meta = DEFAULT_HARDWARE_METADATA[code] || {
-        name: `Trạm ${code}`,
-        location: null,
-        gateway: 'Raspberry Pi 5',
-        controller: 'Bộ điều khiển trạm'
-      };
-      return {
-        id: code === 'STATION_B' ? 'station_b_canonical_id' : 'station_a_canonical_id',
+    for (const st of knownStations) {
+      const code = st.code || (st.id === 'station_a_canonical_id' ? 'STATION_A' : 'STATION_B');
+      map.set(code, {
+        id: st.id,
         code,
-        name: meta.name,
-        status: code === 'STATION_A' ? 'ONLINE' : 'OFFLINE',
-        location: meta.location
-      };
+        name: st.name || DEFAULT_HARDWARE_METADATA[code]?.name || `Trạm ${code}`,
+        status: (st.status as any) || (code === 'STATION_A' ? 'ONLINE' : 'OFFLINE'),
+        location: st.location || DEFAULT_HARDWARE_METADATA[code]?.location || null,
+        isActive: st.isActive ?? true
+      });
+    }
+  } else {
+    map.set('STATION_A', {
+      id: 'station_a_canonical_id',
+      code: 'STATION_A',
+      name: 'Trạm Thu gom Trung tâm A',
+      status: 'ONLINE',
+      location: 'Khuôn viên chính',
+      isActive: true
     });
   }
 
-  stationDefs.sort((a, b) => a.code.localeCompare(b.code));
+  // Round 22 Core Requirement:
+  // Nếu API chưa trả về STATION_B (do Production Database chưa chạy patch),
+  // tự động bổ sung Station B fallback để Dashboard luôn hiển thị cả hai trạm.
+  // Khi API đã có STATION_B, map.set đã có dữ liệu thật nên fallback không ghi đè (không trùng lặp).
+  if (!map.has('STATION_B') && !options?.allowSingleStation) {
+    map.set('STATION_B', {
+      id: FALLBACK_STATION_B.id,
+      code: FALLBACK_STATION_B.code,
+      name: FALLBACK_STATION_B.name,
+      status: FALLBACK_STATION_B.status,
+      location: FALLBACK_STATION_B.location,
+      isActive: FALLBACK_STATION_B.isActive
+    });
+  }
+
+  return Array.from(map.values()).sort((a, b) => a.code.localeCompare(b.code));
+}
+
+export function groupBinsByStation<T extends Bin & { distanceCm?: number | null; isReal?: boolean }>(
+  bins: T[],
+  knownStations: { id: string; code: string; name: string; status?: string; location?: string | null; isActive?: boolean }[] = [],
+  now?: number,
+  options?: { allowSingleStation?: boolean }
+): StationGroup<T>[] {
+  const currentNow = typeof now === 'number' && now > 0 ? now : Date.now();
+
+  const stationDefs = ensureStationList(knownStations, options);
 
   return stationDefs.map((st) => {
     const meta = DEFAULT_HARDWARE_METADATA[st.code] || {
