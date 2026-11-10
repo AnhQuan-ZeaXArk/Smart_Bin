@@ -17,6 +17,8 @@ export const REALTIME_EVENTS = {
   DEVICE_COMMAND: 'device:command',
   DEVICE_COMMAND_ACK: 'device:command:ack',
   DEVICE_COMMAND_STATUS: 'device:command:status',
+  DEVICE_COLLECTION_EVENT: 'device:collection:event',
+  COLLECTION_SESSION_UPDATED: 'collection:session:updated',
   SETTINGS_THRESHOLDS_UPDATED: 'settings:thresholds:updated'
 } as const;
 

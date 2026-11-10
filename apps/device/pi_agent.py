@@ -44,7 +44,13 @@ except ImportError:
     socketio = None
 
 # Import giao diện đọc trạng thái YOLO; Agent không điều khiển camera hoặc ESP32.
-from smartbin_yolo_bridge import read_yolo_state
+from smartbin_yolo_bridge import (
+    get_acknowledged_backend_event_ids,
+    get_confirmed_backend_open_sessions,
+    read_yolo_state,
+    record_backend_ack,
+    record_dropped_offline_event,
+)
 from station_b_worker import StationBSerialWorker
 from offline_buffer import OfflineBuffer
 
@@ -80,6 +86,18 @@ SOCKET_RETRY_MAX_SEC = 60.0
 _socket_retry_delay = SOCKET_RETRY_INITIAL_SEC
 _next_socket_retry_at = 0.0
 _socket_connect_lock = threading.Lock()
+
+COLLECTION_EVENT_SOCKET_NAME = 'device:collection:event'
+_seen_collection_event_ids: set[str] = set(get_acknowledged_backend_event_ids())
+_confirmed_open_sessions: set[str] = set(get_confirmed_backend_open_sessions())
+
+
+def reset_online_collection_state():
+    """Reset in-memory online collection event state (used by unit tests)."""
+    _seen_collection_event_ids.clear()
+    _seen_collection_event_ids.update(get_acknowledged_backend_event_ids())
+    _confirmed_open_sessions.clear()
+    _confirmed_open_sessions.update(get_confirmed_backend_open_sessions())
 
 # Connection attempts are scheduled by the main loop, not Socket.IO's background
 # reconnect thread, so initial failures and disconnects share one retry policy.
@@ -480,10 +498,138 @@ def drain_offline_buffer():
             break
 
 
+def process_online_collection_events(yolo_info: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """
+    Gửi trực tuyến các sự kiện thu gom thủ công tại Trạm A qua Socket.IO.
+    QUY TẮC BẮT BUỘC:
+    - Chỉ gửi và xác nhận khi Raspberry Pi đang kết nối với Backend qua Socket.IO
+      và Backend trả về ACK xác nhận đã lưu Database thành công.
+    - Không lưu hàng đợi ngoại tuyến (SQLite / file), không gửi bù sự kiện cũ sau khi kết nối lại.
+    - Nếu sự kiện OPEN không được Backend xác nhận, không gửi sự kiện CLOSE của phiên đó.
+    """
+    info = yolo_info if isinstance(yolo_info, dict) else read_yolo_state()
+    raw_events = info.get('collectionEvents')
+    if not isinstance(raw_events, list) or not raw_events:
+        return []
+
+    results: List[Dict[str, Any]] = []
+    is_connected = bool(sio and sio.connected)
+
+    for ev in raw_events:
+        if not isinstance(ev, dict):
+            continue
+        ev_id = ev.get('eventId')
+        sess_id = ev.get('sessionId')
+        ev_type = ev.get('eventType')
+        if not isinstance(ev_id, str) or not ev_id.strip():
+            continue
+        ev_id = ev_id.strip()
+
+        # Đánh dấu đã thấy ngay lập tức để tuyệt đối không gửi bù sau khi kết nối lại
+        if ev_id in _seen_collection_event_ids:
+            continue
+        _seen_collection_event_ids.add(ev_id)
+
+        if not is_connected:
+            logger.warning(
+                "[Station A Collection] Bỏ qua sự kiện %s (eventId=%s, sessionId=%s) do Socket.IO đang mất kết nối (không lưu ngoại tuyến).",
+                ev_type,
+                ev_id,
+                sess_id
+            )
+            record_dropped_offline_event(ev_id)
+            results.append({'eventId': ev_id, 'sessionId': sess_id, 'eventType': ev_type, 'saved': False, 'reason': 'OFFLINE'})
+            continue
+
+        if ev_type == 'CLOSE' and (not isinstance(sess_id, str) or sess_id not in _confirmed_open_sessions):
+            logger.warning(
+                "[Station A Collection] Không gửi sự kiện CLOSE (eventId=%s, sessionId=%s) vì sự kiện OPEN chưa được Backend xác nhận lưu thành công.",
+                ev_id,
+                sess_id
+            )
+            results.append({'eventId': ev_id, 'sessionId': sess_id, 'eventType': ev_type, 'saved': False, 'reason': 'OPEN_NOT_CONFIRMED'})
+            continue
+
+        ack_received = threading.Event()
+        ack_holder: Dict[str, Any] = {'success': False, 'response': None}
+
+        def on_collection_ack(response=None):
+            ack_holder['response'] = response
+            if isinstance(response, dict) and bool(response.get('success')) and response.get('eventId') == ev_id:
+                ack_holder['success'] = True
+            ack_received.set()
+
+        payload = {
+            'eventId': ev_id,
+            'sessionId': sess_id,
+            'stationId': ev.get('stationId', 'station_a'),
+            'triggerSource': ev.get('triggerSource', 'PHYSICAL_BUTTON'),
+            'eventType': ev_type,
+            'occurredAt': ev.get('occurredAt')
+        }
+
+        try:
+            sio.emit(COLLECTION_EVENT_SOCKET_NAME, payload, callback=on_collection_ack)
+            if ack_received.wait(timeout=3.0) and ack_holder['success']:
+                record_backend_ack(ev_id, sess_id, ev_type)
+                if ev_type == 'OPEN' and isinstance(sess_id, str):
+                    _confirmed_open_sessions.add(sess_id)
+                elif ev_type == 'CLOSE' and isinstance(sess_id, str):
+                    _confirmed_open_sessions.discard(sess_id)
+                logger.info(
+                    "[Station A Collection] Backend xác nhận đã lưu sự kiện %s (eventId=%s, sessionId=%s).",
+                    ev_type,
+                    ev_id,
+                    sess_id
+                )
+                results.append({
+                    'eventId': ev_id,
+                    'sessionId': sess_id,
+                    'eventType': ev_type,
+                    'saved': True,
+                    'response': ack_holder['response']
+                })
+            else:
+                logger.warning(
+                    "[Station A Collection] Backend KHÔNG xác nhận lưu sự kiện %s (eventId=%s, sessionId=%s): %s",
+                    ev_type,
+                    ev_id,
+                    sess_id,
+                    ack_holder['response']
+                )
+                results.append({
+                    'eventId': ev_id,
+                    'sessionId': sess_id,
+                    'eventType': ev_type,
+                    'saved': False,
+                    'reason': 'ACK_FAILED',
+                    'response': ack_holder['response']
+                })
+        except Exception as e:
+            logger.error(
+                "[Station A Collection] Lỗi gửi sự kiện %s (eventId=%s): %s",
+                ev_type,
+                ev_id,
+                type(e).__name__
+            )
+            results.append({
+                'eventId': ev_id,
+                'sessionId': sess_id,
+                'eventType': ev_type,
+                'saved': False,
+                'reason': 'EMIT_ERROR'
+            })
+
+    return results
+
+
 def send_telemetry():
     """Gửi gói tin Telemetry lên Backend qua Socket.IO hoặc HTTP fallback cho cả Station A và Station B."""
     # 1. Thu thập dữ liệu Station A
     payload_a = build_telemetry_payload()
+
+    # 1b. Xử lý trực tuyến sự kiện thu gom thủ công tại Trạm A (không lưu ngoại tuyến)
+    process_online_collection_events()
 
     # 2. Thu thập dữ liệu Station B nếu Worker đang hoạt động
     payload_b = None

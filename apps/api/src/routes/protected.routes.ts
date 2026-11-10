@@ -6,6 +6,7 @@ import { prisma } from '../lib/prisma.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 
 import { env } from '../config/env.js';
+import { serializeCollectionRecord } from '../services/collection-session.service.js';
 import { demoService } from '../demo/demo.service.js';
 
 const router = Router();
@@ -278,7 +279,7 @@ router.get('/collections', requireAuth, async (request, response, next) => {
       orderBy: { collectedAt: 'desc' },
       take: 200
     });
-    return response.json({ collections });
+    return response.json({ collections: collections.map((rec) => serializeCollectionRecord(rec)) });
   } catch (error) {
     return next(error);
   }

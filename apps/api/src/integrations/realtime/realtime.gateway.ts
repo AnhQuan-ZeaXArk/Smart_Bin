@@ -17,6 +17,7 @@ import {
 } from './realtime.contract.js';
 import { aiDetectionInputSchema } from './ai-detection.schema.js';
 import { unifiedTelemetryIngestionService } from '../../services/unified-telemetry-ingestion.service.js';
+import { collectionSessionService } from '../../services/collection-session.service.js';
 
 export * from './realtime.contract.js';
 export type TelemetryEvent = RealtimeTelemetryPayload;
@@ -389,6 +390,35 @@ export class RealtimeGateway {
             realDeviceService.handleCommandAck(parsed.data);
           } catch (err) {
             console.error('[RealtimeGateway] Error processing device:command:ack:', err);
+          }
+        });
+
+        // Nhận sự kiện thu gom thủ công trực tuyến từ Raspberry Pi 5 (Station A) kèm ACK xác nhận lưu DB
+        socket.on(REALTIME_EVENTS.DEVICE_COLLECTION_EVENT, async (payload: unknown, ackCallback?: (response: any) => void) => {
+          const rawEventId = typeof (payload as any)?.eventId === 'string' ? (payload as any).eventId : undefined;
+          try {
+            const result = await collectionSessionService.ingestEvent(payload);
+            if (result.success && result.session) {
+              this.io.emit(REALTIME_EVENTS.COLLECTION_SESSION_UPDATED, result.session);
+            }
+            if (typeof ackCallback === 'function') {
+              ackCallback({
+                ...result,
+                eventId: result.eventId || rawEventId,
+                timestamp: new Date().toISOString()
+              });
+            }
+          } catch (err) {
+            console.error('[RealtimeGateway] Error processing device:collection:event:', err);
+            if (typeof ackCallback === 'function') {
+              ackCallback({
+                success: false,
+                status: 'INTERNAL_ERROR',
+                eventId: rawEventId,
+                error: err instanceof Error ? err.message : 'Unknown error',
+                timestamp: new Date().toISOString()
+              });
+            }
           }
         });
 

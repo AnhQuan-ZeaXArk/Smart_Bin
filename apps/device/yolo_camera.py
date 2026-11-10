@@ -5,9 +5,10 @@ import serial
 import time
 import math
 import re
+import uuid
 from datetime import datetime, timezone
 from ultralytics import YOLO
-from smartbin_yolo_bridge import publish_yolo_state
+from smartbin_yolo_bridge import get_acknowledged_backend_event_ids, publish_yolo_state
 
 # =====================================================
 # 1. CAU HINH YOLO
@@ -73,6 +74,11 @@ def send_command(command):
 
 HC_VALID_TIMEOUT_SEC = 15.0
 
+STATION_ID = "station_a"
+COLLECTION_SOURCE = "PHYSICAL_BUTTON"
+MANUAL_OPEN_MESSAGE = "THU CONG: MO CA 3 SERVO (330 do)"
+MANUAL_CLOSE_MESSAGE = "TU DONG: TIEP TUC"
+
 # Luu tru trang thai doc cam bien doc lap cho tung HC:
 # {"fillPercent": int, "updatedAtEpoch": float}
 sensor_state = {
@@ -81,6 +87,77 @@ sensor_state = {
     "hc3": None
 }
 _serial_buffer = ""
+collection_session_open = False
+active_collection_session_id = None
+_pending_collection_events = []
+backend_connected = True
+
+
+def is_backend_connected():
+    if callable(backend_connected):
+        return bool(backend_connected())
+    return bool(backend_connected)
+
+
+def reset_collection_session_state():
+    global collection_session_open, active_collection_session_id, _pending_collection_events, backend_connected
+    collection_session_open = False
+    active_collection_session_id = None
+    _pending_collection_events = []
+    backend_connected = True
+
+
+def get_pending_collection_events():
+    return list(_pending_collection_events)
+
+
+def create_collection_event(event_type, session_id, occurred_at=None):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    return {
+        "eventId": str(uuid.uuid4()),
+        "sessionId": session_id,
+        "stationId": STATION_ID,
+        "triggerSource": COLLECTION_SOURCE,
+        "eventType": event_type,
+        "occurredAt": occurred_at if occurred_at is not None else now_iso,
+    }
+
+
+def handle_collection_serial_line(line):
+    global collection_session_open, active_collection_session_id, _pending_collection_events
+
+    if line == MANUAL_OPEN_MESSAGE:
+        if collection_session_open:
+            logger.warning("Ignoring duplicate manual open message while Station A is already open.")
+            return None
+        collection_session_open = True
+        if not is_backend_connected():
+            active_collection_session_id = None
+            logger.warning("Backend is disconnected; skipping online OPEN collection event creation.")
+            return None
+        session_id = str(uuid.uuid4())
+        active_collection_session_id = session_id
+        event = create_collection_event("OPEN", session_id=session_id)
+        _pending_collection_events = [event]
+        return event
+
+    if line == MANUAL_CLOSE_MESSAGE:
+        if not collection_session_open:
+            logger.warning("Ignoring manual close message without an active open collection session.")
+            return None
+        collection_session_open = False
+        session_id = active_collection_session_id
+        active_collection_session_id = None
+        if not session_id or not is_backend_connected():
+            logger.warning("Backend disconnected or open session was not recorded; skipping online CLOSE event.")
+            return None
+        event = create_collection_event("CLOSE", session_id=session_id)
+        _pending_collection_events = [
+            ev for ev in _pending_collection_events if ev.get("sessionId") == session_id
+        ] + [event]
+        return event
+
+    return None
 
 
 def read_esp32():
@@ -121,6 +198,9 @@ def read_esp32():
                         }
                 except ValueError:
                     pass
+                continue
+
+            handle_collection_serial_line(line)
 
     except serial.SerialException as e:
         print("[USB SERIAL] Loi doc:", e)
@@ -238,8 +318,22 @@ def process_detection(result):
     return ipc_detection
 
 
-def _publish_state_safely(detection=None, status="RUNNING", camera="CONNECTED", sensors=None):
+def _publish_state_safely(
+    detection=None,
+    status="RUNNING",
+    camera="CONNECTED",
+    sensors=None,
+    collection_events=None
+):
+    global _pending_collection_events
     try:
+        acked_ids = get_acknowledged_backend_event_ids()
+        if acked_ids and _pending_collection_events:
+            _pending_collection_events = [
+                ev for ev in _pending_collection_events
+                if ev.get("eventId") not in acked_ids
+            ]
+
         kwargs = {
             "detection": detection,
             "status": status,
@@ -247,6 +341,13 @@ def _publish_state_safely(detection=None, status="RUNNING", camera="CONNECTED", 
         }
         if sensors is not None:
             kwargs["sensors"] = sensors
+        events_to_publish = (
+            collection_events
+            if collection_events is not None
+            else (_pending_collection_events if status == "RUNNING" and _pending_collection_events else None)
+        )
+        if events_to_publish is not None:
+            kwargs["collection_events"] = events_to_publish
         if not publish_yolo_state(**kwargs):
             logger.warning("YOLO IPC state was not published.")
     except Exception:
