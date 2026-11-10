@@ -105,6 +105,16 @@ _serial_buffer = ""
 collection_session_open = False
 active_collection_session_id = None
 _pending_collection_events = []
+try:
+    _initial_state = read_yolo_state()
+    _initial_events = _initial_state.get('collectionEvents', [])
+    if isinstance(_initial_events, list):
+        _pending_collection_events = [
+            ev for ev in _initial_events
+            if isinstance(ev, dict) and ev.get('eventId')
+        ]
+except Exception:
+    _pending_collection_events = []
 backend_connected = True
 lid_alert = False
 last_lid_error = None
@@ -472,7 +482,7 @@ def _publish_state_safely(
         events_to_publish = (
             collection_events
             if collection_events is not None
-            else (_pending_collection_events if status == "RUNNING" and _pending_collection_events else None)
+            else (_pending_collection_events if _pending_collection_events else None)
         )
         if events_to_publish is not None:
             kwargs["collection_events"] = events_to_publish
@@ -635,7 +645,8 @@ def main():
         _publish_state_safely(
             detection=None,
             status="STOPPED",
-            camera="DISCONNECTED"
+            camera="DISCONNECTED",
+            collection_events=_pending_collection_events if _pending_collection_events else None
         )
         print("[SYSTEM] Da dong camera va USB Serial.")
 

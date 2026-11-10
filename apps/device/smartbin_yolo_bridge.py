@@ -223,7 +223,7 @@ def publish_yolo_state(
     if sanitized_sensors is not None:
         state['sensors'] = sanitized_sensors
 
-    if collection_events is not None and isinstance(collection_events, list) and status == 'RUNNING':
+    if collection_events is not None and isinstance(collection_events, list):
         sanitized_events: List[Dict[str, str]] = []
         seen_ids = set()
         for ev in collection_events:
@@ -461,28 +461,28 @@ def read_yolo_state() -> Dict[str, Any]:
     updated_epoch = data['updatedAtEpoch']
     if isinstance(updated_epoch, bool) or not isinstance(updated_epoch, (int, float)) \
             or not math.isfinite(updated_epoch):
-        return _unavailable_state()
+        return _unavailable_state(data)
 
     now = time.time()
     if updated_epoch > now or now - updated_epoch > STALE_TIMEOUT_SEC:
-        return _unavailable_state()
+        return _unavailable_state(data)
 
     if data['status'] == 'STOPPED' and data['camera'] == 'DISCONNECTED' \
             and data['detection'] is None:
-        return _unavailable_state()
+        return _unavailable_state(data)
     if data['status'] != 'RUNNING' or data['camera'] != 'CONNECTED':
-        return _unavailable_state()
+        return _unavailable_state(data)
 
     detection = data['detection']
     if not _valid_detection(detection):
-        return _unavailable_state()
+        return _unavailable_state(data)
 
     if detection is not None:
         parsed_timestamp = datetime.fromisoformat(
             detection['timestamp'].replace('Z', '+00:00')
         )
         if parsed_timestamp > datetime.now(timezone.utc):
-            return _unavailable_state()
+            return _unavailable_state(data)
 
     validated_sensors = None
     if 'sensors' in data and isinstance(data['sensors'], dict):
@@ -530,12 +530,14 @@ def read_yolo_state() -> Dict[str, Any]:
     }
 
 
-def _unavailable_state() -> Dict[str, Any]:
+def _unavailable_state(data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    events = _extract_valid_collection_events(data) if isinstance(data, dict) else []
+    lid = bool(data.get('lidAlert', False)) if isinstance(data, dict) else False
     return {
         'yoloStatus': 'STOPPED',
         'cameraStatus': 'DISCONNECTED',
         'latestDetection': None,
         'sensors': None,
-        'collectionEvents': [],
-        'lidAlert': False
+        'collectionEvents': events,
+        'lidAlert': lid
     }

@@ -296,12 +296,21 @@ export class CollectionSessionService {
       };
     }
 
+    const stationFilters: any[] = [
+      { station: { code: targetStationCode } },
+      { stationId: normalizedStationId }
+    ];
+    if (station?.id) {
+      stationFilters.push({ stationId: station.id });
+    }
+    // Trạm A: tương thích các thùng rác có stationId = null trong database production
+    if (targetStationCode === 'STATION_A') {
+      stationFilters.push({ stationId: null });
+    }
+
     const fallbackBins = await dbClient.bin.findMany({
       where: {
-        OR: [
-          { station: { code: targetStationCode } },
-          { stationId: normalizedStationId }
-        ]
+        OR: stationFilters
       },
       include: {
         station: true
@@ -312,32 +321,17 @@ export class CollectionSessionService {
     if (fallbackBins && fallbackBins.length > 0) {
       const preferred = fallbackBins.find((b: any) => b.binCode === 'RECYCLABLE') ?? fallbackBins[0];
       return {
-        stationId: fallbackBins[0].stationId ?? normalizedStationId,
-        stationCode: fallbackBins[0].station?.code ?? targetStationCode,
-        stationName: fallbackBins[0].station?.name ?? (targetStationCode === 'STATION_B' ? 'Trạm B' : 'Trạm A'),
+        stationId: station?.id ?? fallbackBins[0].stationId ?? normalizedStationId,
+        stationCode: station?.code ?? fallbackBins[0].station?.code ?? targetStationCode,
+        stationName: station?.name ?? fallbackBins[0].station?.name ?? (targetStationCode === 'STATION_B' ? 'Trạm B' : 'Trạm A'),
         normalizedStationId,
         anchorBin: preferred,
         bins: fallbackBins
       };
     }
 
-    const allBins = await dbClient.bin.findMany({
-      include: { station: true },
-      orderBy: { binCode: 'asc' }
-    });
-
-    if (!allBins || allBins.length === 0) {
-      return null;
-    }
-
-    return {
-      stationId: allBins[0].stationId ?? normalizedStationId,
-      stationCode: allBins[0].station?.code ?? targetStationCode,
-      stationName: allBins[0].station?.name ?? (targetStationCode === 'STATION_B' ? 'Trạm B' : 'Trạm A'),
-      normalizedStationId,
-      anchorBin: allBins[0],
-      bins: allBins
-    };
+    // Tuyệt đối không fallback sang allBins để tránh lấy nhầm thùng rác trạm khác
+    return null;
   }
 
   private async processEventInternal(rawPayload: unknown): Promise<CollectionSessionIngestResult> {
@@ -371,7 +365,8 @@ export class CollectionSessionService {
           where: {
             OR: [
               { id: sessionId },
-              { collectedBy: 'PHYSICAL_BUTTON' }
+              { collectedBy: 'PHYSICAL_BUTTON' },
+              { notes: { contains: eventId } }
             ]
           },
           orderBy: { collectedAt: 'desc' },
@@ -564,6 +559,35 @@ export class CollectionSessionService {
 
         const existingMeta = parseSessionMetadata(existingSession.notes);
         if (existingSession.status === 'COMPLETED' || (existingMeta && existingMeta.closeEventId !== null)) {
+          // Idempotency: Nếu phiên đã đóng bằng chính closeEventId này (ví dụ client gửi lại do mất ACK), trả về DUPLICATE_IGNORED thành công
+          if (existingMeta && existingMeta.closeEventId === eventId) {
+            return {
+              success: true,
+              status: 'DUPLICATE_IGNORED',
+              duplicate: true,
+              eventId,
+              sessionId,
+              eventType: 'CLOSE',
+              createdAt: existingMeta.createdAt,
+              session: {
+                sessionId,
+                stationId: existingMeta.stationId,
+                stationCode: existingMeta.stationCode,
+                stationName: existingMeta.stationName,
+                triggerSource: existingMeta.triggerSource,
+                openedAt: existingMeta.openedAt,
+                closedAt: existingMeta.closedAt,
+                fillLevelBefore: existingMeta.fillLevelBefore,
+                fillLevelAfter: existingMeta.fillLevelAfter,
+                status: 'COMPLETED',
+                openEventId: existingMeta.openEventId,
+                closeEventId: existingMeta.closeEventId,
+                compartmentsCount: existingMeta.compartmentsCount,
+                compartments: existingMeta.compartments,
+                createdAt: existingMeta.createdAt
+              }
+            };
+          }
           return {
             success: false,
             status: 'SESSION_ALREADY_CLOSED',

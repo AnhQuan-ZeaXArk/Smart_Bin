@@ -514,10 +514,10 @@ def process_online_collection_events(yolo_info: Optional[Dict[str, Any]] = None)
     """
     Gửi trực tuyến các sự kiện thu gom thủ công tại Trạm A qua Socket.IO.
     QUY TẮC BẮT BUỘC:
-    - Chỉ gửi và xác nhận khi Raspberry Pi đang kết nối với Backend qua Socket.IO
-      và Backend trả về ACK xác nhận đã lưu Database thành công.
-    - Không lưu hàng đợi ngoại tuyến (SQLite / file), không gửi bù sự kiện cũ sau khi kết nối lại.
-    - Nếu sự kiện OPEN không được Backend xác nhận, không gửi sự kiện CLOSE của phiên đó.
+    - Pi Agent chỉ đánh dấu event đã xử lý sau khi Backend ACK thành công.
+    - Khi timeout (>10s) hoặc mất kết nối, sự kiện được giữ lại trong hàng đợi để gửi lại.
+    - Backend bảo đảm tính Idempotent theo eventId, không tạo bản ghi trùng lặp.
+    - Nếu sự kiện OPEN chưa được Backend xác nhận, giữ lại sự kiện CLOSE để thử lại sau khi OPEN thành công.
     """
     info = yolo_info if isinstance(yolo_info, dict) else read_yolo_state()
     raw_events = info.get('collectionEvents')
@@ -537,25 +537,25 @@ def process_online_collection_events(yolo_info: Optional[Dict[str, Any]] = None)
             continue
         ev_id = ev_id.strip()
 
-        # Đánh dấu đã thấy ngay lập tức để tuyệt đối không gửi bù sau khi kết nối lại
+        # Đã được Backend ACK thành công trước đó thì bỏ qua
         if ev_id in _seen_collection_event_ids:
             continue
-        _seen_collection_event_ids.add(ev_id)
 
         if not is_connected:
+            print(f"[COLLECTION AGENT] Socket.IO đang ngắt kết nối. Giữ sự kiện {ev_type} (eventId={ev_id}) để gửi lại khi có mạng.")
             logger.warning(
-                "[Station A Collection] Bỏ qua sự kiện %s (eventId=%s, sessionId=%s) do Socket.IO đang mất kết nối (không lưu ngoại tuyến).",
+                "[Station A Collection] Tạm hoãn sự kiện %s (eventId=%s, sessionId=%s) do Socket.IO đang mất kết nối. Giữ lại để gửi lại khi kết nối lại.",
                 ev_type,
                 ev_id,
                 sess_id
             )
-            record_dropped_offline_event(ev_id)
             results.append({'eventId': ev_id, 'sessionId': sess_id, 'eventType': ev_type, 'saved': False, 'reason': 'OFFLINE'})
             continue
 
         if ev_type == 'CLOSE' and (not isinstance(sess_id, str) or sess_id not in _confirmed_open_sessions):
+            print(f"[COLLECTION AGENT] Chưa gửi CLOSE (sessionId={sess_id}) do OPEN chưa được Backend xác nhận. Giữ lại trong hàng đợi.")
             logger.warning(
-                "[Station A Collection] Không gửi sự kiện CLOSE (eventId=%s, sessionId=%s) vì sự kiện OPEN chưa được Backend xác nhận lưu thành công.",
+                "[Station A Collection] Chưa thể gửi sự kiện CLOSE (eventId=%s, sessionId=%s) vì sự kiện OPEN chưa được Backend xác nhận lưu thành công. Giữ lại để thử lại.",
                 ev_id,
                 sess_id
             )
@@ -581,13 +581,20 @@ def process_online_collection_events(yolo_info: Optional[Dict[str, Any]] = None)
         }
 
         try:
+            print(f"[COLLECTION AGENT] Nhận sự kiện từ IPC: {ev_type} | eventId={ev_id} | sessionId={sess_id}")
+            print(f"[COLLECTION AGENT] Đang gửi sự kiện {ev_type} lên Backend (timeout 10s)...")
             sio.emit(COLLECTION_EVENT_SOCKET_NAME, payload, callback=on_collection_ack)
-            if ack_received.wait(timeout=3.0) and ack_holder['success']:
+            # Timeout 10.0s đảm bảo chịu được độ trễ mạng và transaction PostgreSQL trên Render
+            if ack_received.wait(timeout=10.0) and ack_holder['success']:
+                # CHỈ ĐÁNH DẤU ĐÃ XỬ LÝ KHI BACKEND ACK THÀNH CÔNG!
+                _seen_collection_event_ids.add(ev_id)
                 record_backend_ack(ev_id, sess_id, ev_type)
                 if ev_type == 'OPEN' and isinstance(sess_id, str):
                     _confirmed_open_sessions.add(sess_id)
                 elif ev_type == 'CLOSE' and isinstance(sess_id, str):
                     _confirmed_open_sessions.discard(sess_id)
+
+                print(f"[COLLECTION AGENT] Backend ACK THÀNH CÔNG: {ev_type} | eventId={ev_id} | sessionId={sess_id}")
                 logger.info(
                     "[Station A Collection] Backend xác nhận đã lưu sự kiện %s (eventId=%s, sessionId=%s).",
                     ev_type,
@@ -602,12 +609,14 @@ def process_online_collection_events(yolo_info: Optional[Dict[str, Any]] = None)
                     'response': ack_holder['response']
                 })
             else:
+                resp = ack_holder.get('response')
+                print(f"[COLLECTION AGENT] Backend ACK thất bại hoặc timeout (>10s) cho {ev_type} (eventId={ev_id}): {resp}. Giữ lại trong hàng đợi để gửi lại!")
                 logger.warning(
-                    "[Station A Collection] Backend KHÔNG xác nhận lưu sự kiện %s (eventId=%s, sessionId=%s): %s",
+                    "[Station A Collection] Backend KHÔNG xác nhận lưu sự kiện %s (eventId=%s, sessionId=%s): %s. Giữ lại để thử lại ở chu kỳ sau.",
                     ev_type,
                     ev_id,
                     sess_id,
-                    ack_holder['response']
+                    resp
                 )
                 results.append({
                     'eventId': ev_id,
@@ -615,9 +624,10 @@ def process_online_collection_events(yolo_info: Optional[Dict[str, Any]] = None)
                     'eventType': ev_type,
                     'saved': False,
                     'reason': 'ACK_FAILED',
-                    'response': ack_holder['response']
+                    'response': resp
                 })
         except Exception as e:
+            print(f"[COLLECTION AGENT] Lỗi ngoại lệ khi emit sự kiện {ev_type}: {e}. Giữ lại trong hàng đợi để gửi lại!")
             logger.error(
                 "[Station A Collection] Lỗi gửi sự kiện %s (eventId=%s): %s",
                 ev_type,
@@ -629,7 +639,8 @@ def process_online_collection_events(yolo_info: Optional[Dict[str, Any]] = None)
                 'sessionId': sess_id,
                 'eventType': ev_type,
                 'saved': False,
-                'reason': 'EMIT_ERROR'
+                'reason': 'EMIT_ERROR',
+                'error': str(e)
             })
 
     return results

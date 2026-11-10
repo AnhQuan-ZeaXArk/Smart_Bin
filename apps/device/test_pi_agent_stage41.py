@@ -344,7 +344,7 @@ class TestYOLOIPCReader(unittest.TestCase):
             with open(source, 'r', encoding='utf-8') as state_file:
                 written = json.load(state_file)
             self.assertEqual(set(written), {
-                'status', 'camera', 'updatedAtEpoch', 'detection'
+                'status', 'camera', 'updatedAtEpoch', 'detection', 'lidAlert'
             })
             self.assertEqual(written['detection'], detection)
             return real_replace(source, destination)

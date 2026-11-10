@@ -278,7 +278,7 @@ class TestStationACollectionEvents(unittest.TestCase):
             self.assertFalse(any(f.endswith(".events.json") for f in os.listdir(self.temp_dir.name)))
 
     def test_06_reconnect_to_backend_does_not_replay_old_offline_events(self):
-        """6. Kết nối lại với Backend -> sự kiện cũ lúc mất kết nối không được gửi bù."""
+        """6. Mất kết nối -> hoãn gửi; Kết nối lại -> gửi lại thành công và tiếp tục phiên."""
         fake_sio = FakeSocketIOClient(connected=False)
         with mock.patch.object(pi_agent, "sio", fake_sio):
             # Event occurs while offline
@@ -289,24 +289,25 @@ class TestStationACollectionEvents(unittest.TestCase):
             offline_results = pi_agent.process_online_collection_events()
             self.assertEqual(len(offline_results), 1)
             self.assertFalse(offline_results[0]["saved"])
+            self.assertEqual(offline_results[0]["reason"], "OFFLINE")
             self.assertEqual(fake_sio.emitted, [])
 
-            # Backend reconnects later; IPC snapshot still has the old event
+            # Backend reconnects later; sự kiện được gửi lại thành công
             fake_sio.connected = True
             reconnect_results = pi_agent.process_online_collection_events()
-            self.assertEqual(reconnect_results, [])
-            self.assertEqual(fake_sio.emitted, [])
+            self.assertEqual(len(reconnect_results), 1)
+            self.assertTrue(reconnect_results[0]["saved"])
+            self.assertEqual(reconnect_results[0]["eventType"], "OPEN")
+            self.assertEqual(len(fake_sio.emitted), 1)
 
-            # Even if CLOSE arrives after reconnect for that unconfirmed offline OPEN,
-            # CLOSE must NOT be sent to Backend as if the session were recorded
+            # CLOSE arrives after reconnect: session has been confirmed, so CLOSE succeeds
             self.fake_serial.feed("TU DONG: TIEP TUC\n")
             self.yolo.read_esp32()
             self._publish_current_yolo_ipc()
             close_results = pi_agent.process_online_collection_events()
             self.assertEqual(len(close_results), 1)
-            self.assertFalse(close_results[0]["saved"])
-            self.assertEqual(close_results[0]["reason"], "OPEN_NOT_CONFIRMED")
-            self.assertEqual(fake_sio.emitted, [])
+            self.assertTrue(close_results[0]["saved"])
+            self.assertEqual(close_results[0]["eventType"], "CLOSE")
 
     def test_07_backend_failed_ack_does_not_mark_saved_and_blocks_subsequent_close(self):
         """7. Backend trả ACK thất bại -> sự kiện không được tính là đã lưu."""
@@ -329,18 +330,17 @@ class TestStationACollectionEvents(unittest.TestCase):
             self.assertEqual(open_results[0]["reason"], "ACK_FAILED")
             self.assertEqual(len(pi_agent._confirmed_open_sessions), 0)
 
-            # Now even if Backend recovers, a CLOSE for that failed OPEN session is not emitted
-            fake_sio.ack_handler = None
-            fake_sio.emitted.clear()
+            # When CLOSE arrives while OPEN still fails ACK, CLOSE is not confirmed
             self.fake_serial.feed("TU DONG: TIEP TUC\n")
             self.yolo.read_esp32()
             self._publish_current_yolo_ipc()
 
             close_results = pi_agent.process_online_collection_events()
-            self.assertEqual(len(close_results), 1)
+            self.assertEqual(len(close_results), 2)
             self.assertFalse(close_results[0]["saved"])
-            self.assertEqual(close_results[0]["reason"], "OPEN_NOT_CONFIRMED")
-            self.assertEqual(fake_sio.emitted, [])
+            self.assertEqual(close_results[0]["reason"], "ACK_FAILED")
+            self.assertFalse(close_results[1]["saved"])
+            self.assertEqual(close_results[1]["reason"], "OPEN_NOT_CONFIRMED")
 
     def test_08_ignores_servo_1_mo_and_automatic_yolo_servo_commands(self):
         """8. Không nhận nhầm Servo 1: MO hoặc lệnh servo tự động của YOLO."""
@@ -508,18 +508,17 @@ class TestStationACollectionEvents(unittest.TestCase):
             self.assertEqual(len(acked_ids), 0)
             self.assertEqual(len(pi_agent._confirmed_open_sessions), 0)
 
-            # CLOSE arriving later must be rejected
-            fake_sio.ack_handler = None
-            fake_sio.emitted.clear()
+            # When CLOSE arrives while OPEN still fails ACK, CLOSE cannot be confirmed
             self.fake_serial.feed("TU DONG: TIEP TUC\n")
             self.yolo.read_esp32()
             self._publish_current_yolo_ipc()
 
             close_results = pi_agent.process_online_collection_events()
-            self.assertEqual(len(close_results), 1)
+            self.assertEqual(len(close_results), 2)
             self.assertFalse(close_results[0]["saved"])
-            self.assertEqual(close_results[0]["reason"], "OPEN_NOT_CONFIRMED")
-            self.assertEqual(fake_sio.emitted, [])
+            self.assertEqual(close_results[0]["reason"], "ACK_FAILED")
+            self.assertFalse(close_results[1]["saved"])
+            self.assertEqual(close_results[1]["reason"], "OPEN_NOT_CONFIRMED")
 
     def test_13_exact_firmware_strings_and_angle_variations(self):
         """13. Kiem tra cac chuoi Serial thuc te tu firmware ESP32-C6:
