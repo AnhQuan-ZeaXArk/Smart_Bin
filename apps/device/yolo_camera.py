@@ -122,10 +122,11 @@ def handle_lid_error_line(line: str) -> bool:
     global lid_alert, last_lid_error
     if not line or not isinstance(line, str):
         return False
-    cleaned_lower = line.strip().lower()
+    cleaned_lower = re.sub(r"[\x00-\x1f\x7f]+", "", line).strip().lower()
     if cleaned_lower in LID_ERROR_MESSAGES:
         lid_alert = True
         last_lid_error = cleaned_lower
+        print(f"[LID ALERT] Phat hien loi nap tu ESP32: {cleaned_lower} -> Kich hoat canh bao toan he thong")
         logger.warning("CANH BAO: Phat hien loi nap tu ESP32: %s", line)
         return True
     return False

@@ -92,9 +92,14 @@ export class RealDeviceService {
     camera: 'DISCONNECTED',
     esp32: 'DISCONNECTED'
   };
+  public static readonly LID_ALERT_ID = 'lid-alert-station-a';
+  public static readonly LID_ALERT_MESSAGE = 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!';
+
   private aiDetection: AiDetectionResult | null = null;
   private detectionHistory: AiDetectionResult[] = [];
   private lidAlert: boolean = false;
+  private lidAlertId: string = RealDeviceService.LID_ALERT_ID;
+  private lidAlertCreatedAt: string | null = null;
 
   // Isolated in-memory state for Station B (ESP32-C6 Serial B)
   // NEVER mixed with Station A's state
@@ -130,12 +135,55 @@ export class RealDeviceService {
     }
   }
 
-  setLidAlert(val: boolean): void {
+  setLidAlert(val: boolean, id?: string, createdAt?: string): void {
     this.lidAlert = val;
+    if (val) {
+      if (id) {
+        this.lidAlertId = id;
+      }
+      if (createdAt) {
+        this.lidAlertCreatedAt = createdAt;
+      } else if (!this.lidAlertCreatedAt) {
+        this.lidAlertCreatedAt = new Date().toISOString();
+      }
+    } else {
+      this.lidAlertId = RealDeviceService.LID_ALERT_ID;
+      this.lidAlertCreatedAt = null;
+    }
   }
 
   isLidAlertActive(): boolean {
     return this.lidAlert;
+  }
+
+  getLidAlertCreatedAt(): string | null {
+    return this.lidAlertCreatedAt;
+  }
+
+  getActiveLidAlertRecord() {
+    if (!this.lidAlert) {
+      return null;
+    }
+    return {
+      id: this.lidAlertId || RealDeviceService.LID_ALERT_ID,
+      binId: null,
+      bin: null,
+      deviceId: null,
+      type: 'SENSOR_ABNORMAL' as const,
+      severity: 'CRITICAL' as const,
+      message: RealDeviceService.LID_ALERT_MESSAGE,
+      isResolved: false,
+      createdAt: this.lidAlertCreatedAt || new Date().toISOString(),
+      resolvedAt: null
+    };
+  }
+
+  triggerLidAlert(payload?: unknown): void {
+    if (this.realtime) {
+      this.realtime.handleLidAlert(payload);
+    } else {
+      this.setLidAlert(true);
+    }
   }
 
   setLastHeartbeatDateForTest(date: Date | null): void {
@@ -221,8 +269,8 @@ export class RealDeviceService {
     }
 
     // Chỉ kích hoạt trạng thái cảnh báo khi có lỗi; không tự xóa cảnh báo khi các gói tiếp theo không mang lỗi
-    if ((input as any).lidAlert === true) {
-      this.lidAlert = true;
+    if ((input as any).lidAlert === true && !this.lidAlert) {
+      this.setLidAlert(true);
     }
 
     const statusObj = this.getStatus();

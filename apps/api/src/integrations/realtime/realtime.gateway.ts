@@ -2,12 +2,12 @@ import { Server } from 'socket.io';
 import type { Server as NodeHttpServer } from 'node:http';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { DeviceType } from '@prisma/client';
+import { AlertSeverity, AlertType, DeviceType } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { CANONICAL_DEVICE_ID, normalizeDeviceId } from '../../config/device-id.config.js';
 import { DEVICE_HEALTH_CONFIG } from '../../config/device-health.config.js';
-import { realDeviceService } from '../../demo/real-device.service.js';
+import { RealDeviceService, realDeviceService } from '../../demo/real-device.service.js';
 import { deviceHealthService } from '../../services/device-health.service.js';
 import {
   REALTIME_EVENTS,
@@ -610,7 +610,63 @@ export class RealtimeGateway {
     this.io.emit('settings:thresholds', payload);
   }
 
-  public handleLidAlert(payload?: unknown): void {
+  private lidAlertPersistPromise: Promise<any> | null = null;
+
+  public async persistLidAlertToDb(
+    message: string = RealDeviceService.LID_ALERT_MESSAGE,
+    createdAtIso?: string
+  ): Promise<any> {
+    if (this.lidAlertPersistPromise) {
+      return this.lidAlertPersistPromise;
+    }
+    this.lidAlertPersistPromise = (async () => {
+      try {
+        const existing = await prisma.alert.findFirst({
+          where: {
+            message,
+            isResolved: false
+          },
+          orderBy: { createdAt: 'desc' }
+        });
+        if (existing) {
+          realDeviceService.setLidAlert(true, existing.id, existing.createdAt.toISOString());
+          return existing;
+        }
+        const created = await prisma.alert.create({
+          data: {
+            id: RealDeviceService.LID_ALERT_ID,
+            binId: null,
+            type: AlertType.SENSOR_ABNORMAL,
+            severity: AlertSeverity.CRITICAL,
+            message,
+            isResolved: false,
+            ...(createdAtIso ? { createdAt: new Date(createdAtIso) } : {})
+          }
+        }).catch(async () => {
+          return prisma.alert.create({
+            data: {
+              binId: null,
+              type: AlertType.SENSOR_ABNORMAL,
+              severity: AlertSeverity.CRITICAL,
+              message,
+              isResolved: false,
+              ...(createdAtIso ? { createdAt: new Date(createdAtIso) } : {})
+            }
+          });
+        });
+        realDeviceService.setLidAlert(true, created.id, created.createdAt.toISOString());
+        return created;
+      } catch (err) {
+        console.error('[RealtimeGateway] Error persisting lid error alert to PostgreSQL:', err);
+        return null;
+      } finally {
+        this.lidAlertPersistPromise = null;
+      }
+    })();
+    return this.lidAlertPersistPromise;
+  }
+
+  public handleLidAlert(_payload?: unknown): void {
     const alreadyActive = realDeviceService.isLidAlertActive();
     realDeviceService.setLidAlert(true);
 
@@ -619,29 +675,34 @@ export class RealtimeGateway {
       return;
     }
 
-    const message = 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!';
+    const message = RealDeviceService.LID_ALERT_MESSAGE;
+    const createdAt = realDeviceService.getLidAlertCreatedAt() || new Date().toISOString();
     const alertEvent = {
-      deviceId: 'raspberry-pi-5',
       stationCode: 'STATION_A',
       message,
       lidAlert: true,
-      timestamp: new Date().toISOString()
+      timestamp: createdAt
     };
 
     // 1. Phát sự kiện chuyên biệt device:lid:alert tới tất cả client
     this.io.emit(REALTIME_EVENTS.LID_ALERT, alertEvent);
 
-    // 2. Đồng thời phát cảnh báo hệ thống alert:created (ID cố định để chống trùng lặp)
+    // 2. Đồng thời phát cảnh báo hệ thống alert:created (không gắn mã thùng, tên thùng hoặc thiết bị)
     this.emitAlert({
-      id: 'lid-alert-station-a',
-      type: 'HARDWARE_FAULT' as any,
-      severity: 'CRITICAL' as any,
+      id: RealDeviceService.LID_ALERT_ID,
+      type: AlertType.SENSOR_ABNORMAL,
+      severity: AlertSeverity.CRITICAL,
       message,
       binId: null,
-      deviceId: 'raspberry-pi-5',
+      deviceId: null,
       isResolved: false,
-      createdAt: new Date().toISOString(),
+      createdAt,
       stationCode: 'STATION_A'
     });
+
+    // 3. Lưu bản ghi cảnh báo bền vững vào PostgreSQL để trang Trung tâm cảnh báo (/alerts) luôn truy vấn được
+    if (!env.isDemoMode) {
+      void this.persistLidAlertToDb(message, createdAt);
+    }
   }
 }

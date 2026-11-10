@@ -5,8 +5,39 @@ import { getFillCategory } from './bin.routes.js';
 
 import { env } from '../config/env.js';
 import { demoService } from '../demo/demo.service.js';
-import { realDeviceService } from '../demo/real-device.service.js';
+import { RealDeviceService, realDeviceService } from '../demo/real-device.service.js';
 import { ensureStationBBinsIfMissing, syncBinsWithRealDevice } from '../services/bin-sync.service.js';
+
+function mergeAndDeduplicateLidAlert<T extends { id: string; message: string; isResolved: boolean; binId?: string | null; bin?: any; deviceId?: string | null }>(
+  dbAlerts: T[]
+): T[] {
+  const result: T[] = [];
+  let seenUnresolvedLidAlert = false;
+
+  for (const item of dbAlerts) {
+    if (item.message === RealDeviceService.LID_ALERT_MESSAGE && !item.isResolved) {
+      if (seenUnresolvedLidAlert) {
+        continue;
+      }
+      seenUnresolvedLidAlert = true;
+      result.push({
+        ...item,
+        binId: null,
+        bin: null,
+        deviceId: null
+      });
+    } else {
+      result.push(item);
+    }
+  }
+
+  const activeLidRecord = realDeviceService.getActiveLidAlertRecord();
+  if (activeLidRecord && !seenUnresolvedLidAlert) {
+    result.unshift(activeLidRecord as unknown as T);
+  }
+
+  return result;
+}
 
 const router = Router();
 const dateQuery = z.string().datetime({ offset: true }).optional();
@@ -72,7 +103,7 @@ router.get('/summary', async (request, response, next) => {
 
     const recentSensorReadings: any[] = [];
     const devices = await prisma.deviceStatus.findMany({ orderBy: { createdAt: 'asc' } });
-    const alerts = await prisma.alert.findMany({
+    const rawAlerts = await prisma.alert.findMany({
       include: { bin: { select: { binCode: true, stationId: true } } },
       where: {
         isResolved: false,
@@ -81,15 +112,22 @@ router.get('/summary', async (request, response, next) => {
             ? {
                 OR: [
                   { bin: { stationId: targetStationId } },
-                  { bin: { stationId: null } }
+                  { bin: { stationId: null } },
+                  { binId: null }
                 ]
               }
-            : { bin: { stationId: targetStationId } }
+            : {
+                OR: [
+                  { bin: { stationId: targetStationId } },
+                  { binId: null }
+                ]
+              }
           : {})
       },
       orderBy: { createdAt: 'desc' },
       take: 8
     });
+    const alerts = mergeAndDeduplicateLidAlert(rawAlerts).slice(0, 8);
 
     return response.json({
       summary: {
@@ -184,14 +222,22 @@ router.get('/alerts', async (request, response, next) => {
       if (station) targetStationId = station.id;
     }
 
-    const alerts = await prisma.alert.findMany({
+    const rawAlerts = await prisma.alert.findMany({
       include: { bin: { select: { binCode: true, name: true, stationId: true } } },
       where: {
-        ...(targetStationId ? { bin: { stationId: targetStationId } } : {})
+        ...(targetStationId
+          ? {
+              OR: [
+                { bin: { stationId: targetStationId } },
+                { binId: null }
+              ]
+            }
+          : {})
       },
       orderBy: { createdAt: 'desc' },
       take: 200
     });
+    const alerts = mergeAndDeduplicateLidAlert(rawAlerts);
     return response.json({ alerts });
   } catch (error) {
     return next(error);

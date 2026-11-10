@@ -79,6 +79,15 @@ export class DemoService {
   }
 
   getAllAlerts(): DemoAlert[] {
+    const activeLidAlert = realDeviceService.getActiveLidAlertRecord();
+    if (activeLidAlert) {
+      const hasLidAlert = DEMO_ALERTS.some(
+        (a) => a.id === activeLidAlert.id || (a.message === activeLidAlert.message && !a.isResolved)
+      );
+      if (!hasLidAlert) {
+        return [activeLidAlert as unknown as DemoAlert, ...DEMO_ALERTS];
+      }
+    }
     return [...DEMO_ALERTS];
   }
 

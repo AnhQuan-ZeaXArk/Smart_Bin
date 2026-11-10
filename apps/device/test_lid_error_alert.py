@@ -305,6 +305,42 @@ class TestLidErrorAlertDetection(unittest.TestCase):
             self.assertTrue(yolo_camera.lid_alert, f"Canh bao phai duoc duy tri sau dong: {line}")
         self.assertEqual(yolo_camera.sensor_state["hc1"]["fillPercent"], 19)
 
+    def test_case_11_serial_control_chars_and_socket_reconnect_resync(self):
+        """Kiem tra loc ky tu dieu khien USB Serial va phat lai su kien khi Socket.IO ket noi lai."""
+        handled = yolo_camera.handle_lid_error_line("\x00\rloi mo nap\r\n")
+        self.assertTrue(handled)
+        self.assertTrue(yolo_camera.lid_alert)
+
+        smartbin_yolo_bridge.publish_yolo_state(
+            status="RUNNING",
+            camera="CONNECTED",
+            lid_alert=True
+        )
+
+        mock_sio = mock.MagicMock()
+        mock_sio.connected = True
+        emitted_events = []
+        mock_sio.emit.side_effect = lambda ev, data, callback=None: (
+            emitted_events.append((ev, data)),
+            callback({"success": True, "status": "COMMITTED"}) if callback else None
+        )
+
+        with mock.patch("pi_agent.read_yolo_state", smartbin_yolo_bridge.read_yolo_state), \
+             mock.patch("pi_agent.sio", mock_sio):
+            pi_agent.send_telemetry()
+            self.assertEqual(len([e for e in emitted_events if e[0] == "device:lid:alert"]), 1)
+
+            # Gia lap mat ket noi Socket.IO roi ket noi lai
+            pi_agent.disconnect()
+            self.assertFalse(pi_agent._lid_alert_emitted)
+
+            pi_agent.send_telemetry()
+            self.assertEqual(
+                len([e for e in emitted_events if e[0] == "device:lid:alert"]),
+                2,
+                "Sau khi disconnect va ket noi lai, Pi Agent phai dong bo lai device:lid:alert"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

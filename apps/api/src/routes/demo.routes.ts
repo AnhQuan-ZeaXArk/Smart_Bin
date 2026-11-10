@@ -43,6 +43,7 @@ const deviceHeartbeatSchema = z.object({
     recyclable: compartmentFillHeartbeatSchema.optional().nullable(),
     nonRecyclable: compartmentFillHeartbeatSchema.optional().nullable()
   }).optional().nullable(),
+  lidAlert: z.boolean().optional().default(false),
   metadata: z.record(z.string(), z.unknown()).optional().nullable()
 });
 
@@ -68,6 +69,14 @@ router.post('/device-heartbeat', authenticateDeviceToken, (req: Request, res: Re
     ...parseResult.data,
     deviceId: normalizedDeviceId
   };
+
+  if (parseResult.data.lidAlert) {
+    realDeviceService.triggerLidAlert({
+      deviceId: normalizedDeviceId,
+      stationCode: 'STATION_A',
+      lidAlert: true
+    });
+  }
 
   // 1. Cập nhật RealDeviceService trong RAM và phát Socket.IO 'device:heartbeat' (0ms)
   const recordedStatus = realDeviceService.recordHeartbeat(normalizedData, io);

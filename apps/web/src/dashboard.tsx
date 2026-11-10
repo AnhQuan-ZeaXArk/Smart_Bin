@@ -210,7 +210,8 @@ function mergeDeviceHeartbeat(data: DashboardData, hb: any, clientReceiveMs?: nu
     ...data,
     bins,
     summary,
-    devices
+    devices,
+    alerts: hb.lidAlert ? ensureLidAlertInList(data.alerts || [], hb.receivedAt || hb.sentAt) : data.alerts
   };
 }
 
@@ -828,6 +829,30 @@ export function SensorHistoryPage() {
   );
 }
 
+export const LID_ALERT_ID = 'lid-alert-station-a';
+export const LID_ALERT_MESSAGE = 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!';
+
+export function ensureLidAlertInList(current: DashboardAlert[], createdAt?: string): DashboardAlert[] {
+  const hasLidAlert = current.some(
+    (item) => item.id === LID_ALERT_ID || (item.message === LID_ALERT_MESSAGE && !item.isResolved)
+  );
+  if (hasLidAlert) {
+    return current;
+  }
+  const lidAlertItem: DashboardAlert = {
+    id: LID_ALERT_ID,
+    type: 'SENSOR_ABNORMAL',
+    severity: 'CRITICAL',
+    message: LID_ALERT_MESSAGE,
+    createdAt: createdAt || new Date().toISOString(),
+    bin: null,
+    deviceId: null,
+    isResolved: false,
+    resolvedAt: null
+  };
+  return [lidAlertItem, ...current];
+}
+
 export function AlertsPage() {
   const { token } = useAuth();
   const { socket } = useRealtime();
@@ -845,25 +870,84 @@ export function AlertsPage() {
     getData<{ alerts: DashboardData['alerts'] }>('/api/dashboard/alerts', token)
       .then((data) => {
         if (active) {
-          for (const alert of data.alerts) seenAlertIds.current.add(alert.id);
+          for (const alert of data.alerts) {
+            seenAlertIds.current.add(alert.id);
+            if (alert.message === LID_ALERT_MESSAGE && !alert.isResolved) {
+              seenAlertIds.current.add(LID_ALERT_ID);
+            }
+          }
           setAlerts((current) => {
             const currentIds = new Set(current.map((alert) => alert.id));
-            return [...current, ...data.alerts.filter((alert) => !currentIds.has(alert.id))];
+            const hasUnresolvedLid = current.some(
+              (alert) => alert.id === LID_ALERT_ID || (alert.message === LID_ALERT_MESSAGE && !alert.isResolved)
+            );
+            let seenLidInBatch = hasUnresolvedLid;
+            const filteredIncoming: DashboardAlert[] = [];
+            for (const alert of data.alerts) {
+              if (currentIds.has(alert.id)) continue;
+              if (alert.message === LID_ALERT_MESSAGE && !alert.isResolved) {
+                if (seenLidInBatch) continue;
+                seenLidInBatch = true;
+                filteredIncoming.push({
+                  ...alert,
+                  bin: null,
+                  deviceId: null
+                });
+              } else {
+                filteredIncoming.push(alert);
+              }
+            }
+            return [...current, ...filteredIncoming];
           });
         }
       })
       .catch((loadError) => { if (active) setError(loadError instanceof Error ? loadError.message : 'Không thể tải cảnh báo.'); })
       .finally(() => { if (active) setLoading(false); });
+
+    getData<{ data?: { lidAlert?: boolean; receivedAt?: string }; lidAlert?: boolean }>('/api/demo/device-status', token)
+      .then((statusRes) => {
+        const isLidAlertActive = Boolean(statusRes?.data?.lidAlert || statusRes?.lidAlert);
+        if (active && isLidAlertActive) {
+          seenAlertIds.current.add(LID_ALERT_ID);
+          setAlerts((current) => ensureLidAlertInList(current, statusRes?.data?.receivedAt));
+        }
+      })
+      .catch(() => {});
+
     return () => { active = false; };
   }, [token, refreshKey]);
 
   useEffect(() => {
     if (!socket) return;
     const onCreated = (alert: DashboardAlert) => {
+      if (alert.message === LID_ALERT_MESSAGE && !alert.isResolved) {
+        if (seenAlertIds.current.has(alert.id) || seenAlertIds.current.has(LID_ALERT_ID)) return;
+        seenAlertIds.current.add(alert.id);
+        seenAlertIds.current.add(LID_ALERT_ID);
+        setRecentAlertIds((current) => new Set(current).add(LID_ALERT_ID));
+        setAlerts((current) => ensureLidAlertInList(current, alert.createdAt));
+        return;
+      }
       if (seenAlertIds.current.has(alert.id)) return;
       seenAlertIds.current.add(alert.id);
       setRecentAlertIds((current) => new Set(current).add(alert.id));
       setAlerts((current) => current.some((item) => item.id === alert.id) ? current : [alert, ...current]);
+    };
+    const onLidAlert = (payload: any) => {
+      if (!seenAlertIds.current.has(LID_ALERT_ID)) {
+        seenAlertIds.current.add(LID_ALERT_ID);
+        setRecentAlertIds((current) => new Set(current).add(LID_ALERT_ID));
+      }
+      setAlerts((current) => ensureLidAlertInList(current, payload?.timestamp));
+    };
+    const onHeartbeat = (payload: any) => {
+      if (payload?.lidAlert) {
+        if (!seenAlertIds.current.has(LID_ALERT_ID)) {
+          seenAlertIds.current.add(LID_ALERT_ID);
+          setRecentAlertIds((current) => new Set(current).add(LID_ALERT_ID));
+        }
+        setAlerts((current) => ensureLidAlertInList(current, payload?.receivedAt || payload?.sentAt));
+      }
     };
     const onUpdated = (alert: DashboardAlert) => setAlerts((current) => current.map((item) => item.id === alert.id ? { ...item, ...alert } : item));
     const onResolved = (event: { id?: string; alertId?: string; deviceId?: string; resolvedAt?: string }) => {
@@ -874,10 +958,14 @@ export function AlertsPage() {
       }));
     };
     socket.on('alert:created', onCreated);
+    socket.on('device:lid:alert', onLidAlert);
+    socket.on('device:heartbeat', onHeartbeat);
     socket.on('alert:updated', onUpdated);
     socket.on('alert:resolved', onResolved);
     return () => {
       socket.off('alert:created', onCreated);
+      socket.off('device:lid:alert', onLidAlert);
+      socket.off('device:heartbeat', onHeartbeat);
       socket.off('alert:updated', onUpdated);
       socket.off('alert:resolved', onResolved);
     };
@@ -918,7 +1006,7 @@ export function AlertsPage() {
               });
             }}>
               <span className={`badge badge-${badge(alert.severity)}`}>{translateAlertSeverity(alert.severity)}</span>
-              <strong>{alert.bin?.binCode ?? (alert.deviceId || 'Hệ thống')}</strong>
+              <strong>{alert.message === LID_ALERT_MESSAGE ? 'Hệ thống' : (alert.bin?.binCode ?? (alert.deviceId || 'Hệ thống'))}</strong>
               <span>{alert.message}</span>
               <small>{ago(alert.createdAt)}</small>
               <span className={`alert-resolution ${alert.isResolved ? 'is-resolved' : ''}`}>{alert.isResolved ? 'Đã xử lý' : 'Chưa xử lý'}</span>

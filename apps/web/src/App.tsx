@@ -86,7 +86,7 @@ function LidAlertBanner() {
     fetch(`${apiUrl}/api/demo/device-status?_t=${Date.now()}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (mounted && data?.lidAlert) {
+        if (mounted && (data?.data?.lidAlert || data?.lidAlert)) {
           setHasLidAlert(true);
         }
       })

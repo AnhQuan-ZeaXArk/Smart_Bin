@@ -213,8 +213,9 @@ def connect_error(data):
 @sio_event
 def disconnect():
     """Sự kiện mất kết nối Socket.IO."""
-    global _next_socket_retry_at
+    global _next_socket_retry_at, _lid_alert_emitted
     logger.warning("Đã ngắt kết nối khỏi Socket.IO Server. Đang tự động kết nối lại...")
+    _lid_alert_emitted = False
     _next_socket_retry_at = time.monotonic() + _socket_retry_delay
 
 
@@ -718,6 +719,11 @@ def send_telemetry():
                     })
                     _lid_alert_sent = True
                     _lid_alert_emitted = True
+                    logger.warning(
+                        "[Station A] Đã phát sự kiện cảnh báo lỗi nắp (%s): %s",
+                        LID_ALERT_SOCKET_NAME,
+                        LID_ALERT_MESSAGE
+                    )
                 except Exception as emit_err:
                     logger.warning("Không thể phát sự kiện %s: %s", LID_ALERT_SOCKET_NAME, emit_err)
 
