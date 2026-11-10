@@ -17,6 +17,7 @@ function mergeAndDeduplicateLidAlert<T extends { id: string; message: string; is
   for (const item of dbAlerts) {
     if (item.message === RealDeviceService.LID_ALERT_MESSAGE && !item.isResolved) {
       if (seenUnresolvedLidAlert) {
+        console.log(`[DashboardRoutes] [LID ALERT] mergeAndDeduplicate: omitting duplicate DB alert id=${item.id}`);
         continue;
       }
       seenUnresolvedLidAlert = true;
@@ -33,6 +34,7 @@ function mergeAndDeduplicateLidAlert<T extends { id: string; message: string; is
 
   const activeLidRecord = realDeviceService.getActiveLidAlertRecord();
   if (activeLidRecord && !seenUnresolvedLidAlert) {
+    console.log('[DashboardRoutes] [LID ALERT] mergeAndDeduplicate: unshifting active in-memory lid alert record to alerts list');
     result.unshift(activeLidRecord as unknown as T);
   }
 
@@ -238,6 +240,8 @@ router.get('/alerts', async (request, response, next) => {
       take: 200
     });
     const alerts = mergeAndDeduplicateLidAlert(rawAlerts);
+    const hasLidAlert = alerts.some((a) => a.message === RealDeviceService.LID_ALERT_MESSAGE && !a.isResolved);
+    console.log(`[DashboardRoutes] [LID ALERT] GET /api/dashboard/alerts: returned ${alerts.length} alerts (hasLidAlert=${hasLidAlert})`);
     return response.json({ alerts });
   } catch (error) {
     return next(error);

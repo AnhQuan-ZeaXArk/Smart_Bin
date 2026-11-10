@@ -870,6 +870,8 @@ export function AlertsPage() {
     getData<{ alerts: DashboardData['alerts'] }>('/api/dashboard/alerts', token)
       .then((data) => {
         if (active) {
+          const hasLid = data.alerts.some((a) => a.message === LID_ALERT_MESSAGE && !a.isResolved);
+          console.log(`[AlertsPage] Fetched /api/dashboard/alerts: ${data.alerts.length} alerts (hasLidAlert=${hasLid})`);
           for (const alert of data.alerts) {
             seenAlertIds.current.add(alert.id);
             if (alert.message === LID_ALERT_MESSAGE && !alert.isResolved) {
@@ -907,6 +909,7 @@ export function AlertsPage() {
     getData<{ data?: { lidAlert?: boolean; receivedAt?: string }; lidAlert?: boolean }>('/api/demo/device-status', token)
       .then((statusRes) => {
         const isLidAlertActive = Boolean(statusRes?.data?.lidAlert || statusRes?.lidAlert);
+        console.log(`[AlertsPage] Fetched /api/demo/device-status: lidAlert=${isLidAlertActive}`);
         if (active && isLidAlertActive) {
           seenAlertIds.current.add(LID_ALERT_ID);
           setAlerts((current) => ensureLidAlertInList(current, statusRes?.data?.receivedAt));
@@ -920,6 +923,7 @@ export function AlertsPage() {
   useEffect(() => {
     if (!socket) return;
     const onCreated = (alert: DashboardAlert) => {
+      console.log('[AlertsPage] Realtime alert:created received:', alert.id, alert.message);
       if (alert.message === LID_ALERT_MESSAGE && !alert.isResolved) {
         if (seenAlertIds.current.has(alert.id) || seenAlertIds.current.has(LID_ALERT_ID)) return;
         seenAlertIds.current.add(alert.id);
@@ -934,6 +938,7 @@ export function AlertsPage() {
       setAlerts((current) => current.some((item) => item.id === alert.id) ? current : [alert, ...current]);
     };
     const onLidAlert = (payload: any) => {
+      console.log('[AlertsPage] Realtime device:lid:alert received:', payload);
       if (!seenAlertIds.current.has(LID_ALERT_ID)) {
         seenAlertIds.current.add(LID_ALERT_ID);
         setRecentAlertIds((current) => new Set(current).add(LID_ALERT_ID));
@@ -942,6 +947,7 @@ export function AlertsPage() {
     };
     const onHeartbeat = (payload: any) => {
       if (payload?.lidAlert) {
+        console.log('[AlertsPage] Realtime device:heartbeat with lidAlert=true received:', payload);
         if (!seenAlertIds.current.has(LID_ALERT_ID)) {
           seenAlertIds.current.add(LID_ALERT_ID);
           setRecentAlertIds((current) => new Set(current).add(LID_ALERT_ID));

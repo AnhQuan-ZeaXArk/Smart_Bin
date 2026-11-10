@@ -340,6 +340,9 @@ def build_telemetry_payload() -> dict:
 
     ai_detection_payload = yolo_info.get('latestDetection')
     lid_alert = bool(yolo_info.get('lidAlert', False))
+    if lid_alert:
+        print("[LID ALERT] IPC VALUE: True")
+        logger.info("[LID ALERT] IPC VALUE: True")
 
     payload = {
         'stationCode': 'STATION_A',
@@ -717,10 +720,10 @@ def send_telemetry():
                         'message': LID_ALERT_MESSAGE,
                         'lidAlert': True
                     })
-                    _lid_alert_sent = True
                     _lid_alert_emitted = True
+                    print("[LID ALERT] SOCKET EVENT EMITTED")
                     logger.warning(
-                        "[Station A] Đã phát sự kiện cảnh báo lỗi nắp (%s): %s",
+                        "[Station A] [LID ALERT] SOCKET EVENT EMITTED: %s (%s)",
                         LID_ALERT_SOCKET_NAME,
                         LID_ALERT_MESSAGE
                     )

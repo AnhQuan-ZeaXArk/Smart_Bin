@@ -282,6 +282,7 @@ export class RealtimeGateway {
 
             // Kích hoạt cảnh báo lỗi nắp nếu telemetry mang cờ lidAlert
             if (parsed.data.lidAlert) {
+              console.log(`[RealtimeGateway] [LID ALERT] Received telemetry packet with lidAlert=true from device ${normalizedDeviceId}`);
               this.handleLidAlert({
                 deviceId: normalizedDeviceId,
                 stationCode,
@@ -405,6 +406,7 @@ export class RealtimeGateway {
 
         // Nhận cảnh báo lỗi nắp tức thời từ Raspberry Pi 5 (Station A)
         socket.on(REALTIME_EVENTS.LID_ALERT, (alertPayload: unknown) => {
+          console.log(`[RealtimeGateway] [LID ALERT] Received Socket.IO event ${REALTIME_EVENTS.LID_ALERT} from device ${deviceId}:`, alertPayload);
           this.handleLidAlert(alertPayload);
         });
 
@@ -617,6 +619,7 @@ export class RealtimeGateway {
     createdAtIso?: string
   ): Promise<any> {
     if (this.lidAlertPersistPromise) {
+      console.log('[RealtimeGateway] [LID ALERT] persistLidAlertToDb: persistence already in-flight; reusing existing promise.');
       return this.lidAlertPersistPromise;
     }
     this.lidAlertPersistPromise = (async () => {
@@ -629,12 +632,14 @@ export class RealtimeGateway {
           orderBy: { createdAt: 'desc' }
         });
         if (existing) {
+          console.log(`[RealtimeGateway] [LID ALERT] Found existing active alert in PostgreSQL (id=${existing.id}); deduplicated DB write.`);
           realDeviceService.setLidAlert(true, existing.id, existing.createdAt.toISOString());
           return existing;
         }
+
+        console.log('[RealtimeGateway] [LID ALERT] Creating new Alert record in PostgreSQL...');
         const created = await prisma.alert.create({
           data: {
-            id: RealDeviceService.LID_ALERT_ID,
             binId: null,
             type: AlertType.SENSOR_ABNORMAL,
             severity: AlertSeverity.CRITICAL,
@@ -642,22 +647,12 @@ export class RealtimeGateway {
             isResolved: false,
             ...(createdAtIso ? { createdAt: new Date(createdAtIso) } : {})
           }
-        }).catch(async () => {
-          return prisma.alert.create({
-            data: {
-              binId: null,
-              type: AlertType.SENSOR_ABNORMAL,
-              severity: AlertSeverity.CRITICAL,
-              message,
-              isResolved: false,
-              ...(createdAtIso ? { createdAt: new Date(createdAtIso) } : {})
-            }
-          });
         });
+        console.log(`[RealtimeGateway] [LID ALERT] Successfully created Alert record in PostgreSQL (id=${created.id}, createdAt=${created.createdAt})`);
         realDeviceService.setLidAlert(true, created.id, created.createdAt.toISOString());
         return created;
       } catch (err) {
-        console.error('[RealtimeGateway] Error persisting lid error alert to PostgreSQL:', err);
+        console.error('[RealtimeGateway] [LID ALERT] Error persisting lid error alert to PostgreSQL:', err);
         return null;
       } finally {
         this.lidAlertPersistPromise = null;
@@ -666,17 +661,28 @@ export class RealtimeGateway {
     return this.lidAlertPersistPromise;
   }
 
-  public handleLidAlert(_payload?: unknown): void {
+  public handleLidAlert(payload?: unknown): void {
     const alreadyActive = realDeviceService.isLidAlertActive();
+    console.log(`[RealtimeGateway] [LID ALERT] handleLidAlert triggered. alreadyActive=${alreadyActive}`, payload);
     realDeviceService.setLidAlert(true);
-
-    // Nếu cảnh báo lỗi nắp đã được phát trước đó, không phát lại alert:created để tránh tạo 2 cảnh báo trùng lặp
-    if (alreadyActive) {
-      return;
-    }
 
     const message = RealDeviceService.LID_ALERT_MESSAGE;
     const createdAt = realDeviceService.getLidAlertCreatedAt() || new Date().toISOString();
+
+    // 1. Luôn đảm bảo lưu bản ghi bền vững vào PostgreSQL nếu chưa có bản ghi mở
+    if (!env.isDemoMode) {
+      console.log('[RealtimeGateway] [LID ALERT] Calling persistLidAlertToDb...');
+      void this.persistLidAlertToDb(message, createdAt);
+    } else {
+      console.log('[RealtimeGateway] [LID ALERT] Demo mode: alert stored in RAM/DemoService');
+    }
+
+    // 2. Deduplication check cho việc broadcast alert:created
+    if (alreadyActive) {
+      console.log('[RealtimeGateway] [LID ALERT] Deduplication: alert:created already emitted previously; skipping duplicate broadcast to prevent multiple UI notifications.');
+      return;
+    }
+
     const alertEvent = {
       stationCode: 'STATION_A',
       message,
@@ -684,10 +690,12 @@ export class RealtimeGateway {
       timestamp: createdAt
     };
 
-    // 1. Phát sự kiện chuyên biệt device:lid:alert tới tất cả client
+    // 3. Phát sự kiện chuyên biệt device:lid:alert tới tất cả client
+    console.log('[RealtimeGateway] [LID ALERT] Broadcasting realtime event device:lid:alert to all clients');
     this.io.emit(REALTIME_EVENTS.LID_ALERT, alertEvent);
 
-    // 2. Đồng thời phát cảnh báo hệ thống alert:created (không gắn mã thùng, tên thùng hoặc thiết bị)
+    // 4. Đồng thời phát cảnh báo hệ thống alert:created (không gắn mã thùng, tên thùng hoặc thiết bị)
+    console.log('[RealtimeGateway] [LID ALERT] Broadcasting realtime event alert:created to all clients');
     this.emitAlert({
       id: RealDeviceService.LID_ALERT_ID,
       type: AlertType.SENSOR_ABNORMAL,
@@ -699,10 +707,5 @@ export class RealtimeGateway {
       createdAt,
       stationCode: 'STATION_A'
     });
-
-    // 3. Lưu bản ghi cảnh báo bền vững vào PostgreSQL để trang Trung tâm cảnh báo (/alerts) luôn truy vấn được
-    if (!env.isDemoMode) {
-      void this.persistLidAlertToDb(message, createdAt);
-    }
   }
 }

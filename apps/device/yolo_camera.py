@@ -5,6 +5,7 @@ import serial
 import time
 import math
 import re
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from ultralytics import YOLO
@@ -118,16 +119,48 @@ def reset_lid_alert_state():
     last_lid_error = None
 
 
+def normalize_lid_serial_line(line: str) -> str:
+    """
+    Chuẩn hóa toàn diện chuỗi Serial nhận từ ESP32-C6:
+    - Loại bỏ null bytes (\x00), ký tự điều khiển ASCII (\x00-\x1f, \x7f).
+    - Chuẩn hóa Unicode NFD để bóc tách dấu tiếng Việt (nếu có).
+    - Loại bỏ dấu ngoặc tiền tố phổ biến như [esp32] hoặc esp32:.
+    - Chuyển thành chữ thường và thu gọn khoảng trắng thừa.
+    """
+    if not line or not isinstance(line, str):
+        return ""
+    cleaned = re.sub(r"[\x00-\x1f\x7f]+", " ", line)
+    # Bóc tách dấu tiếng Việt
+    cleaned = unicodedata.normalize('NFD', cleaned)
+    cleaned = "".join(c for c in cleaned if unicodedata.category(c) != 'Mn')
+    cleaned = cleaned.replace("đ", "d").replace("Đ", "d")
+    cleaned = cleaned.strip().lower()
+    # Loại bỏ tiền tố [esp32] hoặc esp32: nếu có
+    cleaned = re.sub(r"^\[esp32\]\s*", "", cleaned)
+    cleaned = re.sub(r"^esp32:\s*", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
 def handle_lid_error_line(line: str) -> bool:
     global lid_alert, last_lid_error
     if not line or not isinstance(line, str):
         return False
-    cleaned_lower = re.sub(r"[\x00-\x1f\x7f]+", "", line).strip().lower()
-    if cleaned_lower in LID_ERROR_MESSAGES:
+    norm = normalize_lid_serial_line(line)
+    matched = None
+    if norm in LID_ERROR_MESSAGES:
+        matched = norm
+    else:
+        for err_msg in sorted(LID_ERROR_MESSAGES, key=len, reverse=True):
+            if err_msg in norm:
+                matched = err_msg
+                break
+    if matched:
         lid_alert = True
-        last_lid_error = cleaned_lower
-        print(f"[LID ALERT] Phat hien loi nap tu ESP32: {cleaned_lower} -> Kich hoat canh bao toan he thong")
-        logger.warning("CANH BAO: Phat hien loi nap tu ESP32: %s", line)
+        last_lid_error = matched
+        print(f"[LID ALERT] DETECTED: {matched}")
+        print("[LID ALERT] FLAG SET: True")
+        logger.warning("CANH BAO: Phat hien loi nap tu ESP32: %s (matched: %s)", line, matched)
         return True
     return False
 
@@ -382,6 +415,7 @@ def _publish_state_safely(
         active_lid_alert = lid_alert_val if lid_alert_val is not None else lid_alert
         if active_lid_alert:
             kwargs["lid_alert"] = True
+            logger.info("[LID ALERT] Publishing to IPC state: lidAlert=True")
 
         if not publish_yolo_state(**kwargs):
             logger.warning("YOLO IPC state was not published.")
