@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from './auth-context';
 import { useRealtime } from './realtime-store';
-import { IconHistory, IconRefresh, IconTrash } from './icons';
+import { IconHistory, IconRefresh } from './icons';
 import { apiUrl } from './api-config';
 
 type CollectionStatus = 'COMPLETED' | 'IN_PROGRESS' | 'PENDING' | 'CANCELLED';
@@ -66,7 +66,7 @@ const triggerLabels: Record<string, string> = {
 };
 
 function formatTriggerSource(source: string | null | undefined): string {
-  if (!source) return 'Nút bấm vật lý';
+  if (!source) return 'Nút bấm vật lý (ESP32)';
   return triggerLabels[source] || source;
 }
 
@@ -202,12 +202,6 @@ export function CollectionsPage() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
 
-  // Modal xác nhận thu gom
-  const [showCollectModal, setShowCollectModal] = useState(false);
-  const [selectedStation, setSelectedStation] = useState<'STATION_A' | 'STATION_B'>('STATION_A');
-  const [collecting, setCollecting] = useState(false);
-  const [collectMessage, setCollectMessage] = useState<string | null>(null);
-
   const loadCollections = useCallback(async () => {
     try {
       const headers: Record<string, string> = {};
@@ -233,7 +227,7 @@ export function CollectionsPage() {
     };
   }, [loadCollections]);
 
-  // Lắng nghe cập nhật realtime từ Socket.IO
+  // Tự động đồng bộ và cập nhật danh sách thu gom khi ESP32 kích hoạt qua nút bấm vật lý
   useEffect(() => {
     if (!socket) return;
     const handleUpdate = () => {
@@ -249,36 +243,6 @@ export function CollectionsPage() {
     setLoading(true);
     setError('');
     void loadCollections();
-  };
-
-  const handleConfirmCollection = async () => {
-    setCollecting(true);
-    setCollectMessage(null);
-    try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const response = await fetch(`${apiUrl}/api/collections`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ stationCode: selectedStation })
-      });
-
-      const resData = await response.json();
-      if (!response.ok) {
-        throw new Error(resData.message || 'Không thể ghi nhận thu gom.');
-      }
-
-      setCollectMessage('Xác nhận thu gom trạm thành công! Cả 3 thùng đã được làm trống về 0%.');
-      void loadCollections();
-      setTimeout(() => {
-        setShowCollectModal(false);
-        setCollectMessage(null);
-      }, 1500);
-    } catch (err) {
-      setCollectMessage(err instanceof Error ? err.message : 'Lỗi khi gửi yêu cầu thu gom.');
-    } finally {
-      setCollecting(false);
-    }
   };
 
   const sessionRows = useMemo(() => {
@@ -330,27 +294,17 @@ export function CollectionsPage() {
           <div className="eyebrow">NHẬT KÝ VẬN HÀNH</div>
           <h1>Lịch sử thu gom</h1>
           <p>
-            Mỗi thao tác thu gom làm trống 3 thùng được ghi nhận là một phiên thu gom duy nhất theo từng trạm.
+            Theo dõi các phiên thu gom kích hoạt bởi nút bấm vật lý trên thiết bị ESP32-C6 theo từng trạm.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button
-            className="button-primary"
-            type="button"
-            onClick={() => setShowCollectModal(true)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-          >
-            <IconTrash /> Xác nhận thu gom trạm
-          </button>
-          <button
-            className="button-secondary refresh-button"
-            type="button"
-            onClick={refreshCollections}
-            disabled={loading}
-          >
-            <IconRefresh /> Làm mới
-          </button>
-        </div>
+        <button
+          className="button-secondary refresh-button"
+          type="button"
+          onClick={refreshCollections}
+          disabled={loading}
+        >
+          <IconRefresh /> Làm mới
+        </button>
       </div>
 
       <div className="filter-bar">
@@ -408,103 +362,6 @@ export function CollectionsPage() {
         </label>
       </div>
 
-      {/* Modal Xác nhận thu gom */}
-      {showCollectModal && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(5, 12, 20, 0.75)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '16px'
-          }}
-        >
-          <div
-            style={{
-              background: '#122033',
-              border: '1px solid #20354e',
-              borderRadius: '10px',
-              maxWidth: '480px',
-              width: '100%',
-              padding: '24px',
-              boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
-              color: '#dbe7f2'
-            }}
-          >
-            <h2 style={{ margin: '0 0 12px', fontSize: '18px', color: '#fff' }}>
-              Xác nhận thu gom rác trạm
-            </h2>
-            <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#91a6b8', lineHeight: '1.5' }}>
-              Thao tác này sẽ ghi nhận <strong>1 phiên thu gom duy nhất</strong> cho toàn bộ <strong>3 thùng rác</strong> (Tái chế, Hữu cơ, Không tái chế) của trạm được chọn và làm trống mức rác về <strong>0%</strong>.
-            </p>
-
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '6px', color: '#8fa4b6' }}>
-                Chọn trạm thu gom:
-              </label>
-              <select
-                value={selectedStation}
-                onChange={(e) => setSelectedStation(e.target.value as 'STATION_A' | 'STATION_B')}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  borderRadius: '6px',
-                  border: '1px solid #294361',
-                  background: '#17283d',
-                  color: '#fff',
-                  fontSize: '14px'
-                }}
-              >
-                <option value="STATION_A">Trạm A (station_a - Đầy đủ 3 ngăn rác)</option>
-                <option value="STATION_B">Trạm B (station_b - Ngăn rác tái chế & phụ trợ)</option>
-              </select>
-            </div>
-
-            {collectMessage && (
-              <div
-                style={{
-                  padding: '10px 14px',
-                  borderRadius: '6px',
-                  marginBottom: '16px',
-                  fontSize: '13px',
-                  background: collectMessage.includes('thành công') ? 'rgba(39, 213, 160, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                  color: collectMessage.includes('thành công') ? '#27d5a0' : '#f87171',
-                  border: `1px solid ${collectMessage.includes('thành công') ? '#27d5a040' : '#f8717140'}`
-                }}
-              >
-                {collectMessage}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button
-                type="button"
-                className="button-secondary"
-                disabled={collecting}
-                onClick={() => {
-                  setShowCollectModal(false);
-                  setCollectMessage(null);
-                }}
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                className="button-primary"
-                disabled={collecting}
-                onClick={handleConfirmCollection}
-              >
-                {collecting ? 'Đang ghi nhận...' : 'Xác nhận thu gom'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {loading ? (
         <div className="skeleton-table" aria-label="Đang tải lịch sử thu gom">
           <div />
@@ -530,7 +387,7 @@ export function CollectionsPage() {
           <span>
             {sessionRows.length
               ? 'Điều chỉnh các bộ lọc để xem phiên thu gom khác.'
-              : 'Các phiên thu gom trực tuyến sẽ hiển thị tại đây khi được Backend xác nhận lưu thành công.'}
+              : 'Các phiên thu gom kích hoạt bằng nút vật lý từ ESP32 sẽ tự động hiển thị tại đây khi hoàn tất.'}
           </span>
         </div>
       ) : (
@@ -633,7 +490,7 @@ export function CollectionsPage() {
         </div>
       )}
       <p className="page-footnote">
-        Hiển thị tối đa 200 phiên thu gom trực tuyến gần nhất đã được máy chủ xác nhận. Mỗi phiên đại diện cho toàn bộ các thùng của trạm.
+        Hiển thị tối đa 200 phiên thu gom trực tuyến gần nhất từ thiết bị ESP32-C6. Mỗi phiên đại diện cho toàn bộ các thùng của trạm.
       </p>
     </section>
   );

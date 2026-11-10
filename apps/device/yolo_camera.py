@@ -196,10 +196,30 @@ def create_collection_event(event_type, session_id, occurred_at=None):
     }
 
 
+def normalize_collection_serial_line(line: str) -> str:
+    """
+    Chuẩn hóa chuỗi Serial nhận từ ESP32-C6 cho sự kiện thu gom:
+    - Loại bỏ null bytes (\x00), ký tự điều khiển ASCII (\x00-\x1f, \x7f).
+    - Loại bỏ tiền tố [esp32] hoặc esp32: nếu có.
+    - Loại bỏ khoảng trắng thừa ở đầu/cuối.
+    """
+    if not line or not isinstance(line, str):
+        return ""
+    cleaned = re.sub(r"[\x00-\x1f\x7f]+", " ", line)
+    cleaned = cleaned.strip()
+    cleaned = re.sub(r"^\[esp32\]\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^esp32:\s*", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+
 def handle_collection_serial_line(line):
     global collection_session_open, active_collection_session_id, _pending_collection_events
 
-    if line == MANUAL_OPEN_MESSAGE:
+    cleaned = normalize_collection_serial_line(line)
+    if not cleaned:
+        return None
+
+    if cleaned == MANUAL_OPEN_MESSAGE or cleaned.upper() == MANUAL_OPEN_MESSAGE.upper():
         if collection_session_open:
             logger.warning("Ignoring duplicate manual open message while Station A is already open.")
             return None
@@ -212,9 +232,10 @@ def handle_collection_serial_line(line):
         active_collection_session_id = session_id
         event = create_collection_event("OPEN", session_id=session_id)
         _pending_collection_events = [event]
+        logger.info(f"[Station A Collection] [PHYSICAL BUTTON] Detected OPEN: sessionId={session_id}")
         return event
 
-    if line == MANUAL_CLOSE_MESSAGE:
+    if cleaned == MANUAL_CLOSE_MESSAGE or cleaned.upper() == MANUAL_CLOSE_MESSAGE.upper():
         if not collection_session_open:
             logger.warning("Ignoring manual close message without an active open collection session.")
             return None
@@ -228,6 +249,7 @@ def handle_collection_serial_line(line):
         _pending_collection_events = [
             ev for ev in _pending_collection_events if ev.get("sessionId") == session_id
         ] + [event]
+        logger.info(f"[Station A Collection] [PHYSICAL BUTTON] Detected CLOSE: sessionId={session_id}")
         return event
 
     return None

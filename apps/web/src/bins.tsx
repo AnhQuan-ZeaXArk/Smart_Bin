@@ -277,31 +277,6 @@ export function BinListPage() {
     };
   }, [realtime, selectedStationCode, loadBins]);
 
-  const [collectingStation, setCollectingStation] = useState<string | null>(null);
-
-  const handleCollectStation = async (stationCode: string) => {
-    if (collectingStation) return;
-    setCollectingStation(stationCode);
-    try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const res = await fetch(`${apiUrl}/api/collections`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ stationCode })
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.message || 'Lỗi khi thu gom trạm.');
-      }
-      void loadBins();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Không thể thực hiện thu gom.');
-    } finally {
-      setCollectingStation(null);
-    }
-  };
-
   const refreshBins = () => { setLoading(true); setError(''); void loadBins(); };
 
   const stationGroups = useMemo(() => {
@@ -385,7 +360,7 @@ export function BinListPage() {
                         </span>
                       </div>
                     </div>
-                    <div className="station-header-right" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div className="station-header-right">
                       <div className="station-stats-pills">
                         <span className="station-stat-pill">
                           <span className="stat-label">Đã lắp:</span>
@@ -400,22 +375,6 @@ export function BinListPage() {
                           <strong className="stat-value">{group.lastSeenText}</strong>
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        className="button-primary"
-                        disabled={collectingStation === group.code}
-                        onClick={() => handleCollectStation(group.code)}
-                        style={{
-                          fontSize: '11px',
-                          padding: '6px 12px',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '5px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <IconTrash /> {collectingStation === group.code ? 'Đang xử lý...' : 'Thu gom trạm'}
-                      </button>
                     </div>
                   </div>
 
