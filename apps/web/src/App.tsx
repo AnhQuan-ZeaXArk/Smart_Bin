@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, LoginPage, ProtectedRoute } from './auth';
 import { useAuth, type RoleName } from './auth-context';
@@ -11,9 +11,11 @@ import { CollectionsPage } from './collections';
 import { UsersPage } from './users';
 import { RealtimeProvider } from './realtime-context';
 import { useRealtime } from './realtime-store';
+import { apiUrl } from './api-config';
 import { ErrorBoundary } from './error-boundary';
 import {
   IconActivity,
+  IconAlertTriangle,
   IconBell,
   IconCpu,
   IconGrid,
@@ -72,6 +74,58 @@ function ErrorPage({ code, title, description }: { code: string; title: string; 
         <button type="button" onClick={() => navigate('/dashboard', { replace: true })}>Về trang tổng quan</button>
       </div>
     </main>
+  );
+}
+
+function LidAlertBanner() {
+  const { socket } = useRealtime();
+  const [hasLidAlert, setHasLidAlert] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    fetch(`${apiUrl}/api/demo/device-status?_t=${Date.now()}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (mounted && data?.lidAlert) {
+          setHasLidAlert(true);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onLidAlert = () => setHasLidAlert(true);
+    const onHeartbeat = (payload: any) => {
+      if (payload?.lidAlert) setHasLidAlert(true);
+    };
+    const onAlertCreated = (payload: any) => {
+      if (payload?.message === 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!') {
+        setHasLidAlert(true);
+      }
+    };
+
+    socket.on('device:lid:alert', onLidAlert);
+    socket.on('device:heartbeat', onHeartbeat);
+    socket.on('alert:created', onAlertCreated);
+
+    return () => {
+      socket.off('device:lid:alert', onLidAlert);
+      socket.off('device:heartbeat', onHeartbeat);
+      socket.off('alert:created', onAlertCreated);
+    };
+  }, [socket]);
+
+  if (!hasLidAlert) return null;
+
+  return (
+    <div className="system-lid-alert-bar" role="alert">
+      <IconAlertTriangle />
+      <span>CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!</span>
+    </div>
   );
 }
 
@@ -134,6 +188,7 @@ function AppShell() {
 
         <main className="workspace">
           <TopBar title={currentRoute?.label ?? 'Tổng quan'} onMenu={() => setSidebarOpen((value) => !value)} />
+          <LidAlertBanner />
           <ErrorBoundary key={location.pathname}>
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />

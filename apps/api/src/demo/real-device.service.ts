@@ -46,6 +46,7 @@ export interface RealDeviceStatus {
   aiDetection: AiDetectionResult | null;
   detectionHistory: AiDetectionResult[];
   sensors?: MultiCompartmentSensorsData | null;
+  lidAlert?: boolean;
   metadata?: {
     onlineThresholdSeconds?: number;
     warningThresholdSeconds?: number;
@@ -93,6 +94,7 @@ export class RealDeviceService {
   };
   private aiDetection: AiDetectionResult | null = null;
   private detectionHistory: AiDetectionResult[] = [];
+  private lidAlert: boolean = false;
 
   // Isolated in-memory state for Station B (ESP32-C6 Serial B)
   // NEVER mixed with Station A's state
@@ -126,6 +128,14 @@ export class RealDeviceService {
       // hoặc cập nhật lastHeartbeatDate/lastReceivedAt. Socket.IO Connected và Device ONLINE là 2 trạng thái độc lập.
       this.evaluateStatusChange();
     }
+  }
+
+  setLidAlert(val: boolean): void {
+    this.lidAlert = val;
+  }
+
+  isLidAlertActive(): boolean {
+    return this.lidAlert;
   }
 
   setLastHeartbeatDateForTest(date: Date | null): void {
@@ -210,6 +220,11 @@ export class RealDeviceService {
       }
     }
 
+    // Chỉ kích hoạt trạng thái cảnh báo khi có lỗi; không tự xóa cảnh báo khi các gói tiếp theo không mang lỗi
+    if ((input as any).lidAlert === true) {
+      this.lidAlert = true;
+    }
+
     const statusObj = this.getStatus();
     this.previousStatus = statusObj.status;
 
@@ -262,6 +277,7 @@ export class RealDeviceService {
       aiDetection: this.aiDetection,
       detectionHistory: this.detectionHistory,
       sensors: this.sensors,
+      lidAlert: this.lidAlert,
       metadata: {
         onlineThresholdSeconds: DEVICE_HEALTH_CONFIG.ONLINE_THRESHOLD_SECONDS,
         warningThresholdSeconds: DEVICE_HEALTH_CONFIG.WARNING_THRESHOLD_SECONDS,

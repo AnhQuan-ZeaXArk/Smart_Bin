@@ -189,7 +189,8 @@ def publish_yolo_state(
     status: str = 'RUNNING',
     camera: str = 'CONNECTED',
     sensors: Optional[Dict[str, Any]] = None,
-    collection_events: Optional[List[Dict[str, Any]]] = None
+    collection_events: Optional[List[Dict[str, Any]]] = None,
+    lid_alert: bool = False
 ) -> bool:
     """Write one complete state to a same-directory temporary file and replace atomically."""
     if status not in ('RUNNING', 'STOPPED') or camera not in ('CONNECTED', 'DISCONNECTED'):
@@ -215,6 +216,8 @@ def publish_yolo_state(
             'timestamp': detection['timestamp']
         }
     }
+    if lid_alert:
+        state['lidAlert'] = True
     sanitized_sensors = _sanitize_sensors_for_publish(sensors)
     if sanitized_sensors is not None:
         state['sensors'] = sanitized_sensors
@@ -446,7 +449,7 @@ def read_yolo_state() -> Dict[str, Any]:
         return _unavailable_state()
 
     required_keys = {'status', 'camera', 'updatedAtEpoch', 'detection'}
-    optional_keys = {'sensors', 'collectionEvents'}
+    optional_keys = {'sensors', 'collectionEvents', 'lidAlert'}
     allowed_keys = required_keys | optional_keys
     if not isinstance(data, dict):
         return _unavailable_state()
@@ -517,7 +520,8 @@ def read_yolo_state() -> Dict[str, Any]:
             'timestamp': detection['timestamp']
         },
         'sensors': validated_sensors,
-        'collectionEvents': validated_collection_events
+        'collectionEvents': validated_collection_events,
+        'lidAlert': bool(data.get('lidAlert', False))
     }
 
 
@@ -527,5 +531,6 @@ def _unavailable_state() -> Dict[str, Any]:
         'cameraStatus': 'DISCONNECTED',
         'latestDetection': None,
         'sensors': None,
-        'collectionEvents': []
+        'collectionEvents': [],
+        'lidAlert': False
     }

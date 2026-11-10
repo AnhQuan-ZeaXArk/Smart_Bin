@@ -19,7 +19,8 @@ export const REALTIME_EVENTS = {
   DEVICE_COMMAND_STATUS: 'device:command:status',
   DEVICE_COLLECTION_EVENT: 'device:collection:event',
   COLLECTION_SESSION_UPDATED: 'collection:session:updated',
-  SETTINGS_THRESHOLDS_UPDATED: 'settings:thresholds:updated'
+  SETTINGS_THRESHOLDS_UPDATED: 'settings:thresholds:updated',
+  LID_ALERT: 'device:lid:alert'
 } as const;
 
 export type RealtimeEventName = typeof REALTIME_EVENTS[keyof typeof REALTIME_EVENTS];

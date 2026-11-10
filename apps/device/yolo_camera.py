@@ -78,6 +78,9 @@ STATION_ID = "station_a"
 COLLECTION_SOURCE = "PHYSICAL_BUTTON"
 MANUAL_OPEN_MESSAGE = "THU CONG: MO CA 3 SERVO (330 do)"
 MANUAL_CLOSE_MESSAGE = "TU DONG: TIEP TUC"
+LID_ERROR_OPEN_MESSAGE = "loi mo nap"
+LID_ERROR_CLOSE_MESSAGE = "loi dong nap"
+LID_ERROR_MESSAGES = frozenset({LID_ERROR_OPEN_MESSAGE, LID_ERROR_CLOSE_MESSAGE})
 
 # Luu tru trang thai doc cam bien doc lap cho tung HC:
 # {"fillPercent": int, "updatedAtEpoch": float}
@@ -91,6 +94,8 @@ collection_session_open = False
 active_collection_session_id = None
 _pending_collection_events = []
 backend_connected = True
+lid_alert = False
+last_lid_error = None
 
 
 def is_backend_connected():
@@ -105,6 +110,25 @@ def reset_collection_session_state():
     active_collection_session_id = None
     _pending_collection_events = []
     backend_connected = True
+
+
+def reset_lid_alert_state():
+    global lid_alert, last_lid_error
+    lid_alert = False
+    last_lid_error = None
+
+
+def handle_lid_error_line(line: str) -> bool:
+    global lid_alert, last_lid_error
+    if not line or not isinstance(line, str):
+        return False
+    cleaned_lower = line.strip().lower()
+    if cleaned_lower in LID_ERROR_MESSAGES:
+        lid_alert = True
+        last_lid_error = cleaned_lower
+        logger.warning("CANH BAO: Phat hien loi nap tu ESP32: %s", line)
+        return True
+    return False
 
 
 def get_pending_collection_events():
@@ -183,7 +207,11 @@ def read_esp32():
 
             print("[ESP32]", line)
 
-            # Khop mau cam bien: HC1: <int>%, HC2: <int>%, HC3: <int>%
+            # 1. Kiem tra canh bao loi nap thung rac tu ESP32
+            if handle_lid_error_line(line):
+                continue
+
+            # 2. Khop mau cam bien: HC1: <int>%, HC2: <int>%, HC3: <int>%
             match = re.match(r"^HC([123]):\s*(\d+)%$", line)
             if match:
                 hc_num = match.group(1)
@@ -323,9 +351,10 @@ def _publish_state_safely(
     status="RUNNING",
     camera="CONNECTED",
     sensors=None,
-    collection_events=None
+    collection_events=None,
+    lid_alert_val=None
 ):
-    global _pending_collection_events
+    global _pending_collection_events, lid_alert
     try:
         acked_ids = get_acknowledged_backend_event_ids()
         if acked_ids and _pending_collection_events:
@@ -348,6 +377,11 @@ def _publish_state_safely(
         )
         if events_to_publish is not None:
             kwargs["collection_events"] = events_to_publish
+
+        active_lid_alert = lid_alert_val if lid_alert_val is not None else lid_alert
+        if active_lid_alert:
+            kwargs["lid_alert"] = True
+
         if not publish_yolo_state(**kwargs):
             logger.warning("YOLO IPC state was not published.")
     except Exception:

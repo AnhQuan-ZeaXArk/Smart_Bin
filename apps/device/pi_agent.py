@@ -88,16 +88,21 @@ _next_socket_retry_at = 0.0
 _socket_connect_lock = threading.Lock()
 
 COLLECTION_EVENT_SOCKET_NAME = 'device:collection:event'
+LID_ALERT_SOCKET_NAME = 'device:lid:alert'
+LID_ALERT_MESSAGE = 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!'
 _seen_collection_event_ids: set[str] = set(get_acknowledged_backend_event_ids())
 _confirmed_open_sessions: set[str] = set(get_confirmed_backend_open_sessions())
+_lid_alert_emitted: bool = False
 
 
 def reset_online_collection_state():
     """Reset in-memory online collection event state (used by unit tests)."""
+    global _lid_alert_emitted
     _seen_collection_event_ids.clear()
     _seen_collection_event_ids.update(get_acknowledged_backend_event_ids())
     _confirmed_open_sessions.clear()
     _confirmed_open_sessions.update(get_confirmed_backend_open_sessions())
+    _lid_alert_emitted = False
 
 # Connection attempts are scheduled by the main loop, not Socket.IO's background
 # reconnect thread, so initial failures and disconnects share one retry policy.
@@ -333,6 +338,7 @@ def build_telemetry_payload() -> dict:
     }
 
     ai_detection_payload = yolo_info.get('latestDetection')
+    lid_alert = bool(yolo_info.get('lidAlert', False))
 
     payload = {
         'stationCode': 'STATION_A',
@@ -346,8 +352,10 @@ def build_telemetry_payload() -> dict:
         'sentAt': sent_at,
         'clientMessageId': f"STATION_A-{uptime}-{int(time.time() * 1000)}",
         'subsystems': subsystems_payload,
+        'lidAlert': lid_alert,
         'metadata': {
-            'platform': 'Raspberry Pi 5 (Debian 13 ARM64)'
+            'platform': 'Raspberry Pi 5 (Debian 13 ARM64)',
+            'lidAlert': lid_alert
         }
     }
     if ai_detection_payload is not None:
@@ -698,6 +706,21 @@ def send_telemetry():
             a_ack_received.set()
 
         try:
+            # Phát sự kiện cảnh báo lỗi nắp nếu có (chỉ phát một lần khi phát hiện để chống phát trùng lặp)
+            global _lid_alert_emitted
+            if payload_a.get('lidAlert') and not _lid_alert_emitted:
+                try:
+                    sio.emit(LID_ALERT_SOCKET_NAME, {
+                        'deviceId': DEVICE_ID,
+                        'stationCode': 'STATION_A',
+                        'message': LID_ALERT_MESSAGE,
+                        'lidAlert': True
+                    })
+                    _lid_alert_sent = True
+                    _lid_alert_emitted = True
+                except Exception as emit_err:
+                    logger.warning("Không thể phát sự kiện %s: %s", LID_ALERT_SOCKET_NAME, emit_err)
+
             sio.emit('device:telemetry', payload_a, callback=on_a_ack)
             if a_ack_received.wait(timeout=3.0):
                 resp_data = a_ack_result.get('data') or {}

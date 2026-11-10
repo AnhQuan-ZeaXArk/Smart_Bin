@@ -67,6 +67,7 @@ const deviceTelemetryInputSchema = z.object({
     recyclable: compartmentFillInputSchema.optional().nullable(),
     nonRecyclable: compartmentFillInputSchema.optional().nullable()
   }).optional().nullable(),
+  lidAlert: z.boolean().optional().default(false),
   metadata: z.record(z.string(), z.unknown()).optional().nullable()
 }).transform((data) => {
   const uptimeSeconds = data.uptimeSeconds ?? (data.uptimeMs !== undefined ? Math.round(data.uptimeMs / 1000) : 0);
@@ -279,6 +280,15 @@ export class RealtimeGateway {
             };
             const stationCode = (parsed.data.stationCode || 'STATION_A').toUpperCase();
 
+            // Kích hoạt cảnh báo lỗi nắp nếu telemetry mang cờ lidAlert
+            if (parsed.data.lidAlert) {
+              this.handleLidAlert({
+                deviceId: normalizedDeviceId,
+                stationCode,
+                lidAlert: true
+              });
+            }
+
             // 1. Cập nhật RealDeviceService trong RAM và phát Socket.IO 'device:heartbeat'
             // CHỈ cập nhật RAM của RealDeviceService cho Station A (Raspberry Pi 5 Gateway / Station A hardware)
             // Tuyệt đối không ghi đè RAM state của Station A khi nhận telemetry từ Station B!
@@ -391,6 +401,11 @@ export class RealtimeGateway {
           } catch (err) {
             console.error('[RealtimeGateway] Error processing device:command:ack:', err);
           }
+        });
+
+        // Nhận cảnh báo lỗi nắp tức thời từ Raspberry Pi 5 (Station A)
+        socket.on(REALTIME_EVENTS.LID_ALERT, (alertPayload: unknown) => {
+          this.handleLidAlert(alertPayload);
         });
 
         // Nhận sự kiện thu gom thủ công trực tuyến từ Raspberry Pi 5 (Station A) kèm ACK xác nhận lưu DB
@@ -593,5 +608,40 @@ export class RealtimeGateway {
     };
     this.io.emit(REALTIME_EVENTS.SETTINGS_THRESHOLDS_UPDATED, payload);
     this.io.emit('settings:thresholds', payload);
+  }
+
+  public handleLidAlert(payload?: unknown): void {
+    const alreadyActive = realDeviceService.isLidAlertActive();
+    realDeviceService.setLidAlert(true);
+
+    // Nếu cảnh báo lỗi nắp đã được phát trước đó, không phát lại alert:created để tránh tạo 2 cảnh báo trùng lặp
+    if (alreadyActive) {
+      return;
+    }
+
+    const message = 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!';
+    const alertEvent = {
+      deviceId: 'raspberry-pi-5',
+      stationCode: 'STATION_A',
+      message,
+      lidAlert: true,
+      timestamp: new Date().toISOString()
+    };
+
+    // 1. Phát sự kiện chuyên biệt device:lid:alert tới tất cả client
+    this.io.emit(REALTIME_EVENTS.LID_ALERT, alertEvent);
+
+    // 2. Đồng thời phát cảnh báo hệ thống alert:created (ID cố định để chống trùng lặp)
+    this.emitAlert({
+      id: 'lid-alert-station-a',
+      type: 'HARDWARE_FAULT' as any,
+      severity: 'CRITICAL' as any,
+      message,
+      binId: null,
+      deviceId: 'raspberry-pi-5',
+      isResolved: false,
+      createdAt: new Date().toISOString(),
+      stationCode: 'STATION_A'
+    });
   }
 }

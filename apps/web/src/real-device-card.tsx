@@ -67,6 +67,7 @@ export interface RealDeviceData {
   aiDetection?: AiDetectionResult | null;
   detectionHistory?: AiDetectionResult[];
   sensors?: DeviceSensorsData | null;
+  lidAlert?: boolean;
   metadata?: {
     onlineThresholdSeconds?: number;
     warningThresholdSeconds?: number;
@@ -287,6 +288,7 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
           uptimeSeconds: newUptime,
           cpuTempC: newCpu,
           sensors: newSensors,
+          lidAlert: payload.lidAlert ? true : prev.lidAlert,
           subsystems: payload.subsystems ?? prev.subsystems,
           aiDetection: payload.aiDetection ?? prev.aiDetection,
           detectionHistory: payload.detectionHistory ?? prev.detectionHistory,
@@ -300,6 +302,10 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
       // Trigger heartbeat animation pulse
       setPulse(true);
       setTimeout(() => setPulse(false), 1200);
+    };
+
+    const handleLidAlert = () => {
+      setData((prev) => (prev ? { ...prev, lidAlert: true } : prev));
     };
 
     const handleReconnect = () => {
@@ -342,11 +348,13 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
 
     socket.on('device:heartbeat', handleHeartbeat);
     socket.on('device:status', handleDeviceStatus);
+    socket.on('device:lid:alert', handleLidAlert);
     socket.on('connect', handleReconnect);
 
     return () => {
       socket.off('device:heartbeat', handleHeartbeat);
       socket.off('device:status', handleDeviceStatus);
+      socket.off('device:lid:alert', handleLidAlert);
       socket.off('connect', handleReconnect);
     };
   }, [socket, handleManualRefresh]);
@@ -440,6 +448,14 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
             </button>
           </div>
         </div>
+
+        {/* Lid Error Alert Banner */}
+        {data?.lidAlert && (
+          <div className="lid-error-alert-banner" role="alert">
+            <IconAlertTriangle />
+            <span>CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!</span>
+          </div>
+        )}
 
         {/* Status Alert Banner if Error */}
         {error && (
