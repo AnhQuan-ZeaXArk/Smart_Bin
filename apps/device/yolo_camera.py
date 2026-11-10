@@ -79,6 +79,17 @@ STATION_ID = "station_a"
 COLLECTION_SOURCE = "PHYSICAL_BUTTON"
 MANUAL_OPEN_MESSAGE = "THU CONG: MO CA 3 SERVO (330 do)"
 MANUAL_CLOSE_MESSAGE = "TU DONG: TIEP TUC"
+# Regex nhan dien mo thu cong ca 3 servo (nhan nut vat ly GPIO22 tren ESP32-C6)
+# Khop moi goc do: (330 do), (180 do), hoac khong co goc, khong phan biet hoa/thuong
+MANUAL_OPEN_PATTERN = re.compile(
+    r"^THU\s+CONG:\s*MO\s+CA\s+3\s+SERVO(?:\s*\([^)]*\))?$",
+    re.IGNORECASE,
+)
+# Regex nhan dien dong tu dong / tiep tuc (nha nut vat ly GPIO22 tren ESP32-C6)
+MANUAL_CLOSE_PATTERN = re.compile(
+    r"^TU\s+DONG:\s*TIEP\s+TUC$",
+    re.IGNORECASE,
+)
 LID_ERROR_OPEN_MESSAGE = "loi mo nap"
 LID_ERROR_CLOSE_MESSAGE = "loi dong nap"
 LID_ERROR_MESSAGES = frozenset({LID_ERROR_OPEN_MESSAGE, LID_ERROR_CLOSE_MESSAGE})
@@ -196,20 +207,37 @@ def create_collection_event(event_type, session_id, occurred_at=None):
     }
 
 
-def normalize_collection_serial_line(line: str) -> str:
+def normalize_collection_serial_line(line) -> str:
     """
     Chuẩn hóa chuỗi Serial nhận từ ESP32-C6 cho sự kiện thu gom:
-    - Loại bỏ null bytes (\x00), ký tự điều khiển ASCII (\x00-\x1f, \x7f).
+    - Hỗ trợ cả str hoặc bytes.
+    - Loại bỏ null bytes (\x00), ký tự điều khiển ASCII (\x00-\x1f, \x7f), \r, \n.
     - Loại bỏ tiền tố [esp32] hoặc esp32: nếu có.
-    - Loại bỏ khoảng trắng thừa ở đầu/cuối.
+    - Chuẩn hóa khoảng trắng thừa.
     """
-    if not line or not isinstance(line, str):
+    if line is None:
         return ""
+    if isinstance(line, (bytes, bytearray)):
+        line = line.decode("utf-8", errors="ignore")
+    elif not isinstance(line, str):
+        line = str(line)
+
     cleaned = re.sub(r"[\x00-\x1f\x7f]+", " ", line)
     cleaned = cleaned.strip()
     cleaned = re.sub(r"^\[esp32\]\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"^esp32:\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip()
+
+
+def is_collection_open_message(line) -> bool:
+    cleaned = normalize_collection_serial_line(line)
+    return bool(MANUAL_OPEN_PATTERN.match(cleaned))
+
+
+def is_collection_close_message(line) -> bool:
+    cleaned = normalize_collection_serial_line(line)
+    return bool(MANUAL_CLOSE_PATTERN.match(cleaned))
 
 
 def handle_collection_serial_line(line):
@@ -219,37 +247,37 @@ def handle_collection_serial_line(line):
     if not cleaned:
         return None
 
-    if cleaned == MANUAL_OPEN_MESSAGE or cleaned.upper() == MANUAL_OPEN_MESSAGE.upper():
+    if is_collection_open_message(cleaned):
         if collection_session_open:
-            logger.warning("Ignoring duplicate manual open message while Station A is already open.")
+            logger.warning("[Station A Collection] Ignoring duplicate manual open message while Station A is already open.")
             return None
         collection_session_open = True
         if not is_backend_connected():
             active_collection_session_id = None
-            logger.warning("Backend is disconnected; skipping online OPEN collection event creation.")
+            logger.warning("[Station A Collection] Backend is disconnected; skipping online OPEN collection event creation.")
             return None
         session_id = str(uuid.uuid4())
         active_collection_session_id = session_id
         event = create_collection_event("OPEN", session_id=session_id)
-        _pending_collection_events = [event]
-        logger.info(f"[Station A Collection] [PHYSICAL BUTTON] Detected OPEN: sessionId={session_id}")
+        _pending_collection_events.append(event)
+        print(f"[COLLECTION DEBUG] [OPEN DETECTED] Line: '{cleaned}' | Assigned sessionId: {session_id}")
+        logger.info(f"[Station A Collection] [PHYSICAL BUTTON] Detected OPEN: sessionId={session_id} from line='{cleaned}'")
         return event
 
-    if cleaned == MANUAL_CLOSE_MESSAGE or cleaned.upper() == MANUAL_CLOSE_MESSAGE.upper():
+    if is_collection_close_message(cleaned):
         if not collection_session_open:
-            logger.warning("Ignoring manual close message without an active open collection session.")
+            logger.warning("[Station A Collection] Ignoring manual close message without an active open collection session.")
             return None
         collection_session_open = False
         session_id = active_collection_session_id
         active_collection_session_id = None
         if not session_id or not is_backend_connected():
-            logger.warning("Backend disconnected or open session was not recorded; skipping online CLOSE event.")
+            logger.warning("[Station A Collection] Backend disconnected or open session was not recorded; skipping online CLOSE event.")
             return None
         event = create_collection_event("CLOSE", session_id=session_id)
-        _pending_collection_events = [
-            ev for ev in _pending_collection_events if ev.get("sessionId") == session_id
-        ] + [event]
-        logger.info(f"[Station A Collection] [PHYSICAL BUTTON] Detected CLOSE: sessionId={session_id}")
+        _pending_collection_events.append(event)
+        print(f"[COLLECTION DEBUG] [CLOSE DETECTED] Line: '{cleaned}' | Matched sessionId: {session_id}")
+        logger.info(f"[Station A Collection] [PHYSICAL BUTTON] Detected CLOSE: sessionId={session_id} from line='{cleaned}'")
         return event
 
     return None

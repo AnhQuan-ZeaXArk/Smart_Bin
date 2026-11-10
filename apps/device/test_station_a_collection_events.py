@@ -521,6 +521,76 @@ class TestStationACollectionEvents(unittest.TestCase):
             self.assertEqual(close_results[0]["reason"], "OPEN_NOT_CONFIRMED")
             self.assertEqual(fake_sio.emitted, [])
 
+    def test_13_exact_firmware_strings_and_angle_variations(self):
+        """13. Kiem tra cac chuoi Serial thuc te tu firmware ESP32-C6:
+        - THU CONG: MO CA 3 SERVO (330 do)
+        - TU DONG: TIEP TUC
+        - [ESP32] THU CONG: MO CA 3 SERVO (330 do)
+        - [ESP32] TU DONG: TIEP TUC
+        - THU CONG: MO CA 3 SERVO (180 do) (khac goc)
+        - THU CONG: MO CA 3 SERVO (khong co goc)
+        Xac nhan parser nhan dien dung, gan dung sessionId giua OPEN va CLOSE.
+        """
+        cases = [
+            ("THU CONG: MO CA 3 SERVO (330 do)", "TU DONG: TIEP TUC"),
+            ("[ESP32] THU CONG: MO CA 3 SERVO (330 do)", "[ESP32] TU DONG: TIEP TUC"),
+            ("THU CONG: MO CA 3 SERVO (180 do)", "TU DONG: TIEP TUC"),
+            ("THU CONG: MO CA 3 SERVO", "TU DONG: TIEP TUC"),
+        ]
+
+        fake_sio = FakeSocketIOClient(connected=True)
+        with mock.patch.object(pi_agent, "sio", fake_sio):
+            for open_line, close_line in cases:
+                # 1. Gui chuoi OPEN
+                self.fake_serial.feed(f"{open_line}\r\n")
+                self.yolo.read_esp32()
+                self._publish_current_yolo_ipc()
+
+                open_results = pi_agent.process_online_collection_events()
+                self.assertEqual(len(open_results), 1, f"Failed OPEN for {open_line}")
+                open_res = open_results[0]
+                self.assertTrue(open_res["saved"])
+                self.assertEqual(open_res["eventType"], "OPEN")
+                session_id = open_res["sessionId"]
+                self.assertIsNotNone(session_id)
+
+                # 2. Gui chuoi CLOSE
+                self.fake_serial.feed(f"{close_line}\r\n")
+                self.yolo.read_esp32()
+                self._publish_current_yolo_ipc()
+
+                close_results = pi_agent.process_online_collection_events()
+                self.assertEqual(len(close_results), 1, f"Failed CLOSE for {close_line}")
+                close_res = close_results[0]
+                self.assertTrue(close_res["saved"])
+                self.assertEqual(close_res["eventType"], "CLOSE")
+                # BAT BUOC: sessionId cua CLOSE phai trung khop sessionId cua OPEN
+                self.assertEqual(close_res["sessionId"], session_id)
+
+    def test_14_collection_and_lid_alert_independence(self):
+        """14. Kiem tra tinh doc lap tuyet doi giua su kien thu gom va canh bao loi nap:
+        - Loi nap (loi mo nap / loi dong nap) khong lam gian doan phien thu gom.
+        - Phien thu gom khong lam mat co canh bao loi nap.
+        """
+        fake_sio = FakeSocketIOClient(connected=True)
+        with mock.patch.object(pi_agent, "sio", fake_sio):
+            # 1. Mo thu gom
+            self.fake_serial.feed("THU CONG: MO CA 3 SERVO (330 do)\n")
+            self.yolo.read_esp32()
+            self.assertTrue(self.yolo.collection_session_open)
+
+            # 2. ESP32 phat loi nap trong luc dang thu gom
+            self.fake_serial.feed("loi mo nap\n")
+            self.yolo.read_esp32()
+            self.assertTrue(self.yolo.lid_alert, "Lid alert phai duoc kich hoat")
+            self.assertTrue(self.yolo.collection_session_open, "Phien thu gom van phai mo")
+
+            # 3. Dong thu gom
+            self.fake_serial.feed("TU DONG: TIEP TUC\n")
+            self.yolo.read_esp32()
+            self.assertFalse(self.yolo.collection_session_open, "Phien thu gom da dong")
+            self.assertTrue(self.yolo.lid_alert, "Lid alert van duoc bao toan khong bi reset boi thu gom")
+
 
 if __name__ == "__main__":
     unittest.main()
