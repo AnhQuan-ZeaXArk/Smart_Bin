@@ -142,27 +142,42 @@ def normalize_lid_serial_line(line: str) -> str:
     return cleaned
 
 
-def handle_lid_error_line(line: str) -> bool:
+def handle_lid_error_line(line: str, raw_line: str = None) -> bool:
     global lid_alert, last_lid_error
     if not line or not isinstance(line, str):
         return False
-    norm = normalize_lid_serial_line(line)
+
+    raw_data_str = repr(raw_line) if raw_line is not None else repr(line)
+    decoded_str = line
+    normalized_str = normalize_lid_serial_line(line)
+
     matched = None
-    if norm in LID_ERROR_MESSAGES:
-        matched = norm
+    if normalized_str in LID_ERROR_MESSAGES:
+        matched = normalized_str
     else:
         for err_msg in sorted(LID_ERROR_MESSAGES, key=len, reverse=True):
-            if err_msg in norm:
+            if err_msg in normalized_str:
                 matched = err_msg
                 break
-    if matched:
+
+    is_detected = matched is not None
+    if is_detected:
         lid_alert = True
         last_lid_error = matched
-        print(f"[LID ALERT] DETECTED: {matched}")
-        print("[LID ALERT] FLAG SET: True")
-        logger.warning("CANH BAO: Phat hien loi nap tu ESP32: %s (matched: %s)", line, matched)
-        return True
-    return False
+
+    # In log 5 gia tri theo yeu cau Buoc 1
+    if is_detected or "loi" in normalized_str or "nap" in normalized_str:
+        print(f"[SERIAL PARSER DEBUG] 1. Raw data: {raw_data_str}")
+        print(f"[SERIAL PARSER DEBUG] 2. Decoded: {decoded_str}")
+        print(f"[SERIAL PARSER DEBUG] 3. Normalized: {normalized_str}")
+        print(f"[SERIAL PARSER DEBUG] 4. Condition match: {is_detected} (matched='{matched}')")
+        print(f"[SERIAL PARSER DEBUG] 5. lid_alert value: {lid_alert}")
+        if is_detected:
+            print(f"[LID ALERT] DETECTED: {matched}")
+            print("[LID ALERT] FLAG SET: True")
+            logger.warning("CANH BAO: Phat hien loi nap tu ESP32: %s (matched: %s)", line, matched)
+
+    return is_detected
 
 
 def get_pending_collection_events():
@@ -234,15 +249,15 @@ def read_esp32():
             _serial_buffer = _serial_buffer[-1024:]
 
         while "\n" in _serial_buffer:
-            line, _serial_buffer = _serial_buffer.split("\n", 1)
-            line = line.strip()
+            raw_chunk_line, _serial_buffer = _serial_buffer.split("\n", 1)
+            line = raw_chunk_line.strip()
             if not line:
                 continue
 
             print("[ESP32]", line)
 
             # 1. Kiem tra canh bao loi nap thung rac tu ESP32
-            if handle_lid_error_line(line):
+            if handle_lid_error_line(line, raw_line=raw_chunk_line):
                 continue
 
             # 2. Khop mau cam bien: HC1: <int>%, HC2: <int>%, HC3: <int>%

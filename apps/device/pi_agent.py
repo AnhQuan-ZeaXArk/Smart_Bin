@@ -712,23 +712,36 @@ def send_telemetry():
         try:
             # Phát sự kiện cảnh báo lỗi nắp nếu có (chỉ phát một lần khi phát hiện để chống phát trùng lặp)
             global _lid_alert_emitted
-            if payload_a.get('lidAlert') and not _lid_alert_emitted:
-                try:
-                    sio.emit(LID_ALERT_SOCKET_NAME, {
-                        'deviceId': DEVICE_ID,
-                        'stationCode': 'STATION_A',
-                        'message': LID_ALERT_MESSAGE,
-                        'lidAlert': True
-                    })
-                    _lid_alert_emitted = True
-                    print("[LID ALERT] SOCKET EVENT EMITTED")
-                    logger.warning(
-                        "[Station A] [LID ALERT] SOCKET EVENT EMITTED: %s (%s)",
-                        LID_ALERT_SOCKET_NAME,
-                        LID_ALERT_MESSAGE
-                    )
-                except Exception as emit_err:
-                    logger.warning("Không thể phát sự kiện %s: %s", LID_ALERT_SOCKET_NAME, emit_err)
+            has_lid_alert = bool(payload_a.get('lidAlert'))
+            if has_lid_alert:
+                print(f"[PI AGENT DEBUG] payload_a['lidAlert']=True, _lid_alert_emitted={_lid_alert_emitted}, socket_connected={sio.connected}")
+                logger.info(
+                    "[PI AGENT DEBUG] payload_a['lidAlert']=True, _lid_alert_emitted=%s, socket_connected=%s",
+                    _lid_alert_emitted,
+                    sio.connected
+                )
+                if not _lid_alert_emitted:
+                    print(f"[PI AGENT] PRE-EMIT: Sending '{LID_ALERT_SOCKET_NAME}' to Backend (server={SERVER_URL})...")
+                    try:
+                        sio.emit(LID_ALERT_SOCKET_NAME, {
+                            'deviceId': DEVICE_ID,
+                            'stationCode': 'STATION_A',
+                            'message': LID_ALERT_MESSAGE,
+                            'lidAlert': True
+                        })
+                        _lid_alert_emitted = True
+                        print("[LID ALERT] SOCKET EVENT EMITTED")
+                        print(f"[PI AGENT] POST-EMIT: Successfully emitted '{LID_ALERT_SOCKET_NAME}', _lid_alert_emitted is now True")
+                        logger.warning(
+                            "[Station A] [LID ALERT] SOCKET EVENT EMITTED: %s (%s)",
+                            LID_ALERT_SOCKET_NAME,
+                            LID_ALERT_MESSAGE
+                        )
+                    except Exception as emit_err:
+                        print(f"[PI AGENT] EMIT FAILED: {emit_err}")
+                        logger.warning("Không thể phát sự kiện %s: %s", LID_ALERT_SOCKET_NAME, emit_err)
+                else:
+                    print("[PI AGENT] EMIT SKIPPED: _lid_alert_emitted is already True (deduplication on client side)")
 
             sio.emit('device:telemetry', payload_a, callback=on_a_ack)
             if a_ack_received.wait(timeout=3.0):
@@ -797,6 +810,9 @@ def send_telemetry():
                 'Authorization': f'Bearer {DEVICE_INGEST_TOKEN}',
                 'Content-Type': 'application/json'
             }
+            if payload_a.get('lidAlert'):
+                print(f"[PI AGENT HTTP FALLBACK] Sending heartbeat with lidAlert=True to {url}")
+                logger.info("[PI AGENT HTTP FALLBACK] Sending heartbeat with lidAlert=True to %s", url)
             resp = requests.post(url, json=payload_a, headers=headers, timeout=5)
             if resp.status_code == 200:
                 logger.info("Fallback HTTP Heartbeat thành công -> uptime: %ss | temp: %s°C", payload_a['uptimeSeconds'], payload_a['cpuTempC'])

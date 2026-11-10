@@ -216,8 +216,9 @@ def publish_yolo_state(
             'timestamp': detection['timestamp']
         }
     }
+    state['lidAlert'] = bool(lid_alert)
     if lid_alert:
-        state['lidAlert'] = True
+        logger.info("[IPC PRODUCER] Wrote state with field 'lidAlert': true to %s", STATE_FILE_PATH)
     sanitized_sensors = _sanitize_sensors_for_publish(sensors)
     if sanitized_sensors is not None:
         state['sensors'] = sanitized_sensors
@@ -511,6 +512,10 @@ def read_yolo_state() -> Dict[str, Any]:
 
     validated_collection_events = _extract_valid_collection_events(data)
 
+    lid_alert_val = bool(data.get('lidAlert', False))
+    if lid_alert_val:
+        logger.info("[IPC CONSUMER] Read state from %s with field 'lidAlert': true", STATE_FILE_PATH)
+
     return {
         'yoloStatus': 'RUNNING',
         'cameraStatus': 'CONNECTED',
@@ -521,7 +526,7 @@ def read_yolo_state() -> Dict[str, Any]:
         },
         'sensors': validated_sensors,
         'collectionEvents': validated_collection_events,
-        'lidAlert': bool(data.get('lidAlert', False))
+        'lidAlert': lid_alert_val
     }
 
 
