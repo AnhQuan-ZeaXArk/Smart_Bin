@@ -124,6 +124,93 @@ export class DemoService {
     return [...DEMO_COLLECTIONS];
   }
 
+  recordCollectionSession(stationCodeInput: string = 'STATION_A', collectedBy: string = 'WEB_DASHBOARD') {
+    const isStationB =
+      stationCodeInput.trim().toUpperCase() === 'STATION_B' ||
+      stationCodeInput.trim().toLowerCase() === 'station_b';
+    const targetCode = isStationB ? 'STATION_B' : 'STATION_A';
+    const stationId = isStationB ? 'station_b' : 'station_a';
+    const stationName = isStationB ? 'Trạm B' : 'Trạm A';
+
+    const stationBins = DEMO_BINS.filter((b) => {
+      const code = (b as any).stationCode || (b as any).station?.code || 'STATION_A';
+      return code === targetCode;
+    });
+
+    const binsToUse = stationBins.length > 0 ? stationBins : DEMO_BINS;
+
+    const compartments = binsToUse.map((b) => ({
+      binId: b.id,
+      binCode: b.binCode,
+      name: b.name,
+      fillLevelBefore: b.currentFillLevel,
+      fillLevelAfter: 0
+    }));
+
+    const validLevels = compartments
+      .map((c) => c.fillLevelBefore)
+      .filter((lvl): lvl is number => lvl !== null);
+    const fillBefore =
+      validLevels.length > 0
+        ? Math.round(validLevels.reduce((a, b) => a + b, 0) / validLevels.length)
+        : null;
+
+    // Reset demo bins to 0
+    for (const b of binsToUse) {
+      b.currentFillLevel = 0;
+      b.fillCategory = 'NORMAL';
+      b.status = 'ONLINE';
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const sessionId = `col-demo-${Date.now()}`;
+    const newRecord: any = {
+      id: sessionId,
+      sessionId,
+      binId: binsToUse[0]?.id ?? 'bin-demo',
+      collectedBy,
+      collectedAt: nowIso,
+      openedAt: nowIso,
+      closedAt: nowIso,
+      fillLevelBefore: fillBefore,
+      fillLevelAfter: 0,
+      status: 'COMPLETED',
+      notes: JSON.stringify({
+        type: 'COLLECTION_SESSION',
+        sessionId,
+        stationId,
+        stationCode: targetCode,
+        stationName,
+        triggerSource: 'WEB_DASHBOARD',
+        openEventId: `evt-open-${Date.now()}`,
+        closeEventId: `evt-close-${Date.now()}`,
+        openedAt: nowIso,
+        closedAt: nowIso,
+        fillLevelBefore: fillBefore,
+        fillLevelAfter: 0,
+        compartmentsCount: compartments.length || 3,
+        compartments,
+        createdAt: nowIso
+      }),
+      stationId,
+      stationCode: targetCode,
+      stationName,
+      triggerSource: 'WEB_DASHBOARD',
+      compartmentsCount: compartments.length || 3,
+      compartments,
+      createdAt: nowIso,
+      bin: {
+        binCode: binsToUse[0]?.binCode ?? 'RECYCLABLE',
+        name: binsToUse[0]?.name ?? 'Rác tái chế',
+        station: { code: targetCode, name: stationName }
+      }
+    };
+
+    DEMO_COLLECTIONS.unshift(newRecord);
+    return { session: newRecord };
+  }
+
   getDashboardSummary() {
     const bins = this.getAllBins();
     const total = bins.length;

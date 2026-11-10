@@ -25,7 +25,21 @@ function setupMockCollectionDatabase() {
           stationId: 'station_a_db_id',
           binCode: 'RECYCLABLE',
           name: 'Thùng Rác Tái Chế Trạm A',
-          currentFillLevel: null
+          currentFillLevel: 65
+        },
+        {
+          id: 'bin_a_org',
+          stationId: 'station_a_db_id',
+          binCode: 'ORGANIC',
+          name: 'Thùng Rác Hữu Cơ Trạm A',
+          currentFillLevel: 80
+        },
+        {
+          id: 'bin_a_non',
+          stationId: 'station_a_db_id',
+          binCode: 'NON_RECYCLABLE',
+          name: 'Thùng Rác Vô Cơ Trạm A',
+          currentFillLevel: 60
         }
       ]
     }
@@ -54,7 +68,20 @@ function setupMockCollectionDatabase() {
       name: 'Thùng Rác Tái Chế Trạm A',
       currentFillLevel: stations[0].bins[0].currentFillLevel,
       station: { code: 'STATION_A', name: 'Trạm A' }
-    })
+    }),
+    findMany: async () =>
+      stations[0].bins.map((b: any) => ({ ...b, station: { code: 'STATION_A', name: 'Trạm A' } })),
+    updateMany: async ({ where, data }: any) => {
+      if (shouldFailTransaction) {
+        throw new Error('Simulated database deadlock / constraint failure');
+      }
+      for (const b of stations[0].bins) {
+        if (!where?.id?.in || where.id.in.includes(b.id)) {
+          Object.assign(b, data);
+        }
+      }
+      return { count: stations[0].bins.length };
+    }
   };
 
   (prisma as any).collectionRecord = {
@@ -92,6 +119,19 @@ function setupMockCollectionDatabase() {
         ...data
       };
       return collectionRecords[idx];
+    },
+    updateMany: async ({ where, data }: any) => {
+      if (shouldFailTransaction) {
+        throw new Error('Simulated database deadlock / constraint failure');
+      }
+      let count = 0;
+      for (const rec of collectionRecords) {
+        if (where?.status && rec.status === where.status) {
+          Object.assign(rec, data);
+          count++;
+        }
+      }
+      return { count };
     }
   };
 
@@ -105,10 +145,13 @@ function setupMockCollectionDatabase() {
 }
 
 async function runTests() {
-  console.log('=== PHASE 1.1 TECHNICAL CORRECTION - BACKEND TESTS ===');
+  console.log('=== COLLECTION HISTORY & 3-BIN SESSION - BACKEND TESTS ===');
 
   const { collectionRecords, stations, setFailTransaction } = setupMockCollectionDatabase();
   const service = new CollectionSessionService();
+
+  // Reset initial bin fill levels to test null/measurement behaviour
+  stations[0].bins.forEach((b: any) => { b.currentFillLevel = null; });
 
   // 1. Open without sensor measurement: does NOT fake fillLevelBefore = 0 (DB = -1 sentinel, API = null)
   const session1 = crypto.randomUUID();
@@ -129,10 +172,12 @@ async function runTests() {
   assert.strictEqual(openRes1.session?.fillLevelBefore, null, 'fillLevelBefore must be null when unmeasured, NOT 0');
   assert.strictEqual(collectionRecords[0].fillLevelBefore, -1, 'DB column constraint requires integer: sentinel is -1, NOT 0');
   assert.strictEqual(collectionRecords[0].fillLevelAfter, null, 'Must not infer bin was emptied (fillLevelAfter is null)');
+  assert.strictEqual(openRes1.session?.compartmentsCount, 3, 'Must capture all 3 compartments');
 
   const serialized1 = serializeCollectionRecord(collectionRecords[0]);
   assert.strictEqual(serialized1.fillLevelBefore, null, 'API serializer must expose null (never fake 0%)');
-  console.log('PASS [1]: Open without sensor data does NOT assign 0% (DB sentinel -1, API/Frontend null)');
+  assert.strictEqual(serialized1.compartmentsCount, 3);
+  console.log('PASS [1]: Open without sensor data does NOT assign 0% (DB sentinel -1, API/Frontend null, 3 compartments captured)');
 
   // Close session 1 so station A is ready for next session
   await service.ingestEvent({
@@ -236,7 +281,7 @@ async function runTests() {
   assert.strictEqual(orphanRes.status, 'SESSION_NOT_FOUND');
   console.log('PASS [6]: CLOSE without prior saved OPEN is rejected');
 
-  // 7. Successful CLOSE updates session to COMPLETED after DB commit
+  // 7. Successful CLOSE updates session to COMPLETED after DB commit, resets bins to 0, sets fillLevelAfter: 0
   const closeEvent2 = crypto.randomUUID();
   const closeTime2 = '2026-11-10T05:15:00.000Z';
 
@@ -254,7 +299,12 @@ async function runTests() {
   assert.strictEqual(closeRes2.sessionId, session2);
   assert.strictEqual(closeRes2.session?.status, 'COMPLETED');
   assert.strictEqual(closeRes2.session?.closedAt, closeTime2);
-  console.log('PASS [7]: CLOSE updates matching open session to COMPLETED');
+  assert.strictEqual(closeRes2.session?.fillLevelAfter, 0, 'fillLevelAfter must be 0 after successful close');
+  // Check that all 3 bins in station are reset to 0
+  for (const b of stations[0].bins) {
+    assert.strictEqual(b.currentFillLevel, 0, `Bin ${b.binCode} must be reset to 0% in DB`);
+  }
+  console.log('PASS [7]: CLOSE updates session to COMPLETED, sets fillLevelAfter: 0, resets all 3 bins to 0%');
 
   // 8. Extra CLOSE on already closed session is rejected
   const extraCloseRes = await service.ingestEvent({
@@ -369,7 +419,7 @@ async function runTests() {
     httpServer.close();
   }
 
-  // 10. HTTP API verification: GET /api/collections (unauthenticated, authenticated, empty, OPEN, CLOSE, and write API auth protection)
+  // 10. HTTP API verification: GET /api/collections & POST /api/collections
   (prisma as any).user = {
     findUnique: async ({ where }: any) =>
       where.id === 'test-admin-id'
@@ -406,7 +456,7 @@ async function runTests() {
     const bodyEmptyWithAuth = (await resEmptyWithAuth.json()) as { collections: any[] };
     assert.deepStrictEqual(bodyEmptyWithAuth, { collections: [] });
 
-    // 10c. DB has OPEN session -> GET /api/collections returns IN_PROGRESS
+    // 10c. DB has OPEN session -> GET /api/collections returns IN_PROGRESS with 3 compartments
     const httpSessionId = crypto.randomUUID();
     const httpOpenEventId = crypto.randomUUID();
     await service.ingestEvent({
@@ -427,8 +477,10 @@ async function runTests() {
     assert.strictEqual(bodyOpenNoAuth.collections[0].status, 'IN_PROGRESS');
     assert.strictEqual(bodyOpenNoAuth.collections[0].closedAt, null);
     assert.strictEqual(bodyOpenNoAuth.collections[0].fillLevelBefore, 48);
+    assert.strictEqual(bodyOpenNoAuth.collections[0].compartmentsCount, 3);
+    assert.strictEqual(bodyOpenNoAuth.collections[0].compartments.length, 3);
 
-    // 10d. DB has CLOSE session -> GET /api/collections returns COMPLETED
+    // 10d. DB has CLOSE session -> GET /api/collections returns COMPLETED, fillLevelAfter: 0
     const httpCloseEventId = crypto.randomUUID();
     await service.ingestEvent({
       eventId: httpCloseEventId,
@@ -445,9 +497,54 @@ async function runTests() {
     assert.strictEqual(bodyClosedNoAuth.collections.length, 1);
     assert.strictEqual(bodyClosedNoAuth.collections[0].sessionId, httpSessionId);
     assert.strictEqual(bodyClosedNoAuth.collections[0].status, 'COMPLETED');
+    assert.strictEqual(bodyClosedNoAuth.collections[0].fillLevelAfter, 0);
     assert.strictEqual(bodyClosedNoAuth.collections[0].closedAt, '2026-11-10T08:04:00.000Z');
 
-    // 10e. Write & Admin APIs still enforce authentication (HTTP 401 without JWT)
+    // 10e. POST /api/collections: Web Frontend confirms collection -> creates exactly ONE session for all 3 bins
+    stations[0].bins[0].currentFillLevel = 75;
+    stations[0].bins[1].currentFillLevel = 85;
+    stations[0].bins[2].currentFillLevel = 50;
+
+    const resPostCollection = await fetch(`${apiBaseUrl}/api/collections`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${validToken}`
+      },
+      body: JSON.stringify({ stationCode: 'STATION_A' })
+    });
+
+    assert.strictEqual(resPostCollection.status, 201, 'POST /api/collections must return HTTP 201');
+    const postBody = (await resPostCollection.json()) as { message: string; session: any };
+    assert.ok(postBody.session, 'Must return created session');
+    assert.strictEqual(postBody.session.status, 'COMPLETED');
+    assert.strictEqual(postBody.session.fillLevelAfter, 0);
+    assert.strictEqual(postBody.session.compartmentsCount, 3, 'Must record exactly 3 compartments');
+    assert.strictEqual(postBody.session.compartments.length, 3);
+    assert.strictEqual(postBody.session.triggerSource, 'WEB_DASHBOARD');
+
+    // Verify all 3 bins in database were reset to 0
+    for (const b of stations[0].bins) {
+      assert.strictEqual(b.currentFillLevel, 0, `Bin ${b.binCode} must be reset to 0% after manual collection`);
+    }
+
+    // Verify total records in DB: exactly 1 new record was added (total 2 records, NOT 3 separate records added!)
+    assert.strictEqual(collectionRecords.length, 2, 'Must create exactly ONE record for the 3-bin session (NOT 3 separate records)');
+
+    // 10f. Rapid duplicate POST request within debounce window -> returns duplicate status (no extra DB record)
+    const resPostDup = await fetch(`${apiBaseUrl}/api/collections`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${validToken}`
+      },
+      body: JSON.stringify({ stationCode: 'STATION_A' })
+    });
+    const dupBody = (await resPostDup.json()) as any;
+    assert.strictEqual(collectionRecords.length, 2, 'Debounced duplicate request must NOT insert additional DB record');
+    console.log('PASS [10]: POST /api/collections creates 1 session for 3 bins, resets DB to 0%, and debounces duplicates');
+
+    // 10g. Write & Admin APIs still enforce authentication (HTTP 401 without JWT)
     const resUsersNoAuth = await fetch(`${apiBaseUrl}/api/users`);
     assert.strictEqual(resUsersNoAuth.status, 401, 'GET /api/users must still require auth');
 
@@ -486,12 +583,12 @@ async function runTests() {
     });
     assert.strictEqual(resDeviceCmdNoAuth.status, 401, 'POST /api/devices/command must still require auth');
 
-    console.log('PASS [10]: GET /api/collections HTTP 200 (public & JWT, empty, IN_PROGRESS, COMPLETED) and write APIs remain protected');
+    console.log('PASS [11]: Other write APIs remain strictly protected with HTTP 401');
   } finally {
     apiHttpServer.close();
   }
 
-  console.log('=== ALL 10 BACKEND COLLECTION TESTS PASSED ===');
+  console.log('=== ALL BACKEND COLLECTION TESTS PASSED ===');
 }
 
 runTests().catch((err) => {

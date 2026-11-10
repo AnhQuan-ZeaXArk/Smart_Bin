@@ -6,7 +6,7 @@ import { prisma } from '../lib/prisma.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 
 import { env } from '../config/env.js';
-import { serializeCollectionRecord } from '../services/collection-session.service.js';
+import { collectionSessionService, serializeCollectionRecord } from '../services/collection-session.service.js';
 import { demoService } from '../demo/demo.service.js';
 
 const router = Router();
@@ -280,6 +280,69 @@ router.get('/collections', async (request, response, next) => {
       take: 200
     });
     return response.json({ collections: collections.map((rec) => serializeCollectionRecord(rec)) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post('/collections', async (request, response, next) => {
+  try {
+    const parsed = z
+      .object({
+        stationCode: z.string().trim().optional(),
+        stationId: z.string().trim().optional(),
+        collectedBy: z.string().trim().optional(),
+        notes: z.string().trim().optional()
+      })
+      .safeParse(request.body);
+
+    if (!parsed.success) {
+      return response.status(400).json({ message: 'Thông tin trạm thu gom không hợp lệ.' });
+    }
+
+    let collector = parsed.data.collectedBy?.trim();
+    const authUser = (request as any).user;
+    if (authUser?.displayName || authUser?.username) {
+      collector = authUser.displayName || authUser.username;
+    }
+    if (!collector) collector = 'WEB_DASHBOARD';
+
+    const stationTarget = parsed.data.stationCode || parsed.data.stationId || 'STATION_A';
+
+    if (env.isDemoMode) {
+      const demoResult = demoService.recordCollectionSession(stationTarget, collector);
+      const realtime = request.app.get('realtime');
+      if (realtime?.io && typeof realtime.io.emit === 'function') {
+        realtime.io.emit('collection:session:updated', demoResult.session);
+      }
+      return response.status(201).json({
+        message: 'Xác nhận thu gom trạm thành công. Cả 3 thùng đã được làm trống.',
+        session: demoResult.session
+      });
+    }
+
+    const result = await collectionSessionService.createManualSession({
+      stationCode: stationTarget,
+      collectedBy: collector,
+      notes: parsed.data.notes
+    });
+
+    if (!result.success) {
+      return response.status(409).json({
+        message: result.error || 'Không thể tạo phiên thu gom.',
+        status: result.status
+      });
+    }
+
+    const realtime = request.app.get('realtime');
+    if (realtime?.io && typeof realtime.io.emit === 'function' && result.session) {
+      realtime.io.emit('collection:session:updated', result.session);
+    }
+
+    return response.status(201).json({
+      message: 'Xác nhận thu gom trạm thành công. Cả 3 thùng đã được làm trống.',
+      session: result.session
+    });
   } catch (error) {
     return next(error);
   }
