@@ -1,12 +1,15 @@
 import assert from 'node:assert';
 import crypto from 'node:crypto';
 import { createServer } from 'node:http';
+import jwt from 'jsonwebtoken';
 import { io as createClientSocket } from 'socket.io-client';
 import {
   CollectionSessionService,
   serializeCollectionRecord
 } from './collection-session.service.js';
 import { RealtimeGateway, REALTIME_EVENTS } from '../integrations/realtime/realtime.gateway.js';
+import { app } from '../app.js';
+import { env } from '../config/env.js';
 import { prisma } from '../lib/prisma.js';
 
 function setupMockCollectionDatabase() {
@@ -55,7 +58,16 @@ function setupMockCollectionDatabase() {
   };
 
   (prisma as any).collectionRecord = {
-    findMany: async () => [...collectionRecords],
+    findMany: async () =>
+      collectionRecords.map((r) => ({
+        ...r,
+        bin: r.bin ?? {
+          binCode: 'RECYCLABLE',
+          name: 'Thùng Rác Tái Chế Trạm A',
+          stationId: 'station_a_db_id',
+          station: { code: 'STATION_A', name: 'Trạm A' }
+        }
+      })),
     findUnique: async ({ where }: any) =>
       collectionRecords.find((r) => r.id === where.id) || null,
     create: async ({ data }: any) => {
@@ -357,7 +369,129 @@ async function runTests() {
     httpServer.close();
   }
 
-  console.log('=== ALL 9 TECHNICAL CORRECTION BACKEND TESTS PASSED ===');
+  // 10. HTTP API verification: GET /api/collections (unauthenticated, authenticated, empty, OPEN, CLOSE, and write API auth protection)
+  (prisma as any).user = {
+    findUnique: async ({ where }: any) =>
+      where.id === 'test-admin-id'
+        ? {
+            id: 'test-admin-id',
+            username: 'admin',
+            displayName: 'Admin Tester',
+            isActive: true,
+            role: { name: 'ADMIN' }
+          }
+        : null
+  };
+
+  const apiHttpServer = createServer(app);
+  await new Promise<void>((resolve) => apiHttpServer.listen(0, '127.0.0.1', () => resolve()));
+  const apiAddr = apiHttpServer.address() as { port: number };
+  const apiBaseUrl = `http://127.0.0.1:${apiAddr.port}`;
+
+  try {
+    // 10a. Empty DB -> GET /api/collections without JWT returns HTTP 200 and { collections: [] }
+    collectionRecords.length = 0;
+    const resEmptyNoAuth = await fetch(`${apiBaseUrl}/api/collections`);
+    assert.strictEqual(resEmptyNoAuth.status, 200, 'GET /api/collections without JWT must return HTTP 200');
+    const bodyEmptyNoAuth = (await resEmptyNoAuth.json()) as { collections: any[] };
+    assert.ok(Array.isArray(bodyEmptyNoAuth.collections), 'Response must contain collections array');
+    assert.strictEqual(bodyEmptyNoAuth.collections.length, 0, 'Empty DB must return collections: []');
+
+    // 10b. GET /api/collections with valid JWT returns HTTP 200
+    const validToken = jwt.sign({}, env.JWT_SECRET, { subject: 'test-admin-id', expiresIn: '1h' });
+    const resEmptyWithAuth = await fetch(`${apiBaseUrl}/api/collections`, {
+      headers: { Authorization: `Bearer ${validToken}` }
+    });
+    assert.strictEqual(resEmptyWithAuth.status, 200, 'GET /api/collections with valid JWT must return HTTP 200');
+    const bodyEmptyWithAuth = (await resEmptyWithAuth.json()) as { collections: any[] };
+    assert.deepStrictEqual(bodyEmptyWithAuth, { collections: [] });
+
+    // 10c. DB has OPEN session -> GET /api/collections returns IN_PROGRESS
+    const httpSessionId = crypto.randomUUID();
+    const httpOpenEventId = crypto.randomUUID();
+    await service.ingestEvent({
+      eventId: httpOpenEventId,
+      sessionId: httpSessionId,
+      stationId: 'station_a',
+      triggerSource: 'PHYSICAL_BUTTON',
+      eventType: 'OPEN',
+      occurredAt: '2026-11-10T08:00:00.000Z',
+      fillPercent: 48
+    });
+
+    const resOpenNoAuth = await fetch(`${apiBaseUrl}/api/collections`);
+    assert.strictEqual(resOpenNoAuth.status, 200);
+    const bodyOpenNoAuth = (await resOpenNoAuth.json()) as { collections: any[] };
+    assert.strictEqual(bodyOpenNoAuth.collections.length, 1);
+    assert.strictEqual(bodyOpenNoAuth.collections[0].sessionId, httpSessionId);
+    assert.strictEqual(bodyOpenNoAuth.collections[0].status, 'IN_PROGRESS');
+    assert.strictEqual(bodyOpenNoAuth.collections[0].closedAt, null);
+    assert.strictEqual(bodyOpenNoAuth.collections[0].fillLevelBefore, 48);
+
+    // 10d. DB has CLOSE session -> GET /api/collections returns COMPLETED
+    const httpCloseEventId = crypto.randomUUID();
+    await service.ingestEvent({
+      eventId: httpCloseEventId,
+      sessionId: httpSessionId,
+      stationId: 'station_a',
+      triggerSource: 'PHYSICAL_BUTTON',
+      eventType: 'CLOSE',
+      occurredAt: '2026-11-10T08:04:00.000Z'
+    });
+
+    const resClosedNoAuth = await fetch(`${apiBaseUrl}/api/collections`);
+    assert.strictEqual(resClosedNoAuth.status, 200);
+    const bodyClosedNoAuth = (await resClosedNoAuth.json()) as { collections: any[] };
+    assert.strictEqual(bodyClosedNoAuth.collections.length, 1);
+    assert.strictEqual(bodyClosedNoAuth.collections[0].sessionId, httpSessionId);
+    assert.strictEqual(bodyClosedNoAuth.collections[0].status, 'COMPLETED');
+    assert.strictEqual(bodyClosedNoAuth.collections[0].closedAt, '2026-11-10T08:04:00.000Z');
+
+    // 10e. Write & Admin APIs still enforce authentication (HTTP 401 without JWT)
+    const resUsersNoAuth = await fetch(`${apiBaseUrl}/api/users`);
+    assert.strictEqual(resUsersNoAuth.status, 401, 'GET /api/users must still require auth');
+
+    const resCreateUserNoAuth = await fetch(`${apiBaseUrl}/api/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    assert.strictEqual(resCreateUserNoAuth.status, 401, 'POST /api/users must still require auth');
+
+    const resCreateBinNoAuth = await fetch(`${apiBaseUrl}/api/bins`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    assert.strictEqual(resCreateBinNoAuth.status, 401, 'POST /api/bins must still require auth');
+
+    const resUpdateBinNoAuth = await fetch(`${apiBaseUrl}/api/bins/bin_a_rec`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    assert.strictEqual(resUpdateBinNoAuth.status, 401, 'PUT /api/bins/:id must still require auth');
+
+    const resHeartbeatNoToken = await fetch(`${apiBaseUrl}/api/devices/heartbeat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    assert.strictEqual(resHeartbeatNoToken.status, 401, 'POST /api/devices/heartbeat must still require device token');
+
+    const resDeviceCmdNoAuth = await fetch(`${apiBaseUrl}/api/devices/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'PING' })
+    });
+    assert.strictEqual(resDeviceCmdNoAuth.status, 401, 'POST /api/devices/command must still require auth');
+
+    console.log('PASS [10]: GET /api/collections HTTP 200 (public & JWT, empty, IN_PROGRESS, COMPLETED) and write APIs remain protected');
+  } finally {
+    apiHttpServer.close();
+  }
+
+  console.log('=== ALL 10 BACKEND COLLECTION TESTS PASSED ===');
 }
 
 runTests().catch((err) => {

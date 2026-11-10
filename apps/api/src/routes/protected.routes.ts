@@ -247,7 +247,7 @@ router.patch('/users/:id/password', requireAuth, requireRole('ADMIN'), async (re
   }
 });
 
-router.get('/collections', requireAuth, async (request, response, next) => {
+router.get('/collections', async (request, response, next) => {
   try {
     if (env.isDemoMode) {
       return response.json({ collections: demoService.getCollections() });
