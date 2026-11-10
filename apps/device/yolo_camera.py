@@ -118,6 +118,8 @@ except Exception:
 backend_connected = True
 lid_alert = False
 last_lid_error = None
+last_lid_error_id = None
+last_lid_error_timestamp = None
 
 
 def is_backend_connected():
@@ -135,9 +137,11 @@ def reset_collection_session_state():
 
 
 def reset_lid_alert_state():
-    global lid_alert, last_lid_error
+    global lid_alert, last_lid_error, last_lid_error_id, last_lid_error_timestamp
     lid_alert = False
     last_lid_error = None
+    last_lid_error_id = None
+    last_lid_error_timestamp = None
 
 
 def normalize_lid_serial_line(line: str) -> str:
@@ -164,7 +168,7 @@ def normalize_lid_serial_line(line: str) -> str:
 
 
 def handle_lid_error_line(line: str, raw_line: str = None) -> bool:
-    global lid_alert, last_lid_error
+    global lid_alert, last_lid_error, last_lid_error_id, last_lid_error_timestamp
     if not line or not isinstance(line, str):
         return False
 
@@ -185,6 +189,8 @@ def handle_lid_error_line(line: str, raw_line: str = None) -> bool:
     if is_detected:
         lid_alert = True
         last_lid_error = matched
+        last_lid_error_id = str(uuid.uuid4())
+        last_lid_error_timestamp = datetime.now(timezone.utc).isoformat()
 
     # In log 5 gia tri theo yeu cau Buoc 1
     if is_detected or "loi" in normalized_str or "nap" in normalized_str:
@@ -490,7 +496,11 @@ def _publish_state_safely(
         active_lid_alert = lid_alert_val if lid_alert_val is not None else lid_alert
         if active_lid_alert:
             kwargs["lid_alert"] = True
-            logger.info("[LID ALERT] Publishing to IPC state: lidAlert=True")
+            if last_lid_error_id:
+                kwargs["lid_alert_id"] = last_lid_error_id
+            if last_lid_error_timestamp:
+                kwargs["lid_alert_timestamp"] = last_lid_error_timestamp
+            logger.info("[LID ALERT] Publishing to IPC state: lidAlert=True, lidAlertId=%s", last_lid_error_id)
 
         if not publish_yolo_state(**kwargs):
             logger.warning("YOLO IPC state was not published.")

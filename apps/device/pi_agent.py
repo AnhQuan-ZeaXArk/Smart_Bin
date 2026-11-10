@@ -93,16 +93,18 @@ LID_ALERT_MESSAGE = 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!'
 _seen_collection_event_ids: set[str] = set(get_acknowledged_backend_event_ids())
 _confirmed_open_sessions: set[str] = set(get_confirmed_backend_open_sessions())
 _lid_alert_emitted: bool = False
+_last_emitted_lid_event_id: Optional[str] = None
 
 
 def reset_online_collection_state():
     """Reset in-memory online collection event state (used by unit tests)."""
-    global _lid_alert_emitted
+    global _lid_alert_emitted, _last_emitted_lid_event_id
     _seen_collection_event_ids.clear()
     _seen_collection_event_ids.update(get_acknowledged_backend_event_ids())
     _confirmed_open_sessions.clear()
     _confirmed_open_sessions.update(get_confirmed_backend_open_sessions())
     _lid_alert_emitted = False
+    _last_emitted_lid_event_id = None
 
 # Connection attempts are scheduled by the main loop, not Socket.IO's background
 # reconnect thread, so initial failures and disconnects share one retry policy.
@@ -213,9 +215,10 @@ def connect_error(data):
 @sio_event
 def disconnect():
     """Sự kiện mất kết nối Socket.IO."""
-    global _next_socket_retry_at, _lid_alert_emitted
+    global _next_socket_retry_at, _lid_alert_emitted, _last_emitted_lid_event_id
     logger.warning("Đã ngắt kết nối khỏi Socket.IO Server. Đang tự động kết nối lại...")
     _lid_alert_emitted = False
+    _last_emitted_lid_event_id = None
     _next_socket_retry_at = time.monotonic() + _socket_retry_delay
 
 
@@ -340,6 +343,8 @@ def build_telemetry_payload() -> dict:
 
     ai_detection_payload = yolo_info.get('latestDetection')
     lid_alert = bool(yolo_info.get('lidAlert', False))
+    lid_alert_id = yolo_info.get('lidAlertId')
+    lid_alert_timestamp = yolo_info.get('lidAlertTimestamp')
     if lid_alert:
         print("[LID ALERT] IPC VALUE: True")
         logger.info("[LID ALERT] IPC VALUE: True")
@@ -362,6 +367,12 @@ def build_telemetry_payload() -> dict:
             'lidAlert': lid_alert
         }
     }
+    if lid_alert_id:
+        payload['lidAlertId'] = lid_alert_id
+        payload['metadata']['lidAlertId'] = lid_alert_id
+    if lid_alert_timestamp:
+        payload['lidAlertTimestamp'] = lid_alert_timestamp
+        payload['metadata']['lidAlertTimestamp'] = lid_alert_timestamp
     if ai_detection_payload is not None:
         payload['aiDetection'] = ai_detection_payload
     if yolo_info.get('lastInferenceTimeMs') is not None:
@@ -721,38 +732,46 @@ def send_telemetry():
             a_ack_received.set()
 
         try:
-            # Phát sự kiện cảnh báo lỗi nắp nếu có (chỉ phát một lần khi phát hiện để chống phát trùng lặp)
-            global _lid_alert_emitted
+            # Phát sự kiện cảnh báo lỗi nắp nếu có (nhận diện theo từng eventId hoặc timestamp để cho phép re-trigger)
+            global _lid_alert_emitted, _last_emitted_lid_event_id
             has_lid_alert = bool(payload_a.get('lidAlert'))
+            current_lid_id = payload_a.get('lidAlertId') or ('active-lid-event' if not _last_emitted_lid_event_id else None)
+            current_lid_time = payload_a.get('lidAlertTimestamp') or datetime.now(timezone.utc).isoformat()
+
             if has_lid_alert:
-                print(f"[PI AGENT DEBUG] payload_a['lidAlert']=True, _lid_alert_emitted={_lid_alert_emitted}, socket_connected={sio.connected}")
+                is_new_event = current_lid_id and current_lid_id != _last_emitted_lid_event_id
+                print(f"[PI AGENT DEBUG] payload_a['lidAlert']=True, current_lid_id={current_lid_id}, _last_emitted_lid_event_id={_last_emitted_lid_event_id}, is_new={is_new_event}, socket_connected={sio.connected}")
                 logger.info(
-                    "[PI AGENT DEBUG] payload_a['lidAlert']=True, _lid_alert_emitted=%s, socket_connected=%s",
-                    _lid_alert_emitted,
+                    "[PI AGENT DEBUG] payload_a['lidAlert']=True, is_new=%s, socket_connected=%s",
+                    is_new_event,
                     sio.connected
                 )
-                if not _lid_alert_emitted:
-                    print(f"[PI AGENT] PRE-EMIT: Sending '{LID_ALERT_SOCKET_NAME}' to Backend (server={SERVER_URL})...")
+                if is_new_event:
+                    print(f"[PI AGENT] PRE-EMIT: Sending '{LID_ALERT_SOCKET_NAME}' (eventId={current_lid_id}) to Backend (server={SERVER_URL})...")
                     try:
                         sio.emit(LID_ALERT_SOCKET_NAME, {
+                            'eventId': current_lid_id,
+                            'timestamp': current_lid_time,
                             'deviceId': DEVICE_ID,
                             'stationCode': 'STATION_A',
                             'message': LID_ALERT_MESSAGE,
                             'lidAlert': True
                         })
+                        _last_emitted_lid_event_id = current_lid_id
                         _lid_alert_emitted = True
-                        print("[LID ALERT] SOCKET EVENT EMITTED")
+                        print(f"[LID ALERT] SOCKET EVENT EMITTED: eventId={current_lid_id}")
                         print(f"[PI AGENT] POST-EMIT: Successfully emitted '{LID_ALERT_SOCKET_NAME}', _lid_alert_emitted is now True")
                         logger.warning(
-                            "[Station A] [LID ALERT] SOCKET EVENT EMITTED: %s (%s)",
+                            "[Station A] [LID ALERT] SOCKET EVENT EMITTED: %s (%s, eventId=%s)",
                             LID_ALERT_SOCKET_NAME,
-                            LID_ALERT_MESSAGE
+                            LID_ALERT_MESSAGE,
+                            current_lid_id
                         )
                     except Exception as emit_err:
                         print(f"[PI AGENT] EMIT FAILED: {emit_err}")
                         logger.warning("Không thể phát sự kiện %s: %s", LID_ALERT_SOCKET_NAME, emit_err)
                 else:
-                    print("[PI AGENT] EMIT SKIPPED: _lid_alert_emitted is already True (deduplication on client side)")
+                    print(f"[PI AGENT] EMIT SKIPPED: eventId={current_lid_id} is already emitted")
 
             sio.emit('device:telemetry', payload_a, callback=on_a_ack)
             if a_ack_received.wait(timeout=3.0):

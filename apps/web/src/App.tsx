@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, LoginPage, ProtectedRoute } from './auth';
 import { useAuth, type RoleName } from './auth-context';
@@ -79,7 +79,32 @@ function ErrorPage({ code, title, description }: { code: string; title: string; 
 
 function LidAlertBanner() {
   const { socket } = useRealtime();
-  const [hasLidAlert, setHasLidAlert] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastEventRef = useRef<string | null>(null);
+
+  const triggerAlert = useCallback((eventId?: string) => {
+    if (eventId && lastEventRef.current === eventId && timerRef.current) {
+      return;
+    }
+    if (eventId) {
+      lastEventRef.current = eventId;
+    }
+
+    // 1. Hiển thị banner ngay lập tức
+    setVisible(true);
+
+    // 2. Nếu đang có bộ đếm 10s chạy dở (sự kiện lỗi mới đến khi đang hiển thị), đặt lại bộ đếm 10s
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+
+    // 3. Tự động ẩn banner sau đúng 10 giây (10,000ms)
+    timerRef.current = setTimeout(() => {
+      setVisible(false);
+      timerRef.current = null;
+    }, 10000);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -87,24 +112,32 @@ function LidAlertBanner() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (mounted && (data?.data?.lidAlert || data?.lidAlert)) {
-          setHasLidAlert(true);
+          triggerAlert('initial-status');
         }
       })
       .catch(() => {});
     return () => {
       mounted = false;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
     };
-  }, []);
+  }, [triggerAlert]);
 
   useEffect(() => {
     if (!socket) return;
-    const onLidAlert = () => setHasLidAlert(true);
+    const onLidAlert = (payload: any) => {
+      triggerAlert(payload?.eventId || payload?.timestamp || String(Date.now()));
+    };
     const onHeartbeat = (payload: any) => {
-      if (payload?.lidAlert) setHasLidAlert(true);
+      // Chỉ kích hoạt nếu có lidAlertId mới
+      if (payload?.lidAlert && payload?.lidAlertId && payload?.lidAlertId !== lastEventRef.current) {
+        triggerAlert(payload.lidAlertId);
+      }
     };
     const onAlertCreated = (payload: any) => {
       if (payload?.message === 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!') {
-        setHasLidAlert(true);
+        triggerAlert(payload?.id || payload?.createdAt || String(Date.now()));
       }
     };
 
@@ -117,9 +150,9 @@ function LidAlertBanner() {
       socket.off('device:heartbeat', onHeartbeat);
       socket.off('alert:created', onAlertCreated);
     };
-  }, [socket]);
+  }, [socket, triggerAlert]);
 
-  if (!hasLidAlert) return null;
+  if (!visible) return null;
 
   return (
     <div className="system-lid-alert-bar" role="alert">
@@ -136,15 +169,10 @@ function AppShell() {
   const [collapsed, setCollapsed] = useState(false);
 
   // Danh sách route hiển thị trên navigation:
-  // Tất cả các trang Dashboard đều công khai; trang Quản lý người dùng chỉ hiển thị cho ADMIN
-  const visibleRoutes = appRoutes.filter((route) => {
-    if (route.path === '/users') {
-      return user?.role === 'ADMIN';
-    }
-    return true;
-  });
+  // Chỉ giữ lại 4 mục: Tổng quan, Thùng rác, Cảnh báo, Cài đặt
+  const visibleRoutes = appRoutes.filter((route) => route.showInNav);
 
-  const currentRoute = [...visibleRoutes].sort((a, b) => b.path.length - a.path.length).find((route) => location.pathname.startsWith(route.path));
+  const currentRoute = [...appRoutes].sort((a, b) => b.path.length - a.path.length).find((route) => location.pathname.startsWith(route.path));
 
   const icons: Record<string, React.ReactNode> = {
     '/dashboard': <IconGrid />,

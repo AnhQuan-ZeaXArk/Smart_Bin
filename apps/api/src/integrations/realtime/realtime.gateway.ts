@@ -1,5 +1,6 @@
 import { Server } from 'socket.io';
 import type { Server as NodeHttpServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { AlertSeverity, AlertType, DeviceType } from '@prisma/client';
@@ -677,22 +678,27 @@ export class RealtimeGateway {
       console.log('[RealtimeGateway] [LID ALERT] Demo mode: alert stored in RAM/DemoService');
     }
 
-    // 2. Deduplication check cho việc broadcast alert:created
+    const payloadObj = (payload && typeof payload === 'object') ? (payload as Record<string, any>) : {};
+    const eventId = payloadObj.eventId || payloadObj.id || randomUUID();
+    const eventTimestamp = payloadObj.timestamp || createdAt;
+
+    const alertEvent = {
+      eventId,
+      stationCode: 'STATION_A',
+      message,
+      lidAlert: true,
+      timestamp: eventTimestamp
+    };
+
+    // 2. Phát sự kiện chuyên biệt device:lid:alert tới tất cả client (cho phép Frontend nhận diện từng lần lỗi mới và reset timer 10s)
+    console.log(`[RealtimeGateway] [LID ALERT] Broadcasting realtime event device:lid:alert (eventId=${eventId}, timestamp=${eventTimestamp}) to all clients`);
+    this.io.emit(REALTIME_EVENTS.LID_ALERT, alertEvent);
+
+    // 3. Deduplication check cho việc broadcast alert:created
     if (alreadyActive) {
       console.log('[RealtimeGateway] [LID ALERT] Deduplication: alert:created already emitted previously; skipping duplicate broadcast to prevent multiple UI notifications.');
       return;
     }
-
-    const alertEvent = {
-      stationCode: 'STATION_A',
-      message,
-      lidAlert: true,
-      timestamp: createdAt
-    };
-
-    // 3. Phát sự kiện chuyên biệt device:lid:alert tới tất cả client
-    console.log('[RealtimeGateway] [LID ALERT] Broadcasting realtime event device:lid:alert to all clients');
-    this.io.emit(REALTIME_EVENTS.LID_ALERT, alertEvent);
 
     // 4. Đồng thời phát cảnh báo hệ thống alert:created (không gắn mã thùng, tên thùng hoặc thiết bị)
     console.log('[RealtimeGateway] [LID ALERT] Broadcasting realtime event alert:created to all clients');

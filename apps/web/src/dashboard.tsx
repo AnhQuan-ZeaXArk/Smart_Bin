@@ -858,7 +858,6 @@ export function AlertsPage() {
   const { socket } = useRealtime();
   const [alerts, setAlerts] = useState<DashboardData['alerts']>([]);
   const [filter, setFilter] = useState<'ALL' | 'CRITICAL' | 'WARNING' | 'INFO'>('ALL');
-  const [resolutionFilter, setResolutionFilter] = useState<'ALL' | 'OPEN' | 'RESOLVED'>('ALL');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -978,10 +977,8 @@ export function AlertsPage() {
   }, [socket]);
 
   const visibleAlerts = useMemo(() => alerts.filter((alert) => {
-    const matchesSeverity = filter === 'ALL' || alert.severity === filter;
-    const matchesResolution = resolutionFilter === 'ALL' || (resolutionFilter === 'RESOLVED' ? Boolean(alert.isResolved) : !alert.isResolved);
-    return matchesSeverity && matchesResolution;
-  }), [alerts, filter, resolutionFilter]);
+    return filter === 'ALL' || alert.severity === filter;
+  }), [alerts, filter]);
   const refreshAlerts = () => { setLoading(true); setError(''); setRefreshKey((value) => value + 1); };
 
   return (
@@ -990,21 +987,20 @@ export function AlertsPage() {
         <div>
           <div className="eyebrow">EVENT MONITOR</div>
           <h1>Trung tâm cảnh báo</h1>
-          <p>Theo dõi sự kiện hệ thống và trạng thái xử lý theo thời gian thực.</p>
+          <p>Theo dõi sự kiện và cảnh báo hệ thống theo thời gian thực.</p>
         </div>
         <button className="button-secondary refresh-button" type="button" onClick={refreshAlerts} disabled={loading}><IconRefresh /> Làm mới</button>
       </div>
       <div className="alert-filter-tabs" role="tablist" aria-label="Lọc theo mức độ cảnh báo">
         {(['ALL', 'CRITICAL', 'WARNING', 'INFO'] as const).map((severity) => <button key={severity} type="button" role="tab" aria-selected={filter === severity} className={filter === severity ? 'active' : ''} onClick={() => setFilter(severity)}>{severity === 'ALL' ? 'Tất cả' : translateAlertSeverity(severity)}<span>{severity === 'ALL' ? alerts.length : alerts.filter((alert) => alert.severity === severity).length}</span></button>)}
       </div>
-      <div className="filter-bar alert-resolution-filter"><label>Trạng thái xử lý<select value={resolutionFilter} onChange={(event) => setResolutionFilter(event.target.value as 'ALL' | 'OPEN' | 'RESOLVED')}><option value="ALL">Tất cả</option><option value="OPEN">Chưa xử lý</option><option value="RESOLVED">Đã xử lý</option></select></label></div>
       {loading ? <div className="skeleton-list"><div /><div /><div /></div>
         : error ? <div className="state-panel state-panel--error"><IconActivity /><strong>Không thể tải cảnh báo</strong><span>{error}</span><button className="button-secondary" type="button" onClick={refreshAlerts}>Thử lại</button></div>
           : visibleAlerts.length === 0 ? <div className="state-panel"><IconActivity /><strong>{alerts.length ? 'Không có cảnh báo trong nhóm này' : 'Chưa có cảnh báo'}</strong><span>{alerts.length ? 'Chọn bộ lọc khác để xem sự kiện.' : 'Các sự kiện vận hành sẽ hiển thị tại đây khi được ghi nhận.'}</span></div>
             : (
         <div className="alert-list alert-list--monitor">
           {visibleAlerts.map((alert) => (
-            <article className={`alert-row alert-row--${alert.severity.toLowerCase()}${alert.isResolved ? ' alert-row--resolved' : ''}${recentAlertIds.has(alert.id) ? ' alert-row--realtime-new' : ''}`} key={alert.id} onAnimationEnd={() => {
+            <article className={`alert-row alert-row--${alert.severity.toLowerCase()}${recentAlertIds.has(alert.id) ? ' alert-row--realtime-new' : ''}`} key={alert.id} onAnimationEnd={() => {
               if (recentAlertIds.has(alert.id)) setRecentAlertIds((current) => {
                 const next = new Set(current);
                 next.delete(alert.id);
@@ -1015,7 +1011,6 @@ export function AlertsPage() {
               <strong>{alert.message === LID_ALERT_MESSAGE ? 'Hệ thống' : (alert.bin?.binCode ?? (alert.deviceId || 'Hệ thống'))}</strong>
               <span>{alert.message}</span>
               <small>{ago(alert.createdAt)}</small>
-              <span className={`alert-resolution ${alert.isResolved ? 'is-resolved' : ''}`}>{alert.isResolved ? 'Đã xử lý' : 'Chưa xử lý'}</span>
             </article>
           ))}
         </div>

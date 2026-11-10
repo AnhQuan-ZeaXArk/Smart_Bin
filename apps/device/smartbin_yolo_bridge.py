@@ -190,7 +190,9 @@ def publish_yolo_state(
     camera: str = 'CONNECTED',
     sensors: Optional[Dict[str, Any]] = None,
     collection_events: Optional[List[Dict[str, Any]]] = None,
-    lid_alert: bool = False
+    lid_alert: bool = False,
+    lid_alert_id: Optional[str] = None,
+    lid_alert_timestamp: Optional[str] = None
 ) -> bool:
     """Write one complete state to a same-directory temporary file and replace atomically."""
     if status not in ('RUNNING', 'STOPPED') or camera not in ('CONNECTED', 'DISCONNECTED'):
@@ -217,6 +219,10 @@ def publish_yolo_state(
         }
     }
     state['lidAlert'] = bool(lid_alert)
+    if lid_alert_id:
+        state['lidAlertId'] = str(lid_alert_id)
+    if lid_alert_timestamp:
+        state['lidAlertTimestamp'] = str(lid_alert_timestamp)
     if lid_alert:
         logger.info("[IPC PRODUCER] Wrote state with field 'lidAlert': true to %s", STATE_FILE_PATH)
     sanitized_sensors = _sanitize_sensors_for_publish(sensors)
@@ -450,7 +456,7 @@ def read_yolo_state() -> Dict[str, Any]:
         return _unavailable_state()
 
     required_keys = {'status', 'camera', 'updatedAtEpoch', 'detection'}
-    optional_keys = {'sensors', 'collectionEvents', 'lidAlert'}
+    optional_keys = {'sensors', 'collectionEvents', 'lidAlert', 'lidAlertId', 'lidAlertTimestamp'}
     allowed_keys = required_keys | optional_keys
     if not isinstance(data, dict):
         return _unavailable_state()
@@ -513,6 +519,8 @@ def read_yolo_state() -> Dict[str, Any]:
     validated_collection_events = _extract_valid_collection_events(data)
 
     lid_alert_val = bool(data.get('lidAlert', False))
+    lid_alert_id_val = str(data['lidAlertId']) if isinstance(data.get('lidAlertId'), str) else None
+    lid_alert_time_val = str(data['lidAlertTimestamp']) if isinstance(data.get('lidAlertTimestamp'), str) else None
     if lid_alert_val:
         logger.info("[IPC CONSUMER] Read state from %s with field 'lidAlert': true", STATE_FILE_PATH)
 
@@ -526,18 +534,24 @@ def read_yolo_state() -> Dict[str, Any]:
         },
         'sensors': validated_sensors,
         'collectionEvents': validated_collection_events,
-        'lidAlert': lid_alert_val
+        'lidAlert': lid_alert_val,
+        'lidAlertId': lid_alert_id_val,
+        'lidAlertTimestamp': lid_alert_time_val
     }
 
 
 def _unavailable_state(data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     events = _extract_valid_collection_events(data) if isinstance(data, dict) else []
     lid = bool(data.get('lidAlert', False)) if isinstance(data, dict) else False
+    lid_id = str(data['lidAlertId']) if isinstance(data, dict) and isinstance(data.get('lidAlertId'), str) else None
+    lid_time = str(data['lidAlertTimestamp']) if isinstance(data, dict) and isinstance(data.get('lidAlertTimestamp'), str) else None
     return {
         'yoloStatus': 'STOPPED',
         'cameraStatus': 'DISCONNECTED',
         'latestDetection': None,
         'sensors': None,
         'collectionEvents': events,
-        'lidAlert': lid
+        'lidAlert': lid,
+        'lidAlertId': lid_id,
+        'lidAlertTimestamp': lid_time
     }
