@@ -627,7 +627,11 @@ export class RealtimeGateway {
       try {
         const existing = await prisma.alert.findFirst({
           where: {
-            message,
+            OR: [
+              { message: RealDeviceService.LID_ALERT_MESSAGE },
+              { message: RealDeviceService.LID_ALERT_BANNER_MESSAGE },
+              { message: 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!' }
+            ],
             isResolved: false
           },
           orderBy: { createdAt: 'desc' }
@@ -692,7 +696,9 @@ export class RealtimeGateway {
     const alertEvent = {
       eventId,
       stationCode: 'STATION_A',
-      message,
+      stationName: 'Trạm A',
+      message: RealDeviceService.LID_ALERT_BANNER_MESSAGE,
+      description: RealDeviceService.LID_ALERT_DESCRIPTION,
       lidAlert: true,
       timestamp: eventTimestamp
     };
@@ -707,13 +713,13 @@ export class RealtimeGateway {
       return;
     }
 
-    // 4. Đồng thời phát cảnh báo hệ thống alert:created (không gắn mã thùng, tên thùng hoặc thiết bị)
+    // 4. Đồng thời phát cảnh báo hệ thống alert:created (gắn đúng Trạm A, không tự suy diễn mã thùng A1, A2, A3)
     console.log('[RealtimeGateway] [LID ALERT] Broadcasting realtime event alert:created to all clients');
     this.emitAlert({
       id: RealDeviceService.LID_ALERT_ID,
       type: AlertType.SENSOR_ABNORMAL,
       severity: AlertSeverity.CRITICAL,
-      message,
+      message: RealDeviceService.LID_ALERT_MESSAGE,
       binId: null,
       deviceId: null,
       isResolved: false,

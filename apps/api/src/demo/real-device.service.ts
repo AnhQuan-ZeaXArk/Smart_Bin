@@ -93,7 +93,9 @@ export class RealDeviceService {
     esp32: 'DISCONNECTED'
   };
   public static readonly LID_ALERT_ID = 'lid-alert-station-a';
-  public static readonly LID_ALERT_MESSAGE = 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!';
+  public static readonly LID_ALERT_MESSAGE = 'Phát hiện lỗi nắp thùng rác tại Trạm A.';
+  public static readonly LID_ALERT_BANNER_MESSAGE = 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC TẠI TRẠM A!';
+  public static readonly LID_ALERT_DESCRIPTION = 'Thiết bị phát hiện sự cố trong quá trình mở hoặc đóng nắp thùng rác tại Trạm A. Vui lòng kiểm tra cơ cấu nắp và hệ thống servo.';
 
   private aiDetection: AiDetectionResult | null = null;
   private detectionHistory: AiDetectionResult[] = [];
@@ -169,9 +171,12 @@ export class RealDeviceService {
       binId: null,
       bin: null,
       deviceId: null,
+      stationCode: 'STATION_A',
+      stationName: 'Trạm A',
       type: 'SENSOR_ABNORMAL' as const,
       severity: 'CRITICAL' as const,
       message: RealDeviceService.LID_ALERT_MESSAGE,
+      description: RealDeviceService.LID_ALERT_DESCRIPTION,
       isResolved: false,
       createdAt: this.lidAlertCreatedAt || new Date().toISOString(),
       resolvedAt: null

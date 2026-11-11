@@ -119,7 +119,7 @@ export function LidAlertBanner() {
   return (
     <div className="system-lid-alert-bar" role="alert">
       <IconAlertTriangle />
-      <span>CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!</span>
+      <span>CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC TẠI TRẠM A!</span>
     </div>
   );
 }

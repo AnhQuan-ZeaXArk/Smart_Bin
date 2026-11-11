@@ -525,7 +525,7 @@ export function createDefaultStationBBins(): (Bin & { distanceCm: number | null;
     {
       id: 'bin_station_b_recyclable_id',
       binCode: 'RECYCLABLE',
-      name: 'Rác tái chế',
+      name: 'Thùng rác tái chế',
       location: 'Khuôn viên phía Đông',
       latitude: null,
       longitude: null,
@@ -547,7 +547,7 @@ export function createDefaultStationBBins(): (Bin & { distanceCm: number | null;
     {
       id: 'bin_station_b_organic_id',
       binCode: 'ORGANIC',
-      name: 'Rác hữu cơ',
+      name: 'Thùng rác hữu cơ',
       location: 'Khuôn viên phía Đông',
       latitude: null,
       longitude: null,
@@ -569,7 +569,7 @@ export function createDefaultStationBBins(): (Bin & { distanceCm: number | null;
     {
       id: 'bin_station_b_non_recyclable_id',
       binCode: 'NON_RECYCLABLE',
-      name: 'Rác không tái chế',
+      name: 'Thùng rác không tái chế',
       location: 'Khuôn viên phía Đông',
       latitude: null,
       longitude: null,
@@ -738,7 +738,7 @@ export function groupBinsByStation<T extends Bin & { distanceCm?: number | null;
       const placeholderBin = {
         id: `uninstalled-${st.code}-${key}`,
         binCode: key,
-        name: key === 'ORGANIC' ? 'Rác hữu cơ' : key === 'RECYCLABLE' ? 'Rác tái chế' : 'Rác không tái chế',
+        name: key === 'ORGANIC' ? 'Thùng rác hữu cơ' : key === 'RECYCLABLE' ? 'Thùng rác tái chế' : 'Thùng rác không tái chế',
         location: st.location || `Ngăn ${WASTE_CATEGORY_LABEL[key]}`,
         latitude: null,
         longitude: null,

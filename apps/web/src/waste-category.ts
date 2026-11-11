@@ -5,14 +5,20 @@ export type WasteCategoryKey = 'ORGANIC' | 'RECYCLABLE' | 'NON_RECYCLABLE';
 export const WASTE_CATEGORY_ORDER: WasteCategoryKey[] = ['ORGANIC', 'RECYCLABLE', 'NON_RECYCLABLE'];
 
 export const WASTE_CATEGORY_LABEL: Record<WasteCategoryKey, string> = {
-  ORGANIC: 'Rác hữu cơ',
-  RECYCLABLE: 'Rác tái chế',
-  NON_RECYCLABLE: 'Rác không tái chế'
+  ORGANIC: 'Thùng rác hữu cơ',
+  RECYCLABLE: 'Thùng rác tái chế',
+  NON_RECYCLABLE: 'Thùng rác không tái chế'
+};
+
+export const WASTE_CATEGORY_SHORT_LABEL: Record<WasteCategoryKey, string> = {
+  ORGANIC: 'Hữu cơ',
+  RECYCLABLE: 'Tái chế',
+  NON_RECYCLABLE: 'Không tái chế'
 };
 
 // Thứ tự kiểm tra quan trọng: "không tái chế" phải được thử trước "tái chế" vì chuỗi này chứa từ khóa của cả hai.
 const WASTE_CATEGORY_KEYWORDS: Partial<Record<WasteCategoryKey, RegExp>> = {
-  NON_RECYCLABLE: /khong[\s-]?tai[\s-]?che|không tái chế|non[\s-]?recycl/i,
+  NON_RECYCLABLE: /khong[\s-]?tai[\s-]?che|không tái chế|non[\s-]?recycl|còn lại|con lai/i,
   ORGANIC: /huu[\s-]?co|hữu cơ|organic/i,
   RECYCLABLE: /tai[\s-]?che|tái chế|recycl/i
 };

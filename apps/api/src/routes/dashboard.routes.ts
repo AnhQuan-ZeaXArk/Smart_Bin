@@ -8,14 +8,23 @@ import { demoService } from '../demo/demo.service.js';
 import { RealDeviceService, realDeviceService } from '../demo/real-device.service.js';
 import { ensureStationBBinsIfMissing, syncBinsWithRealDevice } from '../services/bin-sync.service.js';
 
-function mergeAndDeduplicateLidAlert<T extends { id: string; message: string; isResolved: boolean; binId?: string | null; bin?: any; deviceId?: string | null }>(
+function isLidAlert(msg: string): boolean {
+  return (
+    msg === RealDeviceService.LID_ALERT_MESSAGE ||
+    msg === RealDeviceService.LID_ALERT_BANNER_MESSAGE ||
+    msg.includes('LỖI NẮP') ||
+    msg.includes('lỗi nắp')
+  );
+}
+
+function mergeAndDeduplicateLidAlert<T extends { id: string; message: string; isResolved: boolean; binId?: string | null; bin?: any; deviceId?: string | null; stationCode?: string; stationName?: string }>(
   dbAlerts: T[]
 ): T[] {
   const result: T[] = [];
   let seenUnresolvedLidAlert = false;
 
   for (const item of dbAlerts) {
-    if (item.message === RealDeviceService.LID_ALERT_MESSAGE && !item.isResolved) {
+    if (isLidAlert(item.message) && !item.isResolved) {
       if (seenUnresolvedLidAlert) {
         console.log(`[DashboardRoutes] [LID ALERT] mergeAndDeduplicate: omitting duplicate DB alert id=${item.id}`);
         continue;
@@ -25,7 +34,10 @@ function mergeAndDeduplicateLidAlert<T extends { id: string; message: string; is
         ...item,
         binId: null,
         bin: null,
-        deviceId: null
+        deviceId: null,
+        stationCode: 'STATION_A',
+        stationName: 'Trạm A',
+        message: RealDeviceService.LID_ALERT_MESSAGE
       });
     } else {
       result.push(item);

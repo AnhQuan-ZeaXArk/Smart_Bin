@@ -548,13 +548,19 @@ export function BinDetailPage() {
   const vm = computeBinViewModel(bin, clock);
   const binStationCode = resolveBinStationCode(bin);
 
+  const displayBinName = bin.name
+    ? bin.name.replace(/Rác còn lại|Còn lại|Rác không tái chế/gi, 'Thùng rác không tái chế')
+              .replace(/^Rác tái chế/i, 'Thùng rác tái chế')
+              .replace(/^Rác hữu cơ/i, 'Thùng rác hữu cơ')
+    : (bin.binCode === 'NON_RECYCLABLE' ? 'Thùng rác không tái chế' : bin.binCode === 'RECYCLABLE' ? 'Thùng rác tái chế' : 'Thùng rác hữu cơ');
+
   return (
     <section className="page detail-page">
       <Link className="back-link" to="/bins">← Quản lý thùng rác</Link>
       <div className="page-heading detail-heading">
         <div>
           <div className="eyebrow">THÔNG TIN THIẾT BỊ • {binStationCode}</div>
-          <h1>{bin.name}</h1>
+          <h1>{displayBinName}</h1>
           <p><span className="device-id-code">{binStationCode} • {bin.binCode}</span><span className="detail-location">{bin.location}</span></p>
         </div>
         <StatusBadge status={bin.status} isValidReading={vm.isValidReading} isUninstalled={Boolean(vm.isUninstalled)} labelOverride={vm.statusBadgeText} />

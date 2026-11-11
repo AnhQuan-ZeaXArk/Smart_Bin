@@ -650,16 +650,15 @@ export function DashboardPage() {
         <RealDeviceCard refreshTrigger={refreshKey} />
       </section>
 
-      {/* Lightbox Modal chi tiết trạm */}
+      {/* Modal Bản đồ vị trí tổng thể SMARTBIN (khoanh vùng Trạm A / Trạm B) */}
       {activeModalStation && (
-        <StationMapModal
-          stationCode={activeModalStation}
-          group={stationGroups.find((g) => g.code === activeModalStation)}
+        <OverviewMapModal
+          initialStationCode={activeModalStation}
+          stationGroups={stationGroups}
           onClose={() => setActiveModalStation(null)}
-          onNavigate={() => {
-            const target = activeModalStation;
+          onNavigate={(targetStationCode) => {
             setActiveModalStation(null);
-            handleScrollToStation(target);
+            handleScrollToStation(targetStationCode);
           }}
         />
       )}
@@ -674,18 +673,19 @@ const BIN_MAPPINGS: Record<
     key: WasteCategoryKey;
     type: 'recycle' | 'organic' | 'general';
     label: string;
+    fullName: string;
     desc: string;
   }>
 > = {
   STATION_A: [
-    { code: 'A1', key: 'RECYCLABLE', type: 'recycle', label: 'Tái chế', desc: 'Giấy, nhựa, kim loại' },
-    { code: 'A2', key: 'ORGANIC', type: 'organic', label: 'Hữu cơ', desc: 'Thức ăn, lá cây, ...' },
-    { code: 'A3', key: 'NON_RECYCLABLE', type: 'general', label: 'Còn lại', desc: 'Rác sinh hoạt khác' }
+    { code: 'A1', key: 'RECYCLABLE', type: 'recycle', label: 'Tái chế', fullName: 'Thùng rác tái chế', desc: 'Giấy, nhựa, kim loại' },
+    { code: 'A2', key: 'ORGANIC', type: 'organic', label: 'Hữu cơ', fullName: 'Thùng rác hữu cơ', desc: 'Thức ăn, lá cây, ...' },
+    { code: 'A3', key: 'NON_RECYCLABLE', type: 'general', label: 'Không tái chế', fullName: 'Thùng rác không tái chế', desc: 'Rác sinh hoạt khác' }
   ],
   STATION_B: [
-    { code: 'B1', key: 'RECYCLABLE', type: 'recycle', label: 'Tái chế', desc: 'Giấy, nhựa, kim loại' },
-    { code: 'B2', key: 'ORGANIC', type: 'organic', label: 'Hữu cơ', desc: 'Thức ăn, lá cây, ...' },
-    { code: 'B3', key: 'NON_RECYCLABLE', type: 'general', label: 'Còn lại', desc: 'Rác sinh hoạt khác' }
+    { code: 'B1', key: 'RECYCLABLE', type: 'recycle', label: 'Tái chế', fullName: 'Thùng rác tái chế', desc: 'Giấy, nhựa, kim loại' },
+    { code: 'B2', key: 'ORGANIC', type: 'organic', label: 'Hữu cơ', fullName: 'Thùng rác hữu cơ', desc: 'Thức ăn, lá cây, ...' },
+    { code: 'B3', key: 'NON_RECYCLABLE', type: 'general', label: 'Không tái chế', fullName: 'Thùng rác không tái chế', desc: 'Rác sinh hoạt khác' }
   ]
 };
 
@@ -734,7 +734,7 @@ function StationMapCard({
       <div
         className="station-map-card__image-wrap"
         onClick={onZoom}
-        title="Nhấp để phóng to sơ đồ và xem thông tin chi tiết"
+        title="Nhấp để mở bản đồ tổng thể và khoanh vùng vị trí trạm"
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
@@ -752,7 +752,7 @@ function StationMapCard({
         />
         <div className="station-map-card__overlay">
           <span className="station-map-card__zoom-pill">
-            🔍 Phóng to &amp; Xem chi tiết
+            🗺 Mở bản đồ tổng thể (Khoanh vùng)
           </span>
         </div>
       </div>
@@ -768,7 +768,7 @@ function StationMapCard({
             <div
               key={def.code}
               className="station-map-bin-chip"
-              title={`${def.code}: ${def.label} (${def.desc})`}
+              title={`${def.code}: ${def.fullName} (${def.desc})`}
             >
               <div className="station-map-bin-chip__top">
                 <span className="station-map-bin-chip__code">
@@ -790,8 +790,9 @@ function StationMapCard({
           type="button"
           className="station-map-action-btn station-map-action-btn--secondary"
           onClick={onZoom}
+          title="Mở bản đồ mô phỏng tổng thể khu vực SMARTBIN"
         >
-          🔍 Xem chi tiết sơ đồ
+          🗺 Bản đồ tổng thể
         </button>
         <button
           type="button"
@@ -805,24 +806,28 @@ function StationMapCard({
   );
 }
 
-function StationMapModal({
-  stationCode,
-  group,
+function OverviewMapModal({
+  initialStationCode,
+  stationGroups,
   onClose,
   onNavigate
 }: {
-  stationCode: 'STATION_A' | 'STATION_B';
-  group?: StationGroup<DashboardBin>;
+  initialStationCode: 'STATION_A' | 'STATION_B';
+  stationGroups: StationGroup<DashboardBin>[];
   onClose: () => void;
-  onNavigate: () => void;
+  onNavigate: (stationCode: string) => void;
 }) {
-  const isStationA = stationCode === 'STATION_A';
-  const stationName = isStationA ? 'Trạm A' : 'Trạm B';
-  const binPrefix = isStationA ? 'A' : 'B';
-  const imageSrc = isStationA ? '/station-a-map.png' : '/station-b-map.png';
-  const imageAlt = `Sơ đồ bố trí chi tiết ${stationName}`;
-  const binDefs = BIN_MAPPINGS[stationCode];
+  const [selectedStation, setSelectedStation] = useState<'STATION_A' | 'STATION_B'>(initialStationCode);
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
+
+  const isStationA = selectedStation === 'STATION_A';
+  const group = stationGroups.find((g) => g.code === selectedStation);
+  const binDefs = BIN_MAPPINGS[selectedStation];
   const status = group?.status ?? 'OFFLINE';
+
+  const handleZoomIn = () => setZoomLevel((z) => Math.min(1.6, +(z + 0.2).toFixed(2)));
+  const handleZoomOut = () => setZoomLevel((z) => Math.max(0.9, +(z - 0.2).toFixed(2)));
+  const handleResetZoom = () => setZoomLevel(1);
 
   return (
     <div
@@ -830,40 +835,196 @@ function StationMapModal({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label={`Sơ đồ chi tiết ${stationName}`}
+      aria-label="Sơ đồ bản đồ tổng thể hệ thống SMARTBIN"
     >
-      <div className="station-modal-content" onClick={(e) => e.stopPropagation()}>
-        <div className="station-modal-header">
-          <div className="station-modal-title-wrap">
-            <span className={`station-code-chip ${isStationA ? 'station-code-chip--a' : ''}`}>
-              {stationCode}
-            </span>
-            <h3 className="station-modal-title">
-              Sơ đồ bố trí chi tiết {stationName} ({binPrefix}1 – {binPrefix}3)
-            </h3>
-            <span className={`station-status-badge status-badge--${status.toLowerCase()}`}>
-              <span className="status-dot" />
-              {status === 'ONLINE' ? 'Trực tuyến' : status === 'WARNING' ? 'Cảnh báo' : 'Mất kết nối'}
-            </span>
+      <div className="overview-modal-content" onClick={(e) => e.stopPropagation()}>
+        {/* Modal Header */}
+        <div className="overview-modal-header">
+          <div className="overview-modal-header-left">
+            <h3 className="overview-modal-title">Sơ đồ vị trí tổng thể SMARTBIN</h3>
+            <div className="overview-station-tabs" role="tablist" aria-label="Chọn trạm cần xem">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={isStationA}
+                className={`overview-station-tab ${isStationA ? 'overview-station-tab--active-a' : ''}`}
+                onClick={() => setSelectedStation('STATION_A')}
+              >
+                <span className="station-map-bin-chip__indicator station-map-bin-chip__indicator--organic" />
+                TRẠM A (Cổng Tây)
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={!isStationA}
+                className={`overview-station-tab ${!isStationA ? 'overview-station-tab--active-b' : ''}`}
+                onClick={() => setSelectedStation('STATION_B')}
+              >
+                <span className="station-map-bin-chip__indicator station-map-bin-chip__indicator--recycle" />
+                TRẠM B (Cổng Đông)
+              </button>
+            </div>
           </div>
-          <button
-            type="button"
-            className="station-modal-close-btn"
-            onClick={onClose}
-            aria-label="Đóng"
-          >
-            <IconClose />
-          </button>
+
+          <div className="overview-header-controls">
+            <div className="overview-zoom-controls">
+              <button
+                type="button"
+                className="overview-zoom-btn"
+                onClick={handleZoomOut}
+                title="Thu nhỏ map"
+                disabled={zoomLevel <= 0.9}
+              >
+                −
+              </button>
+              <span className="overview-zoom-text">{Math.round(zoomLevel * 100)}%</span>
+              <button
+                type="button"
+                className="overview-zoom-btn"
+                onClick={handleZoomIn}
+                title="Phóng to map"
+                disabled={zoomLevel >= 1.6}
+              >
+                +
+              </button>
+              {zoomLevel !== 1 && (
+                <button
+                  type="button"
+                  className="overview-zoom-btn overview-zoom-btn--reset"
+                  onClick={handleResetZoom}
+                  title="Đặt lại tỉ lệ 100%"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              className="station-modal-close-btn"
+              onClick={onClose}
+              aria-label="Đóng bản đồ"
+            >
+              <IconClose />
+            </button>
+          </div>
         </div>
 
-        <div className="station-modal-body">
-          <div className="station-modal-img-wrap">
-            <img src={imageSrc} alt={imageAlt} className="station-modal-img" />
+        {/* Viewport with Overview Map Canvas */}
+        <div className="overview-modal-viewport">
+          <div
+            className="overview-map-canvas"
+            style={{
+              transform: `scale(${zoomLevel})`,
+              transformOrigin: isStationA ? '25% 45%' : '75% 45%'
+            }}
+          >
+            <img
+              src="/smartbin-map-overview.png"
+              alt="Sơ đồ bố trí trạm SMARTBIN toàn hệ thống"
+              className="overview-map-base-img"
+            />
+
+            {/* Target Region: Trạm A */}
+            <div
+              className={`overview-target-region ${
+                isStationA ? 'overview-target-region--active-a' : 'overview-target-region--dimmed'
+              }`}
+              style={{
+                left: '6.4%',
+                top: '32.0%',
+                width: '26.6%',
+                height: '23.8%'
+              }}
+              onClick={() => {
+                if (!isStationA) setSelectedStation('STATION_A');
+              }}
+              title={isStationA ? 'Khu vực Trạm A đang được chọn' : 'Nhấp để chọn Trạm A'}
+            >
+              {isStationA ? (
+                <>
+                  <div className="overview-station-floating-label overview-station-floating-label--a">
+                    📍 TRẠM A (ĐANG CHỌN)
+                  </div>
+                  <div className="overview-bin-badges-row">
+                    <span className="overview-bin-badge overview-bin-badge--recycle">A1: Tái chế</span>
+                    <span className="overview-bin-badge overview-bin-badge--organic">A2: Hữu cơ</span>
+                    <span className="overview-bin-badge overview-bin-badge--non-recyclable">A3: Không tái chế</span>
+                  </div>
+                </>
+              ) : (
+                <span className="overview-dim-hint">Nhấp để chọn Trạm A</span>
+              )}
+            </div>
+
+            {/* Target Region: Trạm B */}
+            <div
+              className={`overview-target-region ${
+                !isStationA ? 'overview-target-region--active-b' : 'overview-target-region--dimmed'
+              }`}
+              style={{
+                left: '69.5%',
+                top: '32.0%',
+                width: '26.6%',
+                height: '23.8%'
+              }}
+              onClick={() => {
+                if (isStationA) setSelectedStation('STATION_B');
+              }}
+              title={!isStationA ? 'Khu vực Trạm B đang được chọn' : 'Nhấp để chọn Trạm B'}
+            >
+              {!isStationA ? (
+                <>
+                  <div className="overview-station-floating-label overview-station-floating-label--b">
+                    📍 TRẠM B (ĐANG CHỌN)
+                  </div>
+                  <div className="overview-bin-badges-row">
+                    <span className="overview-bin-badge overview-bin-badge--recycle">B1: Tái chế</span>
+                    <span className="overview-bin-badge overview-bin-badge--organic">B2: Hữu cơ</span>
+                    <span className="overview-bin-badge overview-bin-badge--non-recyclable">B3: Không tái chế</span>
+                  </div>
+                </>
+              ) : (
+                <span className="overview-dim-hint">Nhấp để chọn Trạm B</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Modal Bottom: Legend & Selected Station Summary */}
+        <div className="overview-modal-bottom">
+          <div className="overview-legend-row">
+            <span style={{ fontWeight: 700, color: '#f1f5f9' }}>Chú giải quy ước màu:</span>
+            <div className="overview-legend-items">
+              <span className="overview-legend-item">
+                <span className="overview-legend-dot overview-legend-dot--recycle" />
+                <strong>Rác tái chế</strong> (Xanh dương • Giấy, nhựa, kim loại)
+              </span>
+              <span className="overview-legend-item">
+                <span className="overview-legend-dot overview-legend-dot--organic" />
+                <strong>Rác hữu cơ</strong> (Xanh lá • Thức ăn, lá cây, ...)
+              </span>
+              <span className="overview-legend-item">
+                <span className="overview-legend-dot overview-legend-dot--non-recyclable" />
+                <strong>Rác không tái chế</strong> (Vàng/cam • Rác sinh hoạt khác)
+              </span>
+            </div>
           </div>
 
-          <div className="station-modal-bins-section">
-            <h4 className="station-modal-bins-heading">Danh sách 3 thùng rác tại {stationName}:</h4>
-            <div className="station-modal-bins-list">
+          <div className="overview-selected-station-card">
+            <div className="overview-station-info-meta">
+              <span className={`station-code-chip ${isStationA ? 'station-code-chip--a' : ''}`}>
+                {selectedStation}
+              </span>
+              <strong style={{ color: '#f1f5f9', fontSize: '15px' }}>
+                {isStationA ? 'Trạm Thu gom Trung tâm A' : 'Trạm Thu gom Mở rộng B'}
+              </strong>
+              <span className={`station-status-badge status-badge--${status.toLowerCase()}`}>
+                <span className="status-dot" />
+                {status === 'ONLINE' ? 'Trực tuyến' : status === 'WARNING' ? 'Cảnh báo' : 'Mất kết nối'}
+              </span>
+            </div>
+
+            <div className="overview-station-bins-summary">
               {binDefs.map((def) => {
                 const comp = group?.compartments.find((c) => c.key === def.key);
                 const bin = comp?.bin;
@@ -871,60 +1032,24 @@ function StationMapModal({
                 const fillLevel = typeof bin?.currentFillLevel === 'number' ? Math.round(bin.currentFillLevel) : null;
 
                 return (
-                  <div key={def.code} className="station-modal-bin-item">
-                    <div className="station-modal-bin-item__header">
-                      <span className="station-modal-bin-item__title">
-                        <span className={`station-map-bin-chip__indicator station-map-bin-chip__indicator--${def.type}`} />
-                        {def.code} – {def.label}
-                      </span>
-                      <span className="station-modal-bin-item__pct">
-                        {!isInstalled ? 'Chưa lắp' : fillLevel !== null ? `${fillLevel}%` : '—'}
-                      </span>
-                    </div>
-                    <p className="station-modal-bin-item__desc">{def.desc}</p>
-                    {isInstalled && fillLevel !== null && (
-                      <div className="station-modal-bin-item__bar-wrap">
-                        <div
-                          className="station-modal-bin-item__bar"
-                          style={{
-                            width: `${Math.min(100, Math.max(0, fillLevel))}%`,
-                            background: def.type === 'recycle' ? '#38bdf8' : def.type === 'organic' ? '#34d399' : '#facc15'
-                          }}
-                        />
-                      </div>
-                    )}
-                    <div className="station-modal-bin-item__status">
-                      <span>Trạng thái:</span>
-                      <strong>
-                        {!isInstalled
-                          ? 'Sẵn sàng mở rộng'
-                          : bin?.status === 'ONLINE'
-                          ? 'Đang hoạt động'
-                          : 'Mất kết nối'}
-                      </strong>
-                    </div>
-                  </div>
+                  <span key={def.code} className="overview-station-bin-pill" title={`${def.code}: ${def.fullName}`}>
+                    <span className={`station-map-bin-chip__indicator station-map-bin-chip__indicator--${def.type}`} />
+                    <strong>{def.code}:</strong> {def.label} ({!isInstalled ? 'Chưa lắp' : fillLevel !== null ? `${fillLevel}%` : '—'})
+                  </span>
                 );
               })}
             </div>
-          </div>
-        </div>
 
-        <div className="station-modal-footer">
-          <button
-            type="button"
-            className="station-map-action-btn station-map-action-btn--secondary"
-            onClick={onClose}
-          >
-            Đóng
-          </button>
-          <button
-            type="button"
-            className="station-map-action-btn station-map-action-btn--primary"
-            onClick={onNavigate}
-          >
-            Đi đến khu vực giám sát của {stationName} ↓
-          </button>
+            <div className="overview-modal-actions">
+              <button
+                type="button"
+                className="station-map-action-btn station-map-action-btn--primary"
+                onClick={() => onNavigate(selectedStation)}
+              >
+                Đi đến khu vực giám sát của {isStationA ? 'Trạm A' : 'Trạm B'} ↓
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1176,12 +1301,27 @@ export function SensorHistoryPage() {
   );
 }
 
-export const LID_ALERT_ID = 'lid-alert-station-a';
-export const LID_ALERT_MESSAGE = 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!';
+const LID_ALERT_ID = 'lid-alert-station-a';
+const LID_ALERT_MESSAGE = 'Phát hiện lỗi nắp thùng rác tại Trạm A.';
+const LID_ALERT_BANNER_MESSAGE = 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC TẠI TRẠM A!';
+const LID_ALERT_DESCRIPTION =
+  'Thiết bị phát hiện sự cố trong quá trình mở hoặc đóng nắp thùng rác tại Trạm A. Vui lòng kiểm tra cơ cấu nắp và hệ thống servo.';
 
-export function ensureLidAlertInList(current: DashboardAlert[], createdAt?: string): DashboardAlert[] {
+function isLidAlertMessage(msg?: string | null): boolean {
+  if (!msg) return false;
+  return (
+    msg === LID_ALERT_MESSAGE ||
+    msg === LID_ALERT_BANNER_MESSAGE ||
+    msg.includes('LỖI NẮP THÙNG RÁC') ||
+    msg.includes('lỗi nắp thùng rác') ||
+    msg.includes('CẢNH BÁO: PHÁT HIỆN LỖI NẮP') ||
+    (msg.includes('Trạm A') && msg.includes('nắp'))
+  );
+}
+
+function ensureLidAlertInList(current: DashboardAlert[], createdAt?: string): DashboardAlert[] {
   const hasLidAlert = current.some(
-    (item) => item.id === LID_ALERT_ID || (item.message === LID_ALERT_MESSAGE && !item.isResolved)
+    (item) => item.id === LID_ALERT_ID || (isLidAlertMessage(item.message) && !item.isResolved)
   );
   if (hasLidAlert) {
     return current;
@@ -1193,7 +1333,7 @@ export function ensureLidAlertInList(current: DashboardAlert[], createdAt?: stri
     message: LID_ALERT_MESSAGE,
     createdAt: createdAt || new Date().toISOString(),
     bin: null,
-    deviceId: null,
+    deviceId: 'Trạm A',
     isResolved: false,
     resolvedAt: null
   };
@@ -1216,30 +1356,31 @@ export function AlertsPage() {
     getData<{ alerts: DashboardData['alerts'] }>('/api/dashboard/alerts', token)
       .then((data) => {
         if (active) {
-          const hasLid = data.alerts.some((a) => a.message === LID_ALERT_MESSAGE && !a.isResolved);
+          const hasLid = data.alerts.some((a) => isLidAlertMessage(a.message) && !a.isResolved);
           console.log(`[AlertsPage] Fetched /api/dashboard/alerts: ${data.alerts.length} alerts (hasLidAlert=${hasLid})`);
           for (const alert of data.alerts) {
             seenAlertIds.current.add(alert.id);
-            if (alert.message === LID_ALERT_MESSAGE && !alert.isResolved) {
+            if (isLidAlertMessage(alert.message) && !alert.isResolved) {
               seenAlertIds.current.add(LID_ALERT_ID);
             }
           }
           setAlerts((current) => {
             const currentIds = new Set(current.map((alert) => alert.id));
             const hasUnresolvedLid = current.some(
-              (alert) => alert.id === LID_ALERT_ID || (alert.message === LID_ALERT_MESSAGE && !alert.isResolved)
+              (alert) => alert.id === LID_ALERT_ID || (isLidAlertMessage(alert.message) && !alert.isResolved)
             );
             let seenLidInBatch = hasUnresolvedLid;
             const filteredIncoming: DashboardAlert[] = [];
             for (const alert of data.alerts) {
               if (currentIds.has(alert.id)) continue;
-              if (alert.message === LID_ALERT_MESSAGE && !alert.isResolved) {
+              if (isLidAlertMessage(alert.message) && !alert.isResolved) {
                 if (seenLidInBatch) continue;
                 seenLidInBatch = true;
                 filteredIncoming.push({
                   ...alert,
+                  message: LID_ALERT_MESSAGE,
                   bin: null,
-                  deviceId: null
+                  deviceId: 'Trạm A'
                 });
               } else {
                 filteredIncoming.push(alert);
@@ -1270,7 +1411,7 @@ export function AlertsPage() {
     if (!socket) return;
     const onCreated = (alert: DashboardAlert) => {
       console.log('[AlertsPage] Realtime alert:created received:', alert.id, alert.message);
-      if (alert.message === LID_ALERT_MESSAGE && !alert.isResolved) {
+      if (isLidAlertMessage(alert.message) && !alert.isResolved) {
         if (seenAlertIds.current.has(alert.id) || seenAlertIds.current.has(LID_ALERT_ID)) return;
         seenAlertIds.current.add(alert.id);
         seenAlertIds.current.add(LID_ALERT_ID);
@@ -1346,20 +1487,30 @@ export function AlertsPage() {
           : visibleAlerts.length === 0 ? <div className="state-panel"><IconActivity /><strong>{alerts.length ? 'Không có cảnh báo trong nhóm này' : 'Chưa có cảnh báo'}</strong><span>{alerts.length ? 'Chọn bộ lọc khác để xem sự kiện.' : 'Các sự kiện vận hành sẽ hiển thị tại đây khi được ghi nhận.'}</span></div>
             : (
         <div className="alert-list alert-list--monitor">
-          {visibleAlerts.map((alert) => (
-            <article className={`alert-row alert-row--${alert.severity.toLowerCase()}${recentAlertIds.has(alert.id) ? ' alert-row--realtime-new' : ''}`} key={alert.id} onAnimationEnd={() => {
-              if (recentAlertIds.has(alert.id)) setRecentAlertIds((current) => {
-                const next = new Set(current);
-                next.delete(alert.id);
-                return next;
-              });
-            }}>
-              <span className={`badge badge-${badge(alert.severity)}`}>{translateAlertSeverity(alert.severity)}</span>
-              <strong>{alert.message === LID_ALERT_MESSAGE ? 'Hệ thống' : (alert.bin?.binCode ?? (alert.deviceId || 'Hệ thống'))}</strong>
-              <span>{alert.message}</span>
-              <small>{ago(alert.createdAt)}</small>
-            </article>
-          ))}
+          {visibleAlerts.map((alert) => {
+            const isLid = isLidAlertMessage(alert.message);
+            const targetUnit = isLid ? 'Trạm A' : (alert.bin?.binCode ?? (alert.deviceId || 'Hệ thống'));
+            const alertTitle = isLid ? LID_ALERT_MESSAGE : alert.message;
+            return (
+              <article className={`alert-row alert-row--${alert.severity.toLowerCase()}${recentAlertIds.has(alert.id) ? ' alert-row--realtime-new' : ''}`} key={alert.id} onAnimationEnd={() => {
+                if (recentAlertIds.has(alert.id)) setRecentAlertIds((current) => {
+                  const next = new Set(current);
+                  next.delete(alert.id);
+                  return next;
+                });
+              }}>
+                <span className={`badge badge-${badge(alert.severity)}`}>{translateAlertSeverity(alert.severity)}</span>
+                <strong>{targetUnit}</strong>
+                <div className="alert-message-col">
+                  <span className="alert-message-title">{alertTitle}</span>
+                  {isLid && (
+                    <span className="alert-message-desc">{LID_ALERT_DESCRIPTION}</span>
+                  )}
+                </div>
+                <small>{ago(alert.createdAt)}</small>
+              </article>
+            );
+          })}
         </div>
       )}
     </section>
