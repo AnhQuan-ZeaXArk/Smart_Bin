@@ -84,17 +84,20 @@ export function LidAlertBanner() {
   useEffect(() => {
     if (!socket) return;
 
-    const onLidAlert = () => {
+    const onLidAlert = (data?: unknown) => {
+      console.log('[LidAlertBanner] Received realtime event device:lid:alert:', data);
       // 1. Hiển thị banner ngay lập tức khi nhận sự kiện realtime device:lid:alert
       setVisible(true);
 
       // 2. Nếu có lỗi mới trong khi banner đang hiển thị: hủy bộ đếm cũ và bắt đầu lại 10 giây
       if (timerRef.current) {
+        console.log('[LidAlertBanner] Resetting 10s countdown due to new incoming error event.');
         clearTimeout(timerRef.current);
       }
 
       // 3. Hết đúng 10 giây: ẩn banner hoàn toàn
       timerRef.current = setTimeout(() => {
+        console.log('[LidAlertBanner] 10s elapsed. Auto-hiding banner.');
         setVisible(false);
         timerRef.current = null;
       }, 10000);

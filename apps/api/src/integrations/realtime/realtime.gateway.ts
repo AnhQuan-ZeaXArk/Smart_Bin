@@ -687,7 +687,7 @@ export class RealtimeGateway {
 
     const payloadObj = (payload && typeof payload === 'object') ? (payload as Record<string, any>) : {};
     const eventId = payloadObj.eventId || payloadObj.id || randomUUID();
-    const eventTimestamp = payloadObj.timestamp || createdAt;
+    const eventTimestamp = payloadObj.timestamp || new Date().toISOString();
 
     const alertEvent = {
       eventId,

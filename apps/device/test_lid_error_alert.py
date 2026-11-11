@@ -341,6 +341,75 @@ class TestLidErrorAlertDetection(unittest.TestCase):
                 "Sau khi disconnect va ket noi lai, Pi Agent phai dong bo lai device:lid:alert"
             )
 
+    def test_case_12_infinite_retrigger_cycle_across_consecutive_lid_errors(self):
+        """Kiem tra chu trinh lap vo han: Moi loi nap moi deu tao eventId rieng va phat lai device:lid:alert."""
+        yolo_camera.reset_lid_alert_state()
+        pi_agent.reset_online_collection_state()
+
+        mock_sio = mock.MagicMock()
+        mock_sio.connected = True
+        emitted_events = []
+        mock_sio.emit.side_effect = lambda ev, data, callback=None: (
+            emitted_events.append((ev, data)),
+            callback({"success": True, "status": "COMMITTED"}) if callback else None
+        )
+
+        with mock.patch("pi_agent.read_yolo_state", smartbin_yolo_bridge.read_yolo_state), \
+             mock.patch("pi_agent.sio", mock_sio):
+
+            # === CHU TRINH 1: Loi mo nap lan 1 ===
+            yolo_camera.handle_lid_error_line("loi mo nap")
+            self.assertTrue(yolo_camera.lid_alert)
+            ev1_id = yolo_camera.last_lid_error_id
+            self.assertTrue(ev1_id.startswith("lid-error-001-"))
+
+            # Telemetry tick 1 -> phat device:lid:alert lan 1
+            pi_agent.send_telemetry()
+            lid_emits = [e for e in emitted_events if e[0] == "device:lid:alert"]
+            self.assertEqual(len(lid_emits), 1)
+            self.assertEqual(lid_emits[0][1]["eventId"], ev1_id)
+
+            # Telemetry tick 2, 3 (dinh ky) -> KHONG phat lai device:lid:alert
+            pi_agent.send_telemetry()
+            pi_agent.send_telemetry()
+            lid_emits = [e for e in emitted_events if e[0] == "device:lid:alert"]
+            self.assertEqual(len(lid_emits), 1, "Telemetry dinh ky khong duoc spam emit")
+
+            # === CHU TRINH 2: Loi dong nap lan 2 (sau do vai chuc giay hoac vai phut) ===
+            yolo_camera.handle_lid_error_line("loi dong nap")
+            self.assertTrue(yolo_camera.lid_alert)
+            ev2_id = yolo_camera.last_lid_error_id
+            self.assertTrue(ev2_id.startswith("lid-error-002-"))
+            self.assertNotEqual(ev1_id, ev2_id)
+
+            # Telemetry tick -> phat device:lid:alert lan 2
+            pi_agent.send_telemetry()
+            lid_emits = [e for e in emitted_events if e[0] == "device:lid:alert"]
+            self.assertEqual(len(lid_emits), 2, "Loi dong nap moi phai kich hoat device:lid:alert lan 2")
+            self.assertEqual(lid_emits[1][1]["eventId"], ev2_id)
+
+            # Telemetry tick tiep theo -> KHONG spam
+            pi_agent.send_telemetry()
+            lid_emits = [e for e in emitted_events if e[0] == "device:lid:alert"]
+            self.assertEqual(len(lid_emits), 2)
+
+            # === CHU TRINH 3: Loi mo nap lan 3 (lap vo han) ===
+            yolo_camera.handle_lid_error_line("loi mo nap")
+            ev3_id = yolo_camera.last_lid_error_id
+            self.assertTrue(ev3_id.startswith("lid-error-003-"))
+
+            # Telemetry tick -> phat device:lid:alert lan 3
+            pi_agent.send_telemetry()
+            lid_emits = [e for e in emitted_events if e[0] == "device:lid:alert"]
+            self.assertEqual(len(lid_emits), 3, "Loi tiep theo phai tai kich hoat device:lid:alert lan 3")
+            self.assertEqual(lid_emits[2][1]["eventId"], ev3_id)
+
+            # Toan bo 6 goi telemetry deu duy tri co lidAlert: True
+            telemetry_emits = [e for e in emitted_events if e[0] == "device:telemetry"]
+            self.assertEqual(len(telemetry_emits), 6)
+            for _, payload in telemetry_emits:
+                self.assertTrue(payload.get("lidAlert"))
+
 
 if __name__ == "__main__":
     unittest.main()

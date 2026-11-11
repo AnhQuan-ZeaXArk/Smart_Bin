@@ -120,6 +120,7 @@ lid_alert = False
 last_lid_error = None
 last_lid_error_id = None
 last_lid_error_timestamp = None
+_lid_error_seq = 0
 
 
 def is_backend_connected():
@@ -137,11 +138,12 @@ def reset_collection_session_state():
 
 
 def reset_lid_alert_state():
-    global lid_alert, last_lid_error, last_lid_error_id, last_lid_error_timestamp
+    global lid_alert, last_lid_error, last_lid_error_id, last_lid_error_timestamp, _lid_error_seq
     lid_alert = False
     last_lid_error = None
     last_lid_error_id = None
     last_lid_error_timestamp = None
+    _lid_error_seq = 0
 
 
 def normalize_lid_serial_line(line: str) -> str:
@@ -168,7 +170,7 @@ def normalize_lid_serial_line(line: str) -> str:
 
 
 def handle_lid_error_line(line: str, raw_line: str = None) -> bool:
-    global lid_alert, last_lid_error, last_lid_error_id, last_lid_error_timestamp
+    global lid_alert, last_lid_error, last_lid_error_id, last_lid_error_timestamp, _lid_error_seq
     if not line or not isinstance(line, str):
         return False
 
@@ -187,10 +189,18 @@ def handle_lid_error_line(line: str, raw_line: str = None) -> bool:
 
     is_detected = matched is not None
     if is_detected:
+        _lid_error_seq += 1
+        now_ts = datetime.now(timezone.utc).isoformat()
         lid_alert = True
         last_lid_error = matched
-        last_lid_error_id = str(uuid.uuid4())
-        last_lid_error_timestamp = datetime.now(timezone.utc).isoformat()
+        last_lid_error_id = f"lid-error-{_lid_error_seq:03d}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
+        last_lid_error_timestamp = now_ts
+
+        # Cập nhật ngay vào IPC state để Pi Agent đọc được tức thời
+        try:
+            _publish_state_safely(sensors=get_live_sensors())
+        except Exception as pub_err:
+            logger.warning("[LID ALERT] Immediate IPC publish failed: %s", pub_err)
 
     # In log 5 gia tri theo yeu cau Buoc 1
     if is_detected or "loi" in normalized_str or "nap" in normalized_str:

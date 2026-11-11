@@ -735,14 +735,18 @@ def send_telemetry():
             # Phát sự kiện cảnh báo lỗi nắp nếu có (nhận diện theo từng eventId hoặc timestamp để cho phép re-trigger)
             global _lid_alert_emitted, _last_emitted_lid_event_id
             has_lid_alert = bool(payload_a.get('lidAlert'))
-            current_lid_id = payload_a.get('lidAlertId') or ('active-lid-event' if not _last_emitted_lid_event_id else None)
+            current_lid_id = payload_a.get('lidAlertId')
             current_lid_time = payload_a.get('lidAlertTimestamp') or datetime.now(timezone.utc).isoformat()
 
             if has_lid_alert:
-                is_new_event = current_lid_id and current_lid_id != _last_emitted_lid_event_id
+                if not current_lid_id:
+                    current_lid_id = f"lid-alert-{current_lid_time}" if not _last_emitted_lid_event_id else _last_emitted_lid_event_id
+
+                is_new_event = bool(current_lid_id and current_lid_id != _last_emitted_lid_event_id)
                 print(f"[PI AGENT DEBUG] payload_a['lidAlert']=True, current_lid_id={current_lid_id}, _last_emitted_lid_event_id={_last_emitted_lid_event_id}, is_new={is_new_event}, socket_connected={sio.connected}")
                 logger.info(
-                    "[PI AGENT DEBUG] payload_a['lidAlert']=True, is_new=%s, socket_connected=%s",
+                    "[PI AGENT DEBUG] payload_a['lidAlert']=True, current_lid_id=%s, is_new=%s, socket_connected=%s",
+                    current_lid_id,
                     is_new_event,
                     sio.connected
                 )
@@ -760,7 +764,7 @@ def send_telemetry():
                         _last_emitted_lid_event_id = current_lid_id
                         _lid_alert_emitted = True
                         print(f"[LID ALERT] SOCKET EVENT EMITTED: eventId={current_lid_id}")
-                        print(f"[PI AGENT] POST-EMIT: Successfully emitted '{LID_ALERT_SOCKET_NAME}', _lid_alert_emitted is now True")
+                        print(f"[PI AGENT] POST-EMIT: Successfully emitted '{LID_ALERT_SOCKET_NAME}', _last_emitted_lid_event_id={_last_emitted_lid_event_id}")
                         logger.warning(
                             "[Station A] [LID ALERT] SOCKET EVENT EMITTED: %s (%s, eventId=%s)",
                             LID_ALERT_SOCKET_NAME,
