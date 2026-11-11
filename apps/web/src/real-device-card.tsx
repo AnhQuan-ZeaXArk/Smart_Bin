@@ -304,10 +304,6 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
       setTimeout(() => setPulse(false), 1200);
     };
 
-    const handleLidAlert = () => {
-      setData((prev) => (prev ? { ...prev, lidAlert: true } : prev));
-    };
-
     const handleReconnect = () => {
       handleManualRefresh();
     };
@@ -348,13 +344,11 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
 
     socket.on('device:heartbeat', handleHeartbeat);
     socket.on('device:status', handleDeviceStatus);
-    socket.on('device:lid:alert', handleLidAlert);
     socket.on('connect', handleReconnect);
 
     return () => {
       socket.off('device:heartbeat', handleHeartbeat);
       socket.off('device:status', handleDeviceStatus);
-      socket.off('device:lid:alert', handleLidAlert);
       socket.off('connect', handleReconnect);
     };
   }, [socket, handleManualRefresh]);
@@ -448,14 +442,6 @@ export function RealDeviceCard({ compact = false, refreshTrigger }: RealDeviceCa
             </button>
           </div>
         </div>
-
-        {/* Lid Error Alert Banner */}
-        {data?.lidAlert && (
-          <div className="lid-error-alert-banner" role="alert">
-            <IconAlertTriangle />
-            <span>CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!</span>
-          </div>
-        )}
 
         {/* Status Alert Banner if Error */}
         {error && (

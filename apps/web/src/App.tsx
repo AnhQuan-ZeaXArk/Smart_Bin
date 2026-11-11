@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, LoginPage, ProtectedRoute } from './auth';
 import { useAuth, type RoleName } from './auth-context';
@@ -11,7 +11,6 @@ import { CollectionsPage } from './collections';
 import { UsersPage } from './users';
 import { RealtimeProvider } from './realtime-context';
 import { useRealtime } from './realtime-store';
-import { apiUrl } from './api-config';
 import { ErrorBoundary } from './error-boundary';
 import {
   IconActivity,
@@ -77,80 +76,40 @@ function ErrorPage({ code, title, description }: { code: string; title: string; 
   );
 }
 
-function LidAlertBanner() {
+export function LidAlertBanner() {
   const { socket } = useRealtime();
   const [visible, setVisible] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastEventRef = useRef<string | null>(null);
-
-  const triggerAlert = useCallback((eventId?: string) => {
-    if (eventId && lastEventRef.current === eventId && timerRef.current) {
-      return;
-    }
-    if (eventId) {
-      lastEventRef.current = eventId;
-    }
-
-    // 1. Hiển thị banner ngay lập tức
-    setVisible(true);
-
-    // 2. Nếu đang có bộ đếm 10s chạy dở (sự kiện lỗi mới đến khi đang hiển thị), đặt lại bộ đếm 10s
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-    }
-
-    // 3. Tự động ẩn banner sau đúng 10 giây (10,000ms)
-    timerRef.current = setTimeout(() => {
-      setVisible(false);
-      timerRef.current = null;
-    }, 10000);
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    fetch(`${apiUrl}/api/demo/device-status?_t=${Date.now()}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (mounted && (data?.data?.lidAlert || data?.lidAlert)) {
-          triggerAlert('initial-status');
-        }
-      })
-      .catch(() => {});
-    return () => {
-      mounted = false;
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-      }
-    };
-  }, [triggerAlert]);
 
   useEffect(() => {
     if (!socket) return;
-    const onLidAlert = (payload: any) => {
-      triggerAlert(payload?.eventId || payload?.timestamp || String(Date.now()));
-    };
-    const onHeartbeat = (payload: any) => {
-      // Chỉ kích hoạt nếu có lidAlertId mới
-      if (payload?.lidAlert && payload?.lidAlertId && payload?.lidAlertId !== lastEventRef.current) {
-        triggerAlert(payload.lidAlertId);
+
+    const onLidAlert = () => {
+      // 1. Hiển thị banner ngay lập tức khi nhận sự kiện realtime device:lid:alert
+      setVisible(true);
+
+      // 2. Nếu có lỗi mới trong khi banner đang hiển thị: hủy bộ đếm cũ và bắt đầu lại 10 giây
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
       }
-    };
-    const onAlertCreated = (payload: any) => {
-      if (payload?.message === 'CẢNH BÁO: PHÁT HIỆN LỖI NẮP THÙNG RÁC!') {
-        triggerAlert(payload?.id || payload?.createdAt || String(Date.now()));
-      }
+
+      // 3. Hết đúng 10 giây: ẩn banner hoàn toàn
+      timerRef.current = setTimeout(() => {
+        setVisible(false);
+        timerRef.current = null;
+      }, 10000);
     };
 
     socket.on('device:lid:alert', onLidAlert);
-    socket.on('device:heartbeat', onHeartbeat);
-    socket.on('alert:created', onAlertCreated);
 
     return () => {
       socket.off('device:lid:alert', onLidAlert);
-      socket.off('device:heartbeat', onHeartbeat);
-      socket.off('alert:created', onAlertCreated);
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
     };
-  }, [socket, triggerAlert]);
+  }, [socket]);
 
   if (!visible) return null;
 

@@ -281,14 +281,14 @@ export class RealtimeGateway {
             };
             const stationCode = (parsed.data.stationCode || 'STATION_A').toUpperCase();
 
-            // Kích hoạt cảnh báo lỗi nắp nếu telemetry mang cờ lidAlert
+            // Kích hoạt cảnh báo lỗi nắp nếu telemetry mang cờ lidAlert (routine telemetry: isExplicitEvent = false)
             if (parsed.data.lidAlert) {
               console.log(`[RealtimeGateway] [LID ALERT] Received telemetry packet with lidAlert=true from device ${normalizedDeviceId}`);
               this.handleLidAlert({
                 deviceId: normalizedDeviceId,
                 stationCode,
                 lidAlert: true
-              });
+              }, false);
             }
 
             // 1. Cập nhật RealDeviceService trong RAM và phát Socket.IO 'device:heartbeat'
@@ -405,10 +405,10 @@ export class RealtimeGateway {
           }
         });
 
-        // Nhận cảnh báo lỗi nắp tức thời từ Raspberry Pi 5 (Station A)
+        // Nhận cảnh báo lỗi nắp tức thời từ Raspberry Pi 5 (Station A) (explicit event: isExplicitEvent = true)
         socket.on(REALTIME_EVENTS.LID_ALERT, (alertPayload: unknown) => {
           console.log(`[RealtimeGateway] [LID ALERT] Received Socket.IO event ${REALTIME_EVENTS.LID_ALERT} from device ${deviceId}:`, alertPayload);
-          this.handleLidAlert(alertPayload);
+          this.handleLidAlert(alertPayload, true);
         });
 
         // Nhận sự kiện thu gom thủ công trực tuyến từ Raspberry Pi 5 (Station A) kèm ACK xác nhận lưu DB
@@ -662,9 +662,9 @@ export class RealtimeGateway {
     return this.lidAlertPersistPromise;
   }
 
-  public handleLidAlert(payload?: unknown): void {
+  public handleLidAlert(payload?: unknown, isExplicitEvent: boolean = true): void {
     const alreadyActive = realDeviceService.isLidAlertActive();
-    console.log(`[RealtimeGateway] [LID ALERT] handleLidAlert triggered. alreadyActive=${alreadyActive}`, payload);
+    console.log(`[RealtimeGateway] [LID ALERT] handleLidAlert triggered. alreadyActive=${alreadyActive}, isExplicitEvent=${isExplicitEvent}`, payload);
     realDeviceService.setLidAlert(true);
 
     const message = RealDeviceService.LID_ALERT_MESSAGE;
@@ -676,6 +676,13 @@ export class RealtimeGateway {
       void this.persistLidAlertToDb(message, createdAt);
     } else {
       console.log('[RealtimeGateway] [LID ALERT] Demo mode: alert stored in RAM/DemoService');
+    }
+
+    // Nếu đã active và đây chỉ là telemetry định kỳ (không phải sự kiện explicit mới từ device),
+    // bỏ qua phát sóng để không reset timer 10s trên frontend
+    if (alreadyActive && !isExplicitEvent) {
+      console.log('[RealtimeGateway] [LID ALERT] Skipping duplicate broadcast from routine telemetry packet (already active).');
+      return;
     }
 
     const payloadObj = (payload && typeof payload === 'object') ? (payload as Record<string, any>) : {};
