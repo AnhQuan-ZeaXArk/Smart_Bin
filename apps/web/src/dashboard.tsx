@@ -10,7 +10,8 @@ import {
   IconCheckCircle,
   IconXCircle,
   IconActivity,
-  IconRefresh
+  IconRefresh,
+  IconClose
 } from './icons';
 
 import { apiUrl } from './api-config';
@@ -27,7 +28,8 @@ import {
   groupBinsByStation,
   DEFAULT_STATION_CONFIG,
   ensureAllStationBins,
-  ensureStationList
+  ensureStationList,
+  type StationGroup
 } from './bin-view-model';
 
 type RealtimeTelemetry = {
@@ -235,6 +237,7 @@ export function DashboardPage() {
   const [stations, setStations] = useState<StationOption[]>(DEFAULT_STATION_CONFIG);
   const [selectedStationCode, setSelectedStationCode] = useState<string>('');
   const [collapsedStations, setCollapsedStations] = useState<Record<string, boolean>>({});
+  const [activeModalStation, setActiveModalStation] = useState<'STATION_A' | 'STATION_B' | null>(null);
 
   const toggleStationCollapse = (code: string) => {
     setCollapsedStations((prev) => ({
@@ -242,6 +245,35 @@ export function DashboardPage() {
       [code]: !prev[code]
     }));
   };
+
+  const handleScrollToStation = (stationCode: string) => {
+    if (collapsedStations[stationCode]) {
+      setCollapsedStations((prev) => ({
+        ...prev,
+        [stationCode]: false
+      }));
+    }
+    setTimeout(() => {
+      const el = document.querySelector(`[data-station-code="${stationCode}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        el.classList.add('station-section--highlighted');
+        setTimeout(() => {
+          el.classList.remove('station-section--highlighted');
+        }, 2000);
+      }
+    }, 80);
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setActiveModalStation(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   function refreshDashboard() {
     setError('');
@@ -481,6 +513,43 @@ export function DashboardPage() {
         />
       </div>
 
+      {/* Sơ đồ bố trí trạm SMARTBIN (Trạm A và Trạm B) */}
+      <section className="station-maps-section" aria-label="Sơ đồ bố trí trạm SMARTBIN">
+        <div className="section-heading station-maps-heading">
+          <div>
+            <h2>Sơ đồ bố trí trạm SMARTBIN</h2>
+            <p className="section-subtext">Vị trí trực quan và phân loại 3 thùng rác tại từng cụm trạm thu gom.</p>
+          </div>
+          <span className="station-maps-note">Nhấp vào hình ảnh để xem phóng to sơ đồ &amp; trạng thái từng thùng</span>
+        </div>
+
+        <div className="station-maps-grid">
+          {/* Cụm Trạm A (bên trái) */}
+          <StationMapCard
+            stationCode="STATION_A"
+            stationName="Trạm A"
+            areaLabel="Cụm Trạm A • Cổng phía Tây"
+            imageSrc="/station-a-map.png"
+            imageAlt="Sơ đồ bố trí Trạm A (Thùng rác A1, A2, A3)"
+            group={stationGroups.find((g) => g.code === 'STATION_A')}
+            onZoom={() => setActiveModalStation('STATION_A')}
+            onNavigate={() => handleScrollToStation('STATION_A')}
+          />
+
+          {/* Cụm Trạm B (bên phải) */}
+          <StationMapCard
+            stationCode="STATION_B"
+            stationName="Trạm B"
+            areaLabel="Cụm Trạm B • Cổng phía Đông"
+            imageSrc="/station-b-map.png"
+            imageAlt="Sơ đồ bố trí Trạm B (Thùng rác B1, B2, B3)"
+            group={stationGroups.find((g) => g.code === 'STATION_B')}
+            onZoom={() => setActiveModalStation('STATION_B')}
+            onNavigate={() => handleScrollToStation('STATION_B')}
+          />
+        </div>
+      </section>
+
       {/* Multi-Station Monitoring Sections */}
       <div className="stations-container">
         {visibleStationGroups.map((group) => {
@@ -580,7 +649,285 @@ export function DashboardPage() {
         {/* Real Hardware Raspberry Pi 5 Telemetry Card */}
         <RealDeviceCard refreshTrigger={refreshKey} />
       </section>
+
+      {/* Lightbox Modal chi tiết trạm */}
+      {activeModalStation && (
+        <StationMapModal
+          stationCode={activeModalStation}
+          group={stationGroups.find((g) => g.code === activeModalStation)}
+          onClose={() => setActiveModalStation(null)}
+          onNavigate={() => {
+            const target = activeModalStation;
+            setActiveModalStation(null);
+            handleScrollToStation(target);
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+const BIN_MAPPINGS: Record<
+  'STATION_A' | 'STATION_B',
+  Array<{
+    code: string;
+    key: WasteCategoryKey;
+    type: 'recycle' | 'organic' | 'general';
+    label: string;
+    desc: string;
+  }>
+> = {
+  STATION_A: [
+    { code: 'A1', key: 'RECYCLABLE', type: 'recycle', label: 'Tái chế', desc: 'Giấy, nhựa, kim loại' },
+    { code: 'A2', key: 'ORGANIC', type: 'organic', label: 'Hữu cơ', desc: 'Thức ăn, lá cây, ...' },
+    { code: 'A3', key: 'NON_RECYCLABLE', type: 'general', label: 'Còn lại', desc: 'Rác sinh hoạt khác' }
+  ],
+  STATION_B: [
+    { code: 'B1', key: 'RECYCLABLE', type: 'recycle', label: 'Tái chế', desc: 'Giấy, nhựa, kim loại' },
+    { code: 'B2', key: 'ORGANIC', type: 'organic', label: 'Hữu cơ', desc: 'Thức ăn, lá cây, ...' },
+    { code: 'B3', key: 'NON_RECYCLABLE', type: 'general', label: 'Còn lại', desc: 'Rác sinh hoạt khác' }
+  ]
+};
+
+function StationMapCard({
+  stationCode,
+  stationName,
+  areaLabel,
+  imageSrc,
+  imageAlt,
+  group,
+  onZoom,
+  onNavigate
+}: {
+  stationCode: 'STATION_A' | 'STATION_B';
+  stationName: string;
+  areaLabel: string;
+  imageSrc: string;
+  imageAlt: string;
+  group?: StationGroup<DashboardBin>;
+  onZoom: () => void;
+  onNavigate: () => void;
+}) {
+  const isStationA = stationCode === 'STATION_A';
+  const binDefs = BIN_MAPPINGS[stationCode];
+  const status = group?.status ?? 'OFFLINE';
+
+  return (
+    <article className={`station-map-card station-map-card--${stationCode.toLowerCase()}`}>
+      <div className="station-map-card__header">
+        <div className="station-map-card__identity">
+          <span className={`station-code-chip ${isStationA ? 'station-code-chip--a' : ''}`}>
+            {stationCode}
+          </span>
+          <div>
+            <h3 className="station-map-card__title">{stationName}</h3>
+            <span className="station-map-card__area">{areaLabel}</span>
+          </div>
+        </div>
+
+        <span className={`station-status-badge status-badge--${status.toLowerCase()}`}>
+          <span className="status-dot" />
+          {status === 'ONLINE' ? 'Trực tuyến' : status === 'WARNING' ? 'Cảnh báo' : 'Mất kết nối'}
+        </span>
+      </div>
+
+      <div
+        className="station-map-card__image-wrap"
+        onClick={onZoom}
+        title="Nhấp để phóng to sơ đồ và xem thông tin chi tiết"
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onZoom();
+          }
+        }}
+      >
+        <img
+          src={imageSrc}
+          alt={imageAlt}
+          className="station-map-card__image"
+          loading="lazy"
+        />
+        <div className="station-map-card__overlay">
+          <span className="station-map-card__zoom-pill">
+            🔍 Phóng to &amp; Xem chi tiết
+          </span>
+        </div>
+      </div>
+
+      <div className="station-map-card__bins-row">
+        {binDefs.map((def) => {
+          const comp = group?.compartments.find((c) => c.key === def.key);
+          const bin = comp?.bin;
+          const isInstalled = bin && bin.installed !== false;
+          const fillLevel = typeof bin?.currentFillLevel === 'number' ? Math.round(bin.currentFillLevel) : null;
+
+          return (
+            <div
+              key={def.code}
+              className="station-map-bin-chip"
+              title={`${def.code}: ${def.label} (${def.desc})`}
+            >
+              <div className="station-map-bin-chip__top">
+                <span className="station-map-bin-chip__code">
+                  <span className={`station-map-bin-chip__indicator station-map-bin-chip__indicator--${def.type}`} />
+                  {def.code}
+                </span>
+                <span className="station-map-bin-chip__pct">
+                  {!isInstalled ? 'Dự phòng' : fillLevel !== null ? `${fillLevel}%` : '—'}
+                </span>
+              </div>
+              <span className="station-map-bin-chip__label">{def.label}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="station-map-card__actions">
+        <button
+          type="button"
+          className="station-map-action-btn station-map-action-btn--secondary"
+          onClick={onZoom}
+        >
+          🔍 Xem chi tiết sơ đồ
+        </button>
+        <button
+          type="button"
+          className="station-map-action-btn station-map-action-btn--primary"
+          onClick={onNavigate}
+        >
+          ⬇ Đến dữ liệu trạm
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function StationMapModal({
+  stationCode,
+  group,
+  onClose,
+  onNavigate
+}: {
+  stationCode: 'STATION_A' | 'STATION_B';
+  group?: StationGroup<DashboardBin>;
+  onClose: () => void;
+  onNavigate: () => void;
+}) {
+  const isStationA = stationCode === 'STATION_A';
+  const stationName = isStationA ? 'Trạm A' : 'Trạm B';
+  const binPrefix = isStationA ? 'A' : 'B';
+  const imageSrc = isStationA ? '/station-a-map.png' : '/station-b-map.png';
+  const imageAlt = `Sơ đồ bố trí chi tiết ${stationName}`;
+  const binDefs = BIN_MAPPINGS[stationCode];
+  const status = group?.status ?? 'OFFLINE';
+
+  return (
+    <div
+      className="station-modal-overlay"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Sơ đồ chi tiết ${stationName}`}
+    >
+      <div className="station-modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="station-modal-header">
+          <div className="station-modal-title-wrap">
+            <span className={`station-code-chip ${isStationA ? 'station-code-chip--a' : ''}`}>
+              {stationCode}
+            </span>
+            <h3 className="station-modal-title">
+              Sơ đồ bố trí chi tiết {stationName} ({binPrefix}1 – {binPrefix}3)
+            </h3>
+            <span className={`station-status-badge status-badge--${status.toLowerCase()}`}>
+              <span className="status-dot" />
+              {status === 'ONLINE' ? 'Trực tuyến' : status === 'WARNING' ? 'Cảnh báo' : 'Mất kết nối'}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="station-modal-close-btn"
+            onClick={onClose}
+            aria-label="Đóng"
+          >
+            <IconClose />
+          </button>
+        </div>
+
+        <div className="station-modal-body">
+          <div className="station-modal-img-wrap">
+            <img src={imageSrc} alt={imageAlt} className="station-modal-img" />
+          </div>
+
+          <div className="station-modal-bins-section">
+            <h4 className="station-modal-bins-heading">Danh sách 3 thùng rác tại {stationName}:</h4>
+            <div className="station-modal-bins-list">
+              {binDefs.map((def) => {
+                const comp = group?.compartments.find((c) => c.key === def.key);
+                const bin = comp?.bin;
+                const isInstalled = bin && bin.installed !== false;
+                const fillLevel = typeof bin?.currentFillLevel === 'number' ? Math.round(bin.currentFillLevel) : null;
+
+                return (
+                  <div key={def.code} className="station-modal-bin-item">
+                    <div className="station-modal-bin-item__header">
+                      <span className="station-modal-bin-item__title">
+                        <span className={`station-map-bin-chip__indicator station-map-bin-chip__indicator--${def.type}`} />
+                        {def.code} – {def.label}
+                      </span>
+                      <span className="station-modal-bin-item__pct">
+                        {!isInstalled ? 'Chưa lắp' : fillLevel !== null ? `${fillLevel}%` : '—'}
+                      </span>
+                    </div>
+                    <p className="station-modal-bin-item__desc">{def.desc}</p>
+                    {isInstalled && fillLevel !== null && (
+                      <div className="station-modal-bin-item__bar-wrap">
+                        <div
+                          className="station-modal-bin-item__bar"
+                          style={{
+                            width: `${Math.min(100, Math.max(0, fillLevel))}%`,
+                            background: def.type === 'recycle' ? '#38bdf8' : def.type === 'organic' ? '#34d399' : '#facc15'
+                          }}
+                        />
+                      </div>
+                    )}
+                    <div className="station-modal-bin-item__status">
+                      <span>Trạng thái:</span>
+                      <strong>
+                        {!isInstalled
+                          ? 'Sẵn sàng mở rộng'
+                          : bin?.status === 'ONLINE'
+                          ? 'Đang hoạt động'
+                          : 'Mất kết nối'}
+                      </strong>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="station-modal-footer">
+          <button
+            type="button"
+            className="station-map-action-btn station-map-action-btn--secondary"
+            onClick={onClose}
+          >
+            Đóng
+          </button>
+          <button
+            type="button"
+            className="station-map-action-btn station-map-action-btn--primary"
+            onClick={onNavigate}
+          >
+            Đi đến khu vực giám sát của {stationName} ↓
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
